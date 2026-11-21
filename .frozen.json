@@ -14,8 +14,8 @@
   "src/engine/hud/index.ts": "4624050a6419e9ba60dd11cf8a07058e62595ea06045e0a0f3940dc9212f1bd3",
   "src/engine/audio/index.ts": "170585276415722772256d44ecc341aece2be51aca17ae5213f565cd8bfb5579",
   "src/engine/audio/sfx.ts": "86f40271cadbe93de8d8bec4939e75f344f3614c244b5cd5f962bdd089982baa",
-  "src/engine/testing/harness.ts": "a7512b7f24513df75e03537d23cab74e0523c9836d9a41b79db0a6d0d7410db0",
+  "src/engine/testing/harness.ts": "3ca07e45e74fb3ed7bb976a4c8d2b64f91689e4bff6bad7dbb1bb0b4acad735b",
   "src/engine/testing/synth.ts": "baca1f69c511991977c68a388e899594e25851136a8b931a1db97a0987ee31de",
-  "src/engine/testing/clips.ts": "13b17571ca0e63712a760c5e1a6cd6867a683551fbb7f2b2645715f05b4bd109",
+  "src/engine/testing/clips.ts": "59fc1bfc000eb99759cd12c09bb8112808c73c5c9c4948f9e0ac36ff04096c40",
   "src/engine/testing/nullRenderer.ts": "91eca3116b6ee3793a23ba1593b9a6001c16d854df12b9b11bdd7cfdd18b1bca"
 }

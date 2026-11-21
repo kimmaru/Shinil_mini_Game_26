@@ -61,9 +61,11 @@ describe.each(IDS)('%s', (id) => {
 
   it('is reachable on its own clip', async () => {
     // The anti-dead-game test: a game nobody can score in looks exactly like a
-    // game that works, right up until a child plays it.
+    // game that works, right up until a child plays it. Uses the FULL round
+    // length — a slow-paced game's first object may not even arrive inside a
+    // truncated sample.
     const clip = manifest.dev!.clip as ClipName;
-    const r = await runGame(id, { clip, seed: 7, durationMs: DUR });
+    const r = await runGame(id, { clip, seed: 7 });
     expect(r.threw).toBeNull();
     expect(r.result.rawScore, `${id} scored 0 on its own clip "${clip}"`).toBeGreaterThan(0);
   });
@@ -89,13 +91,13 @@ describe.each(IDS)('%s', (id) => {
     // Replay integrity. Run it on the game's OWN clip: a clip that scores zero
     // twice would pass this trivially while proving nothing.
     const clip = manifest.dev!.clip as ClipName;
-    const a = await runGame(id, { clip, seed: 7, durationMs: DUR });
-    const b = await runGame(id, { clip, seed: 7, durationMs: DUR });
+    const a = await runGame(id, { clip, seed: 7 });
+    const b = await runGame(id, { clip, seed: 7 });
     expect(a.result.rawScore).toBe(b.result.rawScore);
     expect(a.result.rawScore).toBeGreaterThan(0);
     // A different seed must actually change the round, or `rng` is unused and
     // every player sees an identical game.
-    const c = await runGame(id, { clip, seed: 99, durationMs: DUR });
+    const c = await runGame(id, { clip, seed: 99 });
     expect(c.threw).toBeNull();
   });
 

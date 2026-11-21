@@ -127,12 +127,19 @@ const CLIPS: Record<ClipName, () => PoseClip> = {
       return { armL: 20 + a, armR: 160 - a, elbowL: 2, elbowR: 2, leanDeg: a * 0.08 };
     }, { seed: 17, jitter: 0.004 }),
 
-  /** Stepping and leaning left-right, feet in and out. */
+  /**
+   * Stepping left and right across most of the frame.
+   *
+   * The amplitude is load-bearing: at 0.17 the body only covered a third of
+   * the width, so a game about moving to reach things scored the same standing
+   * still as it did playing. 0.29 is as far as a body of this size can travel
+   * without leaving the frame.
+   */
   'step-lr': () =>
     buildClip('step-lr', 20, (_u, t) => {
       const s = Math.sin(t * 0.8);
       return {
-        hipX: 0.5 + 0.17 * s,
+        hipX: 0.5 + 0.29 * s,
         leanDeg: 15 * s,
         legL: -84 + 9 * s, legR: -96 + 9 * s,
       };

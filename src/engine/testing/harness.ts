@@ -103,9 +103,16 @@ export async function runGame(id: GameId, opts: RunOpts): Promise<RunReport> {
     hud: stubHud(log),
     t: (k: string) => k,
     profiles: new Map(),
-    emit(ev) { events[ev.kind] = (events[ev.kind] ?? 0) + 1; },
+    emit(ev) {
+      events[ev.kind] = (events[ev.kind] ?? 0) + 1;
+      // The browser host settles the round here, so the harness must too —
+      // otherwise a game that ends at 10 seconds is measured over 40 and the
+      // test is scoring a round no player can ever reach.
+      if (ev.kind === 'clearEarly') cleared = true;
+    },
   };
 
+  let cleared = false;
   let frame = pose.sample(0);
   const factory = await load(id);
   const game = factory();
@@ -132,7 +139,7 @@ export async function runGame(id: GameId, opts: RunOpts): Promise<RunReport> {
   const render = opts.render ?? true;
   let reason: EndReason = 'timeUp';
 
-  for (; done < steps; done++) {
+  for (; done < steps && !cleared; done++) {
     t = done / 60;
     frame = pose.sample(t);
     try {
@@ -147,6 +154,7 @@ export async function runGame(id: GameId, opts: RunOpts): Promise<RunReport> {
     }
   }
 
+  if (cleared) reason = 'cleared';
   let result: GameResult;
   try {
     result = applyScoring(game.end(reason), manifest);
