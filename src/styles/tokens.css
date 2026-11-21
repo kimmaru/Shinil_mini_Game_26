@@ -1,0 +1,332 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   DESIGN TOKENS — the single source of truth for every colour, size and
+   easing in the shell. See DESIGN.md for the usage rules and the reasoning.
+
+   Mirrors src/engine/render/palette.ts (canvas side). If you change a colour
+   here that also appears there, change both or the canvas and the DOM drift.
+
+   Structure, and why:
+     1. brand/semantic   hue-stable across modes
+     2. :root            the COMPLETE light palette — no colour's only
+                         definition may live inside a media query
+     3. dark             applied twice, deliberately:
+                           @media (prefers-color-scheme: dark)
+                             :root:not([data-theme="light"])   → system dark
+                           :root[data-theme="dark"]            → explicit toggle
+                         so an in-app toggle wins in BOTH directions. The two
+                         blocks MUST stay in sync.
+     4. metrics          spacing / radius / shadow / hit targets / motion
+     5. a11y switches    reduced motion, prefers-contrast, 글자 크게
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ─── 1. brand / semantic ─────────────────────────────────────────────────── */
+:root {
+  /* primary — electric blue: actions, focus, progress */
+  --c-primary-50: #eef2ff;
+  --c-primary-100: #dce4ff;
+  --c-primary-200: #bdccff;
+  --c-primary-300: #93aaff;
+  --c-primary-400: #6b8aff;
+  --c-primary-500: #4c6fff;
+  --c-primary-600: #2f4fe0;
+  --c-primary-700: #243cb0;
+  --c-primary-800: #1b2c80;
+
+  /* secondary — violet: special rounds, boss games */
+  --c-secondary-100: #f3e9ff;
+  --c-secondary-400: #b983ff;
+  --c-secondary-500: #a259ff;
+  --c-secondary-600: #8433e6;
+
+  /* accent — amber: stars, rewards. SPARINGLY (<5% of pixels), never white text */
+  --c-accent-100: #fff3d6;
+  --c-accent-400: #ffc53d;
+  --c-accent-500: #ffb300;
+  --c-accent-600: #e09400;
+
+  /* accent-2 — hot pink: combos, "지금!" cues */
+  --c-accent2-100: #ffe4ee;
+  --c-accent2-400: #ff6fa3;
+  --c-accent2-500: #ff4d8d;
+  --c-accent2-600: #e02c6e;
+
+  /* semantic */
+  --c-success-100: #def9ee;
+  --c-success-500: #16c47f;
+  --c-success-600: #0fa668;
+  --c-warn-100: #fff1db;
+  --c-warn-500: #ff9f1c;
+  --c-warn-600: #e0820a;
+  --c-danger-100: #ffe5e5;
+  --c-danger-500: #ff4d4d;
+  --c-danger-600: #e02b2b;
+  --c-info-500: #19b5fe;
+
+  /* player slots — hue + shape badge + slot number, never hue alone (Kahoot) */
+  --c-p1: #2fa8ff;
+  --c-p2: #ff7a45;
+  --c-p3: #39d98a;
+  --c-p4: #c77dff;
+  --c-p-outline: #0b0f20;
+
+  /* ─── typography faces ─────────────────────────────────────────────────── */
+  --font-ui: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
+    system-ui, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
+  /* GmarketSansBold is NOT self-hosted yet (see DESIGN.md § Fonts); until the
+     build copies it, this resolves to Pretendard and weight 800 carries the
+     "display" register. Never add a CDN @font-face — it breaks connect-src 'self'. */
+  --font-display: 'GmarketSansBold', var(--font-ui);
+  --font-num: var(--font-display);
+
+  /* ─── type scale — 10-foot UI at ~2 m ──────────────────────────────────── */
+  --fs-display-1: 6rem;
+  --fs-display-2: 4.5rem;
+  --fs-title-1: 3.5rem;
+  --fs-title-2: 2.75rem;
+  --fs-heading: 2.125rem; /* 34px @16 — the 2 m readability floor for reactions */
+  --fs-body-lg: 1.75rem; /* default body on game screens */
+  --fs-body: 1.5rem; /* 24px — minimum anything is read at while standing */
+  --fs-label: 1.25rem;
+  --fs-caption: 1.125rem; /* setup screens only */
+  --fs-legal: 1rem; /* 개인정보 안내 body, read up close */
+}
+
+/* ─── 2. light (complete palette, bare :root) ─────────────────────────────── */
+:root {
+  --c-canvas: #f5f7fd;
+  --c-surface: #ffffff;
+  --c-surface-2: #edf0f9;
+  --c-surface-3: #e2e7f4;
+  --c-game-bg: #101733; /* the GAME canvas stays dark in BOTH modes */
+  --c-border: #d5dbea;
+  --c-border-strong: #aeb8d0;
+  --c-text: #131a33; /* 16.1:1 on surface */
+  --c-text-2: #4a5678; /* 7.4:1 */
+  --c-text-3: #7a86a8; /* 3.9:1 — large/decorative only */
+  --c-on-primary: #ffffff;
+  --c-on-accent: #3a2600; /* amber needs DARK text, never white */
+  --c-link: var(--c-primary-600); /* never -500 for text */
+  --c-overlay: rgb(13 18 38 / 0.56);
+  --c-focus: #ffb300; /* amber ring reads on both blue and white */
+  --sh-1: 0 1px 2px rgb(17 24 51 / 0.06), 0 1px 3px rgb(17 24 51 / 0.1);
+  --sh-2: 0 2px 4px rgb(17 24 51 / 0.06), 0 4px 10px rgb(17 24 51 / 0.09);
+  --sh-3: 0 4px 8px rgb(17 24 51 / 0.08), 0 12px 24px rgb(17 24 51 / 0.12);
+  --sh-4: 0 8px 16px rgb(17 24 51 / 0.1), 0 24px 48px rgb(17 24 51 / 0.18);
+}
+
+/* ─── 3a. dark — system preference (explicit light opt-out respected) ─────── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --c-canvas: #0b0f20;
+    --c-surface: #151b33;
+    --c-surface-2: #1e2641;
+    --c-surface-3: #28314f;
+    --c-game-bg: #080c1a;
+    --c-border: #333d5e;
+    --c-border-strong: #4a5679;
+    --c-text: #f2f5ff; /* 15.8:1 on surface */
+    --c-text-2: #b7c0dc; /* 8.9:1 */
+    --c-text-3: #8390b2; /* 4.6:1 */
+    --c-on-primary: #0b0f20;
+    --c-on-accent: #2a1b00;
+    --c-link: var(--c-primary-300);
+    --c-overlay: rgb(4 6 14 / 0.68);
+    --c-focus: #ffc53d;
+    /* lift brand lightness, trim saturation so it does not bloom on OLED */
+    --c-primary-500: #6b8aff;
+    --c-primary-600: #8fa6ff;
+    --c-primary-50: #1b2550;
+    --c-secondary-500: #b983ff;
+    --c-accent-500: #ffc53d;
+    --c-accent2-500: #ff6fa3;
+    --c-success-500: #2ee39b;
+    --c-warn-500: #ffb454;
+    --c-danger-500: #ff6b6b;
+    --sh-1: 0 1px 2px rgb(0 0 0 / 0.4), inset 0 1px 0 rgb(255 255 255 / 0.05);
+    --sh-2: 0 4px 10px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.06);
+    --sh-3: 0 12px 24px rgb(0 0 0 / 0.5), inset 0 1px 0 rgb(255 255 255 / 0.07);
+    --sh-4: 0 24px 48px rgb(0 0 0 / 0.6), inset 0 1px 0 rgb(255 255 255 / 0.08);
+  }
+}
+
+/* ─── 3b. dark — explicit in-app toggle. KEEP IN SYNC WITH 3a. ────────────── */
+:root[data-theme='dark'] {
+  --c-canvas: #0b0f20;
+  --c-surface: #151b33;
+  --c-surface-2: #1e2641;
+  --c-surface-3: #28314f;
+  --c-game-bg: #080c1a;
+  --c-border: #333d5e;
+  --c-border-strong: #4a5679;
+  --c-text: #f2f5ff;
+  --c-text-2: #b7c0dc;
+  --c-text-3: #8390b2;
+  --c-on-primary: #0b0f20;
+  --c-on-accent: #2a1b00;
+  --c-link: var(--c-primary-300);
+  --c-overlay: rgb(4 6 14 / 0.68);
+  --c-focus: #ffc53d;
+  --c-primary-500: #6b8aff;
+  --c-primary-600: #8fa6ff;
+  --c-primary-50: #1b2550;
+  --c-secondary-500: #b983ff;
+  --c-accent-500: #ffc53d;
+  --c-accent2-500: #ff6fa3;
+  --c-success-500: #2ee39b;
+  --c-warn-500: #ffb454;
+  --c-danger-500: #ff6b6b;
+  --sh-1: 0 1px 2px rgb(0 0 0 / 0.4), inset 0 1px 0 rgb(255 255 255 / 0.05);
+  --sh-2: 0 4px 10px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --sh-3: 0 12px 24px rgb(0 0 0 / 0.5), inset 0 1px 0 rgb(255 255 255 / 0.07);
+  --sh-4: 0 24px 48px rgb(0 0 0 / 0.6), inset 0 1px 0 rgb(255 255 255 / 0.08);
+}
+
+/* ─── 4. metrics ──────────────────────────────────────────────────────────── */
+:root {
+  /* 4px base, 8pt rhythm above 16 */
+  --sp-0: 0;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 40px;
+  --sp-8: 48px;
+  --sp-9: 64px;
+  --sp-10: 80px;
+  --sp-11: 120px;
+
+  --r-xs: 8px;
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 24px;
+  --r-xl: 32px;
+  --r-2xl: 40px;
+  --r-pill: 999px;
+  --r-button: var(--r-lg); /* kid UI leans BIG radius */
+  --r-card: var(--r-xl);
+
+  --bw-1: 2px;
+  --bw-2: 3px;
+  --bw-focus: 4px;
+
+  /* touch targets: 44px is the adult minimum; children need more */
+  --hit-min: 56px;
+  --hit-primary: 72px;
+  --hit-huge: 96px; /* lobby game cards */
+
+  --sh-focus: 0 0 0 var(--bw-focus) var(--c-focus), 0 0 0 8px rgb(255 179 0 / 0.28);
+  --sh-glow-primary: 0 0 24px rgb(76 111 255 / 0.45);
+
+  /* the Duolingo trick: a solid-colour bottom shadow = pressable 3D slab */
+  --press-depth: 6px;
+
+  /* motion */
+  --dur-instant: 80ms;
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-slow: 360ms;
+  --dur-slower: 560ms;
+  --dur-celebrate: 900ms;
+  --dur-wheel: 3400ms;
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-in-quint: cubic-bezier(0.64, 0, 0.78, 0);
+  --ease-spring: cubic-bezier(0.16, 1.1, 0.3, 1);
+  --ease-wheel: cubic-bezier(0.12, 0.76, 0.06, 1);
+  --stagger: 60ms;
+
+  /* layout */
+  --shell-max: 68rem;
+  --reading-max: 44rem;
+}
+
+/* ─── 5. a11y switches ────────────────────────────────────────────────────── */
+
+/* Root scale: one scale serves a 13" laptop at 0.6 m and a TV at 3 m. */
+html {
+  font-size: clamp(16px, 0.55vw + 0.45vh + 9px, 28px);
+}
+/* "글자 크게" — raises the clamp ceiling to 34px. */
+html[data-text-size='large'] {
+  font-size: clamp(20px, 0.7vw + 0.6vh + 11px, 34px);
+}
+
+/* Short viewports (a laptop in landscape, a tablet on its side). Trim only the
+   DISPLAY sizes — --fs-heading (34px) and below are the readability floor for a
+   child standing 2 m away and must not move. */
+@media (max-height: 52rem) {
+  :root {
+    --fs-display-1: 3.75rem;
+    --fs-display-2: 3rem;
+    --fs-title-1: 2.5rem;
+    --fs-title-2: 2.125rem;
+  }
+}
+
+/* Reduced motion. Applied twice for the same reason as the dark palette:
+   the OS preference must work before JS runs, and the in-app
+   "화면 효과 줄이기" toggle must work when the OS preference is off. */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) {
+    --dur-instant: 1ms;
+    --dur-fast: 1ms;
+    --dur-base: 1ms;
+    --dur-slow: 1ms;
+    --dur-slower: 1ms;
+    --dur-celebrate: 120ms;
+    --dur-wheel: 450ms;
+    --ease-out-back: linear;
+    --press-depth: 0px;
+  }
+  :root:not([data-motion='full']) *,
+  :root:not([data-motion='full']) *::before,
+  :root:not([data-motion='full']) *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+:root[data-motion='reduced'] {
+  --dur-instant: 1ms;
+  --dur-fast: 1ms;
+  --dur-base: 1ms;
+  --dur-slow: 1ms;
+  --dur-slower: 1ms;
+  --dur-celebrate: 120ms;
+  --dur-wheel: 450ms;
+  --ease-out-back: linear;
+  --press-depth: 0px;
+}
+:root[data-motion='reduced'] *,
+:root[data-motion='reduced'] *::before,
+:root[data-motion='reduced'] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* High contrast: drop gradients, thicken borders, force full-strength text. */
+@media (prefers-contrast: more) {
+  :root {
+    --c-text-3: var(--c-text-2);
+    --bw-1: var(--bw-2);
+    --c-border: var(--c-border-strong);
+  }
+  * {
+    background-image: none !important;
+  }
+}
+:root[data-contrast='more'] {
+  --c-text-3: var(--c-text-2);
+  --bw-1: var(--bw-2);
+  --c-border: var(--c-border-strong);
+}
+:root[data-contrast='more'] * {
+  background-image: none !important;
+}

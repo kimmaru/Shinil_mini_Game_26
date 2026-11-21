@@ -1,0 +1,1279 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   BASE — reset, Korean typography, and the small class vocabulary every
+   screen is built from. Read DESIGN.md before adding to this file: the whole
+   point of a short vocabulary is that 15 screens look like one product.
+   ════════════════════════════════════════════════════════════════════════════ */
+@import './tokens.css';
+
+/* ─── reset ───────────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+* {
+  margin: 0;
+}
+html {
+  height: 100%;
+  color-scheme: light dark;
+  -webkit-text-size-adjust: 100%;
+}
+/* min-height, not height: a short laptop in landscape must be able to scroll a
+   setup screen rather than clipping the primary button off the bottom. */
+body,
+#root {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+img,
+svg,
+canvas,
+video {
+  display: block;
+  max-width: 100%;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+ul,
+ol {
+  padding: 0;
+  list-style: none;
+}
+
+/* ─── Korean typography ───────────────────────────────────────────────────── */
+/* `word-break: keep-all` is the single most important line in this file: the
+   browser default splits 어절 mid-word and Korean copy looks broken.
+   `overflow-wrap: anywhere` is the escape hatch for a long unbroken token. */
+body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  line-height: 1.55; /* Hangul needs more leading than Latin: never below 1.5 */
+  color: var(--c-text);
+  background: var(--c-canvas);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* Display sizes tighten tracking; Hangul at 56px+ looks loose otherwise. */
+.display-1,
+.display-2,
+.h1,
+.h2 {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.06;
+}
+.display-1 {
+  font-size: var(--fs-display-1);
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+}
+.display-2 {
+  font-size: var(--fs-display-2);
+}
+.h1 {
+  font-size: var(--fs-title-1);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.14;
+}
+.h2 {
+  font-size: var(--fs-title-2);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+.h3 {
+  font-size: var(--fs-heading);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+.body-lg {
+  font-size: var(--fs-body-lg);
+  line-height: 1.5;
+}
+.body {
+  font-size: var(--fs-body);
+  line-height: 1.55;
+}
+.label {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+}
+.caption {
+  font-size: var(--fs-caption);
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+  color: var(--c-text-2);
+}
+.legal {
+  font-size: var(--fs-legal);
+  font-weight: 400;
+  line-height: 1.6;
+}
+.dim {
+  color: var(--c-text-2);
+}
+.faint {
+  color: var(--c-text-3);
+}
+.center {
+  text-align: center;
+}
+
+/* Every counter uses tabular figures so digits do not jitter as they change. */
+.num,
+.score,
+.timer {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+a {
+  color: var(--c-link);
+  text-underline-offset: 0.2em;
+}
+
+/* ─── focus: one visible ring everywhere, 4px, amber ─────────────────────── */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--sh-focus);
+  border-radius: var(--r-sm);
+}
+.btn:focus-visible,
+.card:focus-visible {
+  border-radius: var(--r-button);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ─── layout ──────────────────────────────────────────────────────────────── */
+#root {
+  display: flex;
+  flex-direction: column;
+}
+.app {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+.screen {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-6);
+  width: 100%;
+  max-width: var(--shell-max);
+  margin-inline: auto;
+  padding: var(--sp-6) var(--sp-5) var(--sp-7);
+  animation: screen-in var(--dur-base) var(--ease-out-quint) both;
+}
+.screen--read {
+  max-width: var(--reading-max);
+  justify-content: flex-start;
+  text-align: start;
+}
+.screen--full {
+  max-width: none;
+  padding: 0;
+}
+@keyframes screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  width: 100%;
+}
+.stack--lg {
+  gap: var(--sp-6);
+}
+.stack--sm {
+  gap: var(--sp-2);
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  align-items: center;
+  justify-content: center;
+}
+.row--between {
+  justify-content: space-between;
+  width: 100%;
+}
+.grow {
+  flex: 1;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  justify-content: center;
+  width: 100%;
+}
+
+/* ─── card ────────────────────────────────────────────────────────────────── */
+/* `--hue` comes from manifest.theme.hue: one hue per game is how 58 games feel
+   distinct without 58 palettes. Unset, the card is plain neutral surface. */
+.card {
+  --hue-tint: hsl(var(--hue, 230) 80% 60% / 0.1);
+  padding: var(--sp-5) var(--sp-6);
+  background: var(--c-surface);
+  background-image: linear-gradient(var(--hue-tint), var(--hue-tint));
+  border: var(--bw-1) solid var(--c-border);
+  border-radius: var(--r-card);
+  box-shadow: var(--sh-2);
+}
+.card--flat {
+  background-image: none;
+  box-shadow: none;
+}
+.card--tinted {
+  border-color: hsl(var(--hue, 230) 70% 60% / 0.45);
+}
+
+/* ─── button: the Duolingo pressable slab ─────────────────────────────────── */
+/* A solid-colour bottom shadow plus `:active { translateY }` is six lines and
+   delivers most of the "kid game UI feels good" sensation. */
+.btn {
+  --btn-bg: var(--c-surface);
+  --btn-fg: var(--c-text);
+  --btn-edge: var(--c-border-strong);
+  display: inline-flex;
+  gap: var(--sp-3);
+  align-items: center;
+  justify-content: center;
+  min-height: var(--hit-primary);
+  padding: var(--sp-3) var(--sp-6);
+  font-family: var(--font-ui);
+  font-size: var(--fs-label);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--btn-fg);
+  text-align: center;
+  cursor: pointer;
+  background: var(--btn-bg);
+  border: var(--bw-1) solid rgb(0 0 0 / 0.1);
+  border-radius: var(--r-button);
+  box-shadow: 0 var(--press-depth) 0 var(--btn-edge), var(--sh-2);
+  transition:
+    transform var(--dur-fast) var(--ease-out-quint),
+    box-shadow var(--dur-fast) var(--ease-out-quint),
+    filter var(--dur-fast) var(--ease-out-quint);
+}
+.btn:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+.btn:active:not(:disabled) {
+  transform: translateY(var(--press-depth));
+  box-shadow: 0 0 0 var(--btn-edge), var(--sh-1);
+}
+.btn:focus-visible {
+  box-shadow: 0 var(--press-depth) 0 var(--btn-edge), var(--sh-focus);
+}
+.btn:disabled {
+  cursor: not-allowed;
+  filter: saturate(0.25);
+  opacity: 0.55;
+  box-shadow: 0 var(--press-depth) 0 var(--btn-edge);
+}
+.btn--primary {
+  --btn-bg: var(--c-primary-500);
+  --btn-fg: var(--c-on-primary);
+  --btn-edge: var(--c-primary-600);
+}
+.btn--accent {
+  --btn-bg: var(--c-accent-500);
+  --btn-fg: var(--c-on-accent); /* amber NEVER carries white text */
+  --btn-edge: var(--c-accent-600);
+}
+.btn--success {
+  --btn-bg: var(--c-success-500);
+  --btn-fg: #052b1c;
+  --btn-edge: var(--c-success-600);
+}
+.btn--danger {
+  --btn-bg: var(--c-danger-500);
+  --btn-fg: #fff;
+  --btn-edge: var(--c-danger-600);
+}
+.btn--ghost {
+  --btn-bg: transparent;
+  --btn-edge: transparent;
+  border-color: var(--c-border);
+  box-shadow: none;
+}
+.btn--ghost:active:not(:disabled) {
+  transform: none;
+  background: var(--c-surface-2);
+  box-shadow: none;
+}
+.btn--link {
+  --btn-bg: transparent;
+  --btn-edge: transparent;
+  min-height: var(--hit-min);
+  padding-inline: var(--sp-3);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--c-link);
+  text-decoration: underline;
+  border-color: transparent;
+  box-shadow: none;
+}
+.btn--link:active:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+.btn--huge {
+  min-height: var(--hit-huge);
+  padding: var(--sp-4) var(--sp-9);
+  font-family: var(--font-display);
+  font-size: var(--fs-heading);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  border-radius: var(--r-xl);
+}
+.btn--block {
+  width: 100%;
+}
+.btn--sm {
+  min-height: var(--hit-min);
+  padding-inline: var(--sp-4);
+  font-size: var(--fs-caption);
+}
+
+/* ─── chip / pill ─────────────────────────────────────────────────────────── */
+.chip {
+  display: inline-flex;
+  gap: var(--sp-2);
+  align-items: center;
+  min-height: var(--hit-min);
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  background: var(--c-surface-2);
+  border: var(--bw-1) solid var(--c-border);
+  border-radius: var(--r-pill);
+}
+.chip--live {
+  color: #fff;
+  background: var(--c-danger-600);
+  border-color: var(--c-danger-600);
+}
+.chip--live .dot {
+  width: 0.6em;
+  height: 0.6em;
+  background: #fff;
+  border-radius: 50%;
+  animation: live-pulse 1.6s var(--ease-in-out) infinite;
+}
+@keyframes live-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ─── progress track ──────────────────────────────────────────────────────── */
+.track {
+  width: 100%;
+  height: 20px;
+  overflow: hidden;
+  background: var(--c-surface-3);
+  border-radius: var(--r-pill);
+}
+.track > .fill {
+  height: 100%;
+  background: var(--c-primary-500);
+  border-radius: var(--r-pill);
+  transition: width var(--dur-base) var(--ease-out-quint);
+}
+
+/* ─── bullet list with an emoji marker ───────────────────────────────────── */
+.bullets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  width: 100%;
+}
+.bullets > li {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: flex-start;
+  font-size: var(--fs-body-lg);
+  line-height: 1.5;
+}
+.bullets > li > .mark {
+  flex: none;
+  font-size: 1.15em;
+  line-height: 1.3;
+}
+
+/* ─── motion helpers ─────────────────────────────────────────────────────── */
+/* Everything that enters does so with scale + opacity. Nothing cuts. */
+.pop-in {
+  animation: pop-in var(--dur-slow) var(--ease-out-back) both;
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+}
+.slam-in {
+  animation: slam-in var(--dur-slower) var(--ease-out-back) both;
+}
+@keyframes slam-in {
+  from {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
+.breathe {
+  animation: breathe 2.4s var(--ease-in-out) infinite;
+}
+@keyframes breathe {
+  50% {
+    transform: scale(1.04);
+  }
+}
+
+/* ─── tables (개인정보 안내) ──────────────────────────────────────────────── */
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+table.legal-table {
+  width: 100%;
+  font-size: var(--fs-legal);
+  text-align: start;
+  border-collapse: collapse;
+}
+table.legal-table :is(th, td) {
+  padding: var(--sp-3);
+  border: 1px solid var(--c-border);
+}
+table.legal-table th {
+  font-weight: 700;
+  background: var(--c-surface-2);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   COMPONENTS
+   One block per component in src/shell/components and src/shell/screens.
+   Nothing here introduces a raw colour or size — tokens only.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ─── Screen chrome ──────────────────────────────────────────────────────── */
+.screen__icon {
+  font-size: var(--fs-display-1);
+  line-height: 1;
+}
+.screen__footer {
+  margin-top: var(--sp-2);
+}
+.btn__icon {
+  font-size: 1.15em;
+  line-height: 1;
+}
+
+/* ─── form field (setup screens only, so 18px is permitted) ─────────────── */
+.field {
+  width: 100%;
+  min-height: var(--hit-min);
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-body);
+  background: var(--c-surface-2);
+  border: var(--bw-1) solid var(--c-border);
+  border-radius: var(--r-sm);
+}
+.field::placeholder {
+  color: var(--c-text-3);
+}
+
+/* ─── ProgressRing / DwellRing ───────────────────────────────────────────── */
+.ring {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  /* --ring-size is set inline by the component; --ring-max lets a media query
+     cap it without the component knowing about viewports. Self-reference in a
+     custom property is a cycle, hence two names. */
+  width: min(var(--ring-size, 220px), var(--ring-max, 100vmin));
+  height: min(var(--ring-size, 220px), var(--ring-max, 100vmin));
+}
+.ring__svg {
+  position: absolute;
+  inset: 0;
+}
+.ring__fill {
+  transition: stroke-dashoffset var(--dur-fast) linear;
+}
+.ring__center {
+  position: relative;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+.dwell.is-armed {
+  filter: drop-shadow(0 0 18px rgb(22 196 127 / 0.55));
+}
+
+/* ─── StarRow ────────────────────────────────────────────────────────────── */
+.stars {
+  display: flex;
+  gap: var(--sp-3);
+  justify-content: center;
+}
+.stars--lg {
+  font-size: var(--fs-display-2);
+}
+.stars--md {
+  font-size: var(--fs-heading);
+}
+.stars__one {
+  color: var(--c-surface-3);
+  line-height: 1;
+  transition: transform var(--dur-slow) var(--ease-out-back);
+}
+.stars__one.is-on {
+  color: var(--c-accent-500);
+  text-shadow: 0 0 20px rgb(255 179 0 / 0.5);
+  transform: scale(1.14);
+}
+
+/* ─── PlayerChip — colour AND shape AND number ──────────────────────────── */
+.pchip {
+  display: inline-flex;
+  gap: var(--sp-3);
+  align-items: center;
+  padding: var(--sp-2) var(--sp-4) var(--sp-2) var(--sp-2);
+  font-size: var(--fs-label);
+  font-weight: 700;
+  background: var(--c-surface);
+  border: var(--bw-2) solid var(--slot);
+  border-radius: var(--r-pill);
+}
+.pchip--sm {
+  font-size: var(--fs-caption);
+}
+.pchip.is-away {
+  opacity: 0.5;
+}
+.pchip.is-mvp {
+  box-shadow: 0 0 0 var(--bw-1) var(--c-accent-500), var(--sh-2);
+}
+.pchip__badge {
+  display: grid;
+  place-items: center;
+  width: 2.2em;
+  height: 2.2em;
+  color: var(--c-p-outline);
+  background: var(--slot);
+  border-radius: 50%;
+}
+.pchip__shape {
+  position: absolute;
+  font-size: 1.6em;
+  opacity: 0.35;
+}
+.pchip__num {
+  position: relative;
+  font-weight: 800;
+}
+.pchip__score {
+  font-weight: 800;
+  color: var(--slot);
+}
+
+/* ─── CameraChip — always visible while a track is live ─────────────────── */
+.camchip {
+  position: fixed;
+  bottom: var(--sp-4);
+  left: var(--sp-4);
+  z-index: 60;
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  padding: var(--sp-2);
+  background: var(--c-surface);
+  border: var(--bw-1) solid var(--c-border);
+  border-radius: var(--r-pill);
+  box-shadow: var(--sh-3);
+}
+
+/* ─── Toasts ─────────────────────────────────────────────────────────────── */
+.toasts {
+  position: fixed;
+  bottom: var(--sp-4);
+  left: 50%;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  align-items: center;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+.toast {
+  max-width: min(90vw, 36rem);
+  padding: var(--sp-3) var(--sp-5);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--c-text);
+  background: var(--c-surface);
+  border: var(--bw-1) solid var(--c-border);
+  border-radius: var(--r-pill);
+  box-shadow: var(--sh-3);
+}
+.toast--warn {
+  background: var(--c-warn-100);
+  border-color: var(--c-warn-500);
+  color: #3a2600;
+}
+.toast--success {
+  background: var(--c-success-100);
+  border-color: var(--c-success-500);
+  color: #052b1c;
+}
+
+/* ─── SkeletonPreview ───────────────────────────────────────────────────── */
+.skelprev {
+  width: 100%;
+  height: 100%;
+}
+
+/* ─── Attract ───────────────────────────────────────────────────────────── */
+.attract {
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  place-items: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+.attract__skeleton {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+.attract__body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  align-items: center;
+  padding: var(--sp-6) var(--sp-5);
+  text-align: center;
+}
+.attract__title {
+  background: linear-gradient(100deg, var(--c-primary-500), var(--c-secondary-500));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.attract__go {
+  min-width: 15rem;
+}
+.attract__status {
+  min-height: 2.6em;
+  color: var(--c-text-2);
+}
+.attract__kbd {
+  background: var(--c-accent-100);
+  border-color: var(--c-accent-500);
+  color: #3a2600;
+}
+.attract__foot {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  align-items: center;
+  padding-bottom: var(--sp-5);
+}
+.attract__honest {
+  padding: var(--sp-2) var(--sp-4);
+  background: var(--c-surface);
+  border-radius: var(--r-pill);
+}
+
+/* ─── Calibration ───────────────────────────────────────────────────────── */
+.calib {
+  position: relative;
+  /* Height-led, not width-led: the calibration frame has to leave room for the
+     instruction above it on a 720px laptop. */
+  aspect-ratio: 4 / 3;
+  height: min(52vh, 28rem);
+  width: auto;
+  max-width: 100%;
+  overflow: hidden;
+  background: var(--c-game-bg);
+  border-radius: var(--r-card);
+}
+.calib__frame {
+  position: absolute;
+  inset: 8% 24%;
+  border: var(--bw-focus) dashed var(--c-accent-500);
+  border-radius: var(--r-2xl);
+}
+.calib__ring {
+  position: absolute;
+  right: var(--sp-4);
+  bottom: var(--sp-4);
+}
+
+/* ─── Wheel ─────────────────────────────────────────────────────────────── */
+.wheel {
+  position: relative;
+  width: min(74vmin, 34rem);
+  aspect-ratio: 1;
+  margin-inline: auto;
+}
+.wheel__disc {
+  --rot: 0rad;
+  position: absolute;
+  inset: 0;
+  border: var(--bw-focus) solid var(--c-surface);
+  border-radius: 50%;
+  box-shadow: var(--sh-4), inset 0 0 0 2px rgb(0 0 0 / 0.18);
+  transform: rotate(var(--rot));
+  will-change: transform;
+}
+.wheel__slice {
+  position: absolute;
+  inset: 0;
+  transform: rotate(var(--a));
+}
+.wheel__slice.is-flipped .wheel__label {
+  /* Korean upside down is unreadable for a 7-year-old. Slices past 90 degrees
+     counter-rotate so every name stays upright; the icon stays on the outside. */
+  flex-direction: column-reverse;
+  transform: translateX(-50%) rotate(180deg);
+}
+.wheel__label {
+  position: absolute;
+  top: 3.5%;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+  align-items: center;
+  width: 30%;
+  padding: 0;
+  font: inherit;
+  /* Slice labels are the one place below the 24px floor: the emoji carries
+     identification at 2m, and the winner's name is re-shown at --fs-display-2
+     the moment the wheel lands. */
+  font-size: var(--fs-caption);
+  font-weight: 800;
+  color: #0b0f20;
+  text-align: center;
+  background: none;
+  border: 0;
+  transform: translateX(-50%);
+}
+.wheel__icon {
+  font-size: 2.1em;
+  line-height: 1;
+}
+.wheel__name {
+  text-shadow: 0 1px 0 rgb(255 255 255 / 0.45);
+}
+.wheel__pointer {
+  position: absolute;
+  top: -0.35em;
+  left: 50%;
+  z-index: 2;
+  font-size: var(--fs-title-2);
+  line-height: 1;
+  color: var(--c-accent-500);
+  text-shadow: 0 2px 0 var(--c-accent-600);
+  transform: translateX(-50%);
+}
+.wheel__hub {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 22%;
+  aspect-ratio: 1;
+  font-size: var(--fs-title-2);
+  background: var(--c-surface);
+  border: var(--bw-2) solid var(--c-border);
+  border-radius: 50%;
+  box-shadow: var(--sh-3);
+  transform: translate(-50%, -50%);
+}
+.wheel--empty {
+  display: none;
+}
+
+/* ─── Roulette ──────────────────────────────────────────────────────────── */
+.roulette {
+  gap: var(--sp-4);
+  padding: var(--sp-5);
+}
+.roulette__title {
+  color: var(--c-text-2);
+}
+.roulette__result {
+  display: grid;
+  place-items: center;
+  min-height: 9rem;
+  text-align: center;
+}
+.roulette__skip {
+  opacity: 0.8;
+}
+
+/* ─── Intro ─────────────────────────────────────────────────────────────── */
+.intro__badge {
+  font-size: var(--fs-display-1);
+  line-height: 1;
+}
+.intro__how {
+  max-width: var(--reading-max);
+}
+.intro__gestures {
+  gap: var(--sp-3);
+}
+.intro__auto {
+  max-width: 20rem;
+  height: 10px;
+}
+
+/* ─── Countdown ─────────────────────────────────────────────────────────── */
+.countdown {
+  display: grid;
+  place-items: center;
+  gap: var(--sp-5);
+  background: var(--c-game-bg);
+}
+.countdown__num {
+  font-size: min(42vmin, 16rem);
+  color: var(--c-accent-500);
+  text-shadow: 0 0 60px rgb(255 179 0 / 0.35);
+}
+.countdown__num.is-go {
+  color: var(--c-success-500);
+  text-shadow: 0 0 60px rgb(22 196 127 / 0.45);
+}
+.countdown .dim {
+  color: var(--c-text-3);
+}
+
+/* ─── Stage (the game canvas host) ──────────────────────────────────────── */
+.stage-wrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  /* Dark in BOTH themes: particles, glows and the skeleton have to read
+     consistently, and a light canvas blows out next to a camera preview. */
+  background: var(--c-game-bg);
+}
+.stage {
+  position: absolute;
+  inset: 0;
+}
+.stage canvas {
+  width: 100%;
+  height: 100%;
+}
+.stage__placeholder {
+  position: relative;
+  z-index: 2;
+  max-width: 34rem;
+  text-align: center;
+}
+.stage__placeholder .row {
+  justify-content: center;
+  margin-top: var(--sp-4);
+}
+.pause-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-5);
+  background: var(--c-overlay);
+}
+.pause-veil .card {
+  width: min(100%, 36rem);
+}
+
+/* ─── HUD ───────────────────────────────────────────────────────────────── */
+.hud {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  pointer-events: none;
+}
+.hud > * {
+  pointer-events: auto;
+}
+.hud__top {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.hud__scores {
+  display: flex;
+  gap: var(--sp-4);
+}
+.hud__score {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1;
+}
+.hud__scoreNum {
+  font-size: var(--fs-display-2);
+  font-weight: 800;
+  color: var(--slot, #fff);
+  text-shadow: 0 3px 0 rgb(0 0 0 / 0.5);
+}
+.hud__combo {
+  font-size: var(--fs-heading);
+  font-weight: 800;
+  color: var(--c-accent2-500);
+  text-shadow: 0 2px 0 rgb(0 0 0 / 0.5);
+}
+.hud__goal {
+  flex: 1;
+  font-size: var(--fs-heading);
+  font-weight: 700;
+  color: #fff;
+  text-align: center;
+  text-shadow: 0 2px 0 rgb(0 0 0 / 0.6);
+}
+.hud__right {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+}
+.hud__timer {
+  font-size: var(--fs-display-2);
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 3px 0 rgb(0 0 0 / 0.5);
+}
+.hud__timer.is-urgent {
+  color: var(--c-danger-500);
+  animation: breathe 0.8s var(--ease-in-out) infinite;
+}
+.hud__lives {
+  display: flex;
+  gap: var(--sp-1);
+  font-size: var(--fs-heading);
+}
+.hud__bars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  width: min(100%, 30rem);
+}
+.hud__barLabel {
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 0 rgb(0 0 0 / 0.6);
+}
+.hud__beat {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18vmin;
+  aspect-ratio: 1;
+  border: var(--bw-focus) solid var(--c-accent-500);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  animation: breathe 0.5s var(--ease-in-out) infinite;
+}
+.hud__toast {
+  position: absolute;
+  top: 24%;
+  left: 50%;
+  font-family: var(--font-display);
+  font-size: var(--fs-title-1);
+  font-weight: 800;
+  color: var(--c-success-500);
+  text-shadow: 0 3px 0 rgb(0 0 0 / 0.5);
+  transform: translateX(-50%);
+}
+.hud__toast.is-big {
+  font-size: var(--fs-display-2);
+}
+.hud__announce {
+  position: absolute;
+  bottom: var(--sp-7);
+  left: 50%;
+  max-width: 80vw;
+  font-size: var(--fs-body-lg);
+  font-weight: 600;
+  color: #fff;
+  text-align: center;
+  text-shadow: 0 2px 0 rgb(0 0 0 / 0.7);
+  transform: translateX(-50%);
+}
+
+/* ─── Results / summary ─────────────────────────────────────────────────── */
+.results__score {
+  min-width: 18rem;
+  text-align: center;
+}
+.results__best {
+  background: var(--c-accent-100);
+  border-color: var(--c-accent-500);
+  color: var(--c-on-accent);
+}
+.summary__list {
+  max-width: var(--reading-max);
+}
+.summary__row {
+  flex-wrap: nowrap;
+  padding: var(--sp-3) var(--sp-4);
+}
+.summary__name {
+  gap: var(--sp-2);
+  justify-content: flex-start;
+}
+
+/* ─── Settings rows ─────────────────────────────────────────────────────── */
+.setrow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--c-border);
+  padding-top: var(--sp-4);
+}
+.setrow:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.setrow__hint {
+  margin: 0;
+}
+.setrow__opts {
+  justify-content: flex-start;
+}
+
+/* ─── Debug overlay (?debug=1). Dev UI: small type is correct here. ─────── */
+.dbg {
+  position: fixed;
+  top: var(--sp-2);
+  right: var(--sp-2);
+  z-index: 90;
+  width: 22rem;
+  max-height: calc(100vh - var(--sp-4));
+  overflow-y: auto;
+  padding: var(--sp-3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #e8ecff;
+  background: rgb(8 12 26 / 0.93);
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: var(--r-sm);
+}
+.dbg--mini {
+  width: auto;
+  cursor: pointer;
+}
+.dbg__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-2);
+}
+.dbg__head button {
+  cursor: pointer;
+  color: inherit;
+  background: none;
+  border: 0;
+}
+.dbg__grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1px var(--sp-2);
+  margin: 0;
+}
+.dbg__grid dt {
+  opacity: 0.65;
+}
+.dbg__grid dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.dbg__pair {
+  display: contents;
+}
+.dbg__grid dd.is-bad {
+  font-weight: 700;
+  color: #ff6b6b;
+}
+.dbg__graph {
+  width: 100%;
+  height: 56px;
+  margin: var(--sp-2) 0;
+  background: rgb(255 255 255 / 0.05);
+  border-radius: 4px;
+}
+.dbg__warn {
+  padding: 4px 6px;
+  color: #ffb454;
+  background: rgb(255 180 84 / 0.12);
+  border-radius: 4px;
+}
+.dbg__sec {
+  margin-top: var(--sp-3);
+}
+.dbg__sec h3 {
+  margin-bottom: 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.dbg__empty {
+  opacity: 0.5;
+}
+.dbg__det {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr 3rem;
+  gap: var(--sp-2);
+  align-items: center;
+  padding: 2px 0;
+}
+.dbg__det.is-gated {
+  opacity: 0.4;
+}
+.dbg__det.is-fired {
+  background: rgb(22 196 127 / 0.28);
+}
+.dbg__detTrack {
+  position: relative;
+  height: 10px;
+  background: rgb(255 255 255 / 0.1);
+  border-radius: 2px;
+}
+.dbg__detFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: #4c6fff;
+  border-radius: 2px;
+}
+.dbg__detLine {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+}
+.dbg__detLine--enter {
+  background: #16c47f;
+}
+.dbg__detLine--exit {
+  background: #ff9f1c;
+}
+.dbg__detVal {
+  text-align: right;
+}
+
+/* ─── narrow / portrait (tablet held upright, small laptop) ─────────────── */
+@media (max-width: 48rem) {
+  .screen {
+    gap: var(--sp-5);
+    padding: var(--sp-5) var(--sp-4);
+  }
+  .btn--huge {
+    padding-inline: var(--sp-6);
+  }
+  .actions .btn {
+    flex: 1 1 14rem;
+  }
+  .hud__scoreNum,
+  .hud__timer {
+    font-size: var(--fs-title-2);
+  }
+  .dbg {
+    width: calc(100vw - var(--sp-4));
+  }
+}
+
+/* ─── short viewports (laptop in landscape, tablet in landscape) ────────── */
+/* The 10-foot scale assumes height. When there is none, trim the vertical
+   rhythm before trimming the type: the type size is the accessibility floor. */
+@media (max-height: 52rem) {
+  .screen {
+    gap: var(--sp-4);
+    padding-block: var(--sp-4);
+  }
+  .screen__icon,
+  .intro__badge {
+    font-size: var(--fs-title-1);
+  }
+  .attract__body {
+    gap: var(--sp-3);
+  }
+  .attract__foot {
+    padding-bottom: var(--sp-3);
+  }
+  .wheel {
+    width: min(58vmin, 24rem);
+  }
+  .ring {
+    --ring-max: 34vmin;
+  }
+  .bullets > li {
+    font-size: var(--fs-body);
+  }
+}
