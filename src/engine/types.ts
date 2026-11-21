@@ -8,7 +8,7 @@ import type { Renderer, Paint, TextOpts, SkeletonOpts } from './render/renderer'
 import type { GestureService, Detector, GestureOpts, SignalOf } from './gestures/index';
 import type { FxService } from './fx/index';
 import type { HudService } from './hud/index';
-import type { AudioService, SfxId } from './audio/index';
+import type { AudioService, BeatScheduler, PlayOpts, SfxId } from './audio/index';
 
 export type GameId = string; // kebab-case, ALWAYS === the folder name
 export type PlayerId = number; // stable across frames within a round
@@ -261,5 +261,5 @@ export interface GameResult {
 export type {
   Renderer, Paint, TextOpts, SkeletonOpts,
   GestureService, Detector, GestureOpts, SignalOf,
-  FxService, HudService, AudioService, SfxId,
+  FxService, HudService, AudioService, BeatScheduler, PlayOpts, SfxId,
 };

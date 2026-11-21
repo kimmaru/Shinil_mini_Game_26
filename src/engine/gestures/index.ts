@@ -39,34 +39,50 @@ export interface HysteresisOpts {
 export interface JumpOpts extends BaseOpts, HysteresisOpts {
   /** Upward hip velocity, in shoulder-widths/sec, that counts as takeoff.
    *  Default 1.5. The attract screen uses 1.9 — a false start is more
-   *  annoying than a missed one. */
+   *  annoying than a missed one.
+   *
+   *  Velocity ALONE is not a jump: measured peaks of 1.7-2.7 sw/s occur while
+   *  standing still, stepping, running in place and standing up out of a
+   *  squat. The detector also requires a real hip RISE (~0.17 sw), which none
+   *  of those exceed. Lowering that height gate reinstates phantom jumps in
+   *  every running game. */
   enter?: number;
-  /** Hip must return to within this many shoulder-widths of baseline to re-arm. */
+  /** Hip must return to within this many shoulder-widths of baseline to
+   *  re-arm. Default 0.12 — just above the idle/fidget rise floor. */
   exit?: number;
   /** Require ankles visible. False for laptop users, whose feet are cropped. */
   requireFeetVisible?: boolean;
 }
 
 export interface SquatOpts extends BaseOpts, HysteresisOpts {
-  /** Hip drop below baseline, in shoulder-widths, to enter. Default 0.45. */
+  /** Hip drop below baseline, in shoulder-widths, to enter. Default 0.32.
+   *  A child squatting to 0.45 is filtered to ~0.37-0.43 by the time it
+   *  reaches here, so 0.45 would miss a third of real squats; 0.32 is still
+   *  2.4x the fidget floor. */
   enter?: number;
-  /** Must rise back above this to exit. Default 0.22 (~half of enter). */
+  /** Must rise back above this to exit. Default 0.16 (~half of enter). */
   exit?: number;
 }
 
 export interface ClapOpts extends BaseOpts {
-  /** Wrist separation, in shoulder-widths, that counts as closed. Default 0.42. */
+  /** Wrist separation, in shoulder-widths, that counts as closed. Default 0.42.
+   *  Nothing else in the corpus gets closer than 0.78. */
   closeAt?: number;
-  /** Must separate past this to re-arm. Default 0.75. */
+  /** Must separate past this to re-arm. Default 0.55 — a third of real
+   *  consecutive claps only reopen to 0.60-0.63, so a higher gate silently
+   *  drops a third of every clapping score. */
   openAt?: number;
   /** Minimum closing speed, shoulder-widths/sec, so slowly folded hands do not
-   *  register. Default 1.2. */
+   *  register. Default 1.2; real closures run 2.5-16. */
   minSpeed?: number;
 }
 
 export interface SwingOpts extends BaseOpts {
   side?: Side | 'both';
-  /** Minimum palm speed in shoulder-widths/sec. Default 2.2. */
+  /** Minimum WRIST speed in shoulder-widths/sec. Default 3.5.
+   *  Measured at the wrist, not the palm: `palm()`'s 1.4x finger extrapolation
+   *  multiplies the noisiest landmarks, and a resting hand reads 3.2 sw/s at
+   *  the palm against 1.6 at the wrist. */
   minSpeed?: number;
 }
 
@@ -144,9 +160,12 @@ export interface RepOpts extends BaseOpts, HysteresisOpts {
 }
 
 export interface StillnessOpts extends BaseOpts {
-  /** Multiple of the player's OWN calibrated idle energy that counts as
-   *  moving. Children cannot hold still; a global constant fails them.
-   *  Default 3.0. */
+  /** Multiple of the player's OWN calibrated `idleEnergy` that counts as
+   *  moving. This is the single most important fairness decision in the freeze
+   *  games: children cannot hold still, and a global constant fails the
+   *  fidgety ones while flattering the still ones. Default 2.5 — at 3.0 the
+   *  limit lands on the energy of running in place, and a child sprinting
+   *  reads as frozen. */
   factor?: number;
   /** Averaging window in ms. Default 200. */
   windowMs?: number;
@@ -337,7 +356,11 @@ export interface RepSignal {
 }
 
 export interface StillnessSignal {
-  /** Raw motion energy, shoulder-widths/sec summed over tracked joints. */
+  /** Motion energy: the MEAN per-joint speed over the tracked joints, in
+   *  shoulder-widths/sec. A mean, not a sum — a sum is 13x larger and makes
+   *  `CalibrationProfile.idleEnergy` meaningless to compare against.
+   *  Import `ENERGY_JOINTS`/`motionEnergy` from `pose/calibration` rather than
+   *  redefining energy, or the two will drift apart. */
   energy: number;
   still: boolean;
   /** 0..1 where 1 = perfectly still relative to this player's own baseline. */

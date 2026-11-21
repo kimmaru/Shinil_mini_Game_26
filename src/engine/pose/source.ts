@@ -71,11 +71,12 @@ export function defaultCalibration(viewW = 1280, viewH = 720): CalibrationProfil
     squatHipY: 0.64,
     reachUpY: 0.12,
     floorY: 0.93,
-    // Mean per-joint motion while standing still, SW/sec. Measured at ~0.13 on
-    // the idle clip. Freeze games threshold against a multiple of the player's
-    // OWN value, because children cannot hold still and a global constant
-    // fails them.
-    idleEnergy: 0.15,
+    // Mean per-joint motion while standing still, SW/sec. Measured through the
+    // real pipeline: idle 0.25, a fidgety child 0.49, running in place 1.04 —
+    // which is exactly why freeze games threshold against a multiple of the
+    // player's OWN value. A global constant fails the fidgety child and
+    // flatters the still one.
+    idleEnergy: 0.25,
     lowerBodyVisible: true,
     mirrored: true,
     capturedAt: 0,

@@ -40,7 +40,13 @@ const N2 = N * 2;
  *  make every threshold jump 20% the moment a shoulder is occluded, so this is
  *  a deliberate deviation from the brief. It only matters on the fallback path.
  */
-export const TORSO_TO_SHOULDER = 0.8;
+/**
+ * shoulder width / torso length, used only as a scale FALLBACK when a shoulder
+ * drops below MIN_VIS. Measured at 0.741 on this project's skeleton and ~0.74
+ * in child anthropometry. The research brief's 0.9 would step the scale ~20%
+ * the instant a shoulder occludes, which moves every threshold in every game.
+ */
+export const TORSO_TO_SHOULDER = 0.741;
 
 /** Weight of the NEW sample when smoothing scale and centre.
  *  Positions get One Euro; scale gets this, which is far heavier. A jittery

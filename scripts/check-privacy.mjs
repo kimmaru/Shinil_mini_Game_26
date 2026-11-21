@@ -4,6 +4,7 @@
 // The 개인정보 안내 page tells children and their guardians that camera frames
 // never leave the device. This script is what makes that claim auditable rather
 // than aspirational, and it is why it is a build step and not a wiki page.
+import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +31,13 @@ try {
   process.exit(1);
 }
 
+// The MediaPipe wasm runtime is vendored verbatim and uses Emscripten's
+// XMLHttpRequest loader to fetch its own .wasm from OUR origin. Scanning it for
+// request APIs is a false positive — but exempting a directory by name would be
+// a hole, so instead we prove those files are byte-identical to the npm package
+// and audit everything else.
+const VENDORED = 'dist/wasm/';
+
 async function walk(dir) {
   const out = [];
   for (const e of await readdir(dir, { withFileTypes: true })) {
@@ -40,8 +48,33 @@ async function walk(dir) {
   return out;
 }
 
-const hits = [];
+/** Verify dist/wasm/* is exactly what npm shipped — no edits, no additions. */
+async function verifyVendored() {
+  const src = resolve(ROOT, 'node_modules/@mediapipe/tasks-vision/wasm');
+  const out = resolve(ROOT, 'dist/wasm');
+  let names;
+  try {
+    names = await readdir(out);
+  } catch {
+    return []; // nothing vendored into dist
+  }
+  const problems = [];
+  for (const n of names) {
+    try {
+      const a = createHash('sha256').update(await readFile(join(src, n))).digest('hex');
+      const b = createHash('sha256').update(await readFile(join(out, n))).digest('hex');
+      if (a !== b) problems.push(`dist/wasm/${n}: does not match the @mediapipe/tasks-vision package`);
+    } catch {
+      problems.push(`dist/wasm/${n}: no counterpart in @mediapipe/tasks-vision — where did this come from?`);
+    }
+  }
+  return problems;
+}
+
+const hits = [...(await verifyVendored())];
 for (const f of await walk(DIST)) {
+  const rel = f.replace(ROOT + '/', '');
+  if (rel.startsWith(VENDORED)) continue; // hash-verified above instead
   const src = await readFile(f, 'utf8');
   for (const [re, what] of BANNED) {
     const m = re.exec(src);
@@ -61,3 +94,4 @@ relax this check.`);
   process.exit(1);
 }
 console.log('✓ privacy audit clean: no capture, no recording, no outbound requests');
+console.log('  (dist/wasm/* verified byte-identical to @mediapipe/tasks-vision)');
