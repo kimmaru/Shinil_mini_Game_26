@@ -33,8 +33,6 @@ import { C, fade, hue } from '@/engine/render/palette';
 import { manifest } from './manifest';
 import { t } from './locale';
 
-/** Goals conceded before the round is called. */
-const MAX_GOALS = 5;
 const PTS = 20;
 const LABEL = '+20';
 
@@ -53,6 +51,9 @@ const CLOSE_FROM = 0.9;
  *  verdict fails the saves a child was genuinely making. This is the window
  *  where a late hand still gets there, and it is why a scramble is possible. */
 const LINGER = 0.14;
+
+/** The ball is orange on a green pitch: it must not share the theme hue. */
+const BALL_HUE = 28;
 
 const SHOTS = 4;
 const SEGS = 8;
@@ -170,7 +171,6 @@ class GoalkeeperSave implements MiniGame {
 
   start(): void {
     this.ctx.hud.setScore(0);
-    this.ctx.hud.setLives(MAX_GOALS, MAX_GOALS);
     this.ctx.audio.music({ bpm: 118 });
   }
 
@@ -211,7 +211,9 @@ class GoalkeeperSave implements MiniGame {
       this.lowerOk = visible(p, L.LEFT_HIP, L.RIGHT_HIP)
         && (visible(p, L.LEFT_KNEE) || visible(p, L.RIGHT_KNEE));
       if (!this.rigged && p.conf > 0.4) {
-        const armPx = (p.calib.armLen > 0.5 ? p.calib.armLen : 1.6) * p.scalePx;
+        // Floored so a child far from the camera still gets zones a ball wide apart.
+        const armPx = Math.max((p.calib.armLen > 0.5 ? p.calib.armLen : 1.6) * p.scalePx,
+          Math.min(this.ctx.view.w, this.ctx.view.h) * 0.2);
         // The goal is pinned to the middle of the VIEW, not to the player: a
         // goal that follows the keeper cannot be beaten, and a child who
         // drifts sideways has to come back, which is the game.
@@ -384,7 +386,7 @@ class GoalkeeperSave implements MiniGame {
     this.saves++;
     this.combo++;
     if (this.combo > this.bestCombo) this.bestCombo = this.combo;
-    const pts = PTS + Math.floor(this.combo / 4);
+    const pts = PTS + Math.min(5, Math.floor(this.combo / 4));
     this.score += pts;
     this.savePop = 1;
 
@@ -413,12 +415,10 @@ class GoalkeeperSave implements MiniGame {
     this.goals++;
     this.combo = 0;
     this.netShake = 1;
-    this.ctx.hud.setLives(Math.max(0, MAX_GOALS - this.goals), MAX_GOALS);
     this.ctx.hud.setCombo(0);
     this.ctx.fx.miss(s.x, s.y);
     this.ctx.audio.play('thud', { gain: 0.32 });
     this.ctx.emit({ kind: 'miss' });
-    if (this.goals >= MAX_GOALS) this.ctx.emit({ kind: 'clearEarly' });
   }
 
   render(g: Renderer, _interp: number): void {
@@ -445,18 +445,17 @@ class GoalkeeperSave implements MiniGame {
     g.line(this.goalR, this.goalT, this.goalR, this.goalB, 9 * g.s, { stroke: C.ink });
     g.line(this.goalL, this.goalB, this.goalR, this.goalB, 4 * g.s, { stroke: fade(C.ink, 0.5) });
 
-    // The nine zones, each marked with which end of the body it wants: a
-    // chevron up for the hand rows, down for the foot row.
+    // The nine zones; the foot row carries an arrow so a low ball reads as a
+    // kick.
     for (let i = 0; i < 9; i++) {
       const x = this.zoneX[i]!;
       const y = this.zoneY[i]!;
       const row = this.zoneRow[i]!;
-      g.circle(x, y, this.ballR * 1.25, { stroke: fade(C.ink, 0.14), sw: 2 * g.s });
-      g.chevron(
-        x, y + (row === 2 ? this.ballR * 0.5 : -this.ballR * 0.5), this.ballR * 0.26,
-        row === 2 ? -Math.PI / 2 : Math.PI / 2,
-        { fill: fade(C.ink, 0.16) },
-      );
+      g.circle(x, y, this.ballR * 1.25, { stroke: fade(C.ink, 0.22), sw: 3 * g.s });
+      // Only the foot row is marked: an arrow up from the floor.
+      if (row === 2) {
+        g.chevron(x, y + this.ballR * 0.5, this.ballR * 0.3, -Math.PI / 2, { fill: fade(C.ink, 0.3) });
+      }
     }
 
     // Telegraphs, then balls, so a ball always draws over its own marker.
@@ -478,10 +477,11 @@ class GoalkeeperSave implements MiniGame {
       if (s.state !== 2) continue;
       g.line(s.prevX, s.prevY, s.x, s.y, s.r * 0.7, { stroke: fade(theme, 0.3) });
       g.sprite('circle', s.x, s.y, s.r * 2.2, {
-        hue: manifest.theme!.hue,
+        hue: BALL_HUE,
         rot: this.time * 6,
         glow: s.prog > CLOSE_FROM ? 12 : 0,
       });
+      g.circle(s.x, s.y, s.r * 1.1, { stroke: C.ink, sw: 4 * g.s });
     }
 
     if (this.player) {
@@ -505,7 +505,7 @@ class GoalkeeperSave implements MiniGame {
 
     if (!this.lowerOk) {
       g.text(t('hint'), g.w / 2, g.h * 0.12, {
-        size: 30 * g.s, weight: 700, align: 'center', fill: C.text,
+        size: 36 * g.s, weight: 700, align: 'center', fill: C.text,
         stroke: C.bg, sw: 6 * g.s,
       });
     }
@@ -522,7 +522,7 @@ class GoalkeeperSave implements MiniGame {
     if (this.goals === 0 && this.saves > 0) highlights.push('무실점!');
     return {
       gameId: manifest.id,
-      cleared: this.goals < MAX_GOALS,
+      cleared: this.saves > 0,
       rawScore: this.score,
       maxScore: manifest.scoring.maxScore,
       normalized: 0,

@@ -1,8 +1,9 @@
 // 1-2-3 stars. The engine computes them from manifest.scoring.starCuts, so a
 // game can never invent its own curve — this just celebrates the number.
 //
-// Stars land one at a time with a rising chime (star.1/2/3). Staggered arrival
-// is the difference between "you got 2" and "you got... TWO!".
+// Stars land one at a time, 400 ms apart, with an overshoot pop and a rising
+// chime (star.1/2/3). Staggered arrival is the difference between "you got 2"
+// and "you got... TWO!".
 import { useEffect, useState } from 'react';
 import { useServices } from '../useSession';
 import { SpriteIcon } from './SpriteIcon';
@@ -14,7 +15,8 @@ export interface StarRowProps {
   size?: 'md' | 'lg';
 }
 
-const STEP_MS = 420;
+const STEP_MS = 400;
+const PX = { md: 56, lg: 112 } as const;
 
 export function StarRow({ stars, animate = true, size = 'lg' }: StarRowProps): React.ReactElement {
   const [shown, setShown] = useState(animate ? 0 : stars);
@@ -48,7 +50,7 @@ export function StarRow({ stars, animate = true, size = 'lg' }: StarRowProps): R
           className={`stars__one${i <= shown ? ' is-on' : ''}`}
           aria-hidden="true"
         >
-          <SpriteIcon id="star" size={28} />
+          <SpriteIcon id="star" size={PX[size]} />
         </span>
       ))}
     </div>

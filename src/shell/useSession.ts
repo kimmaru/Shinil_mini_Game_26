@@ -15,6 +15,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useReducer,
 import type { CalibrationProfile, GameId, GameResult, HudService } from '@/engine/types';
 import type { AudioService, GestureService, MiniGameManifest } from '@/engine/types';
 import type { PoseSource } from '@/engine/pose/source';
+import type { AutoCalibrator } from '@/engine/pose/calibration';
 import { ALL, pickPool, type PoolFilter } from '@/engine/registry';
 import { LAUNCH_SET } from '@/engine/catalog';
 
@@ -170,6 +171,9 @@ export type SessionAction =
   | { type: 'abandon' }
   | { type: 'openOverlay'; overlay: Exclude<Overlay, 'none'> }
   | { type: 'closeOverlay' }
+  /** 설정 → 전체 삭제. Storage is wiped by clearAllStorage(); this drops the
+   *  in-memory copy so the next round is not compared against a ghost. */
+  | { type: 'clearRecords' }
   | { type: 'error'; messageKo: string | null }
   /** DEV only (`window.__mg.setState`), and the `?screen=` query param. */
   | { type: 'goto'; phase: Phase };
@@ -324,6 +328,9 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
     case 'closeOverlay':
       return { ...s, overlay: 'none' };
 
+    case 'clearRecords':
+      return { ...s, records: {}, beatRecord: false };
+
     case 'error':
       return { ...s, errorKo: a.messageKo };
 
@@ -362,6 +369,10 @@ export interface RoundRequest {
  */
 export interface ShellServices {
   pose?: PoseSource | null;
+  /** Continuous kiosk calibration for whoever is in front of the camera; null
+   *  without one. The shell publishes it on attract, freezes it for a round
+   *  and thaws it after, and draws the distance hint from tooFar/tooClose. */
+  calibration?: AutoCalibrator | null;
   /** The attract screen rents `gestures.use('jump', …)` from this — there is
    *  no bespoke jump code anywhere in the shell. */
   gestures?: GestureService | null;

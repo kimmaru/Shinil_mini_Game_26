@@ -11,10 +11,41 @@
 // All four of those failures look identical from the outside — a blank or
 // unreadable screen — which is why they are asserted mechanically.
 import { describe, expect, it } from 'vitest';
-import { Canvas2DRenderer, GLOW_BUDGET } from './canvas2d';
-import { C } from './palette';
+import { BODY, Canvas2DRenderer, GLOW_BUDGET, mittAt } from './canvas2d';
+import { C, KEYLINE, THEME_HUES } from './palette';
+import { SKY_DOTS, skyStops } from './sky';
 import { L, LANDMARK_COUNT, MIN_VIS } from '../pose/landmarks';
 import type { PlayerPose } from '../types';
+
+/** sRGB of a `#rrggbb` or `hsl(h s% l%)` colour. */
+function rgbOf(col: string): [number, number, number] {
+  const hex = /^#([0-9a-f]{6})$/i.exec(col);
+  if (hex) {
+    const v = Number.parseInt(hex[1]!, 16);
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+  }
+  const m = /hsl\(\s*([\d.]+)\s+([\d.]+)%\s+([\d.]+)%/.exec(col);
+  if (!m) throw new Error(`cannot parse ${col}`);
+  const s = +m[2]! / 100;
+  const l = +m[3]! / 100;
+  const k = (n: number): number => (n + +m[1]! / 30) % 12;
+  const f = (n: number): number =>
+    255 * (l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)));
+  return [f(0), f(8), f(4)];
+}
+const lum = (c: readonly number[]): number => {
+  const [r, g, b] = c.map((v) => {
+    const x = v / 255;
+    return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+  }) as [number, number, number];
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const ratioRgb = (a: readonly number[], b: readonly number[]): number => {
+  const x = lum(a);
+  const y = lum(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+};
+const contrast = (a: string, b: string): number => ratioRgb(rgbOf(a), rgbOf(b));
 
 interface Rec {
   op: string;
@@ -61,6 +92,7 @@ function fakeCanvas(w = 1280, h = 720) {
     clearRect: rec('clearRect'),
     fillText: rec('fillText'),
     strokeText: rec('strokeText'),
+    drawImage: rec('drawImage'),
     createLinearGradient: (...a: unknown[]) => {
       log.push({ op: 'createLinearGradient', args: a });
       return grad;
@@ -123,6 +155,13 @@ function pose(over?: Partial<PlayerPose>): PlayerPose {
   put(L.RIGHT_ELBOW, 740, 350);
   put(L.LEFT_WRIST, 520, 440);
   put(L.RIGHT_WRIST, 760, 440);
+  // Fingers just past the wrists, so the palm (where the mitt goes) is real.
+  put(L.LEFT_PINKY, 522, 466);
+  put(L.LEFT_INDEX, 514, 468);
+  put(L.LEFT_THUMB, 528, 458);
+  put(L.RIGHT_PINKY, 758, 466);
+  put(L.RIGHT_INDEX, 766, 468);
+  put(L.RIGHT_THUMB, 752, 458);
   put(L.LEFT_HIP, 600, 430);
   put(L.RIGHT_HIP, 680, 430);
   put(L.LEFT_KNEE, 595, 550);
@@ -220,8 +259,28 @@ describe('clear', () => {
     expect(st.length).toBeGreaterThan(0);
     expect(st[0]!.args).toEqual([2, 0, 0, 2, 0, 0]);
     const fills = f.log.filter((r) => r.op === 'fillRect');
-    expect(fills.length).toBe(2); // background + vignette
-    for (const r of fills) expect(r.args).toEqual([0, 0, 1280, 720]);
+    expect(fills.length).toBe(1); // the gradient
+    expect(fills[0]!.args).toEqual([0, 0, 1280, 720]);
+    // ...plus every decoration dot in ONE fill: two draws per frame in all.
+    expect(f.log.filter((r) => r.op === 'fill')).toHaveLength(1);
+    expect(f.log.filter((r) => r.op === 'arc')).toHaveLength(SKY_DOTS.length / 3);
+  });
+
+  it('keeps ink and HUD text legible on every theme sky, and the dots decorative', () => {
+    // The sky got more saturated; this is the line it must not cross. Ink
+    // keylines and text are what make objects and labels readable at 2m, and
+    // the dots must stay background (ART.md: decoration 1.2-2.0:1, never an
+    // object a child could try to touch).
+    for (const h of THEME_HUES) {
+      const stops = skyStops(h);
+      for (const [, col] of stops) {
+        expect(contrast(col, KEYLINE), `hue ${h} ${col}`).toBeGreaterThanOrEqual(8);
+        expect(contrast(col, C.text), `hue ${h} ${col}`).toBeGreaterThanOrEqual(7);
+      }
+      const top = rgbOf(stops[0]![1]);
+      const dot = top.map((v) => v * 0.7 + 255 * 0.3) as [number, number, number];
+      expect(ratioRgb(top, dot), `hue ${h} dots`).toBeLessThan(1.6);
+    }
   });
 
   it('is dark in both themes and rebuilds the gradient only on change', () => {
@@ -296,7 +355,7 @@ describe('skeleton', () => {
     const styles = f.log
       .filter((r) => r.op === 'set:strokeStyle')
       .map((r) => r.args[0]);
-    const firstInk = styles.indexOf(C.ink);
+    const firstInk = styles.indexOf(KEYLINE);
     const firstColor = styles.indexOf(C.slot[2]);
     expect(firstInk).toBeGreaterThanOrEqual(0);
     expect(firstColor).toBeGreaterThan(firstInk);
@@ -328,19 +387,68 @@ describe('skeleton', () => {
     expect(f.log.filter((r) => r.op === 'moveTo').length).toBeLessThan(withLegs);
   });
 
-  it('draws emphasised joints at ~2x so "this is the hand that matters" reads', () => {
+  it('rings an emphasised hand so "this is the hand that matters" reads', () => {
+    const f = fakeCanvas();
+    const g = new Canvas2DRenderer(f.canvas, { dpr: 1 });
+    const p = pose();
+    f.log.length = 0;
+    g.skeleton(p, { jointR: 6, emphasize: [L.LEFT_WRIST] });
+    // Mitts sit on the palm, where the games hit-test, not on the wrist.
+    const lp = { x: 0, y: 0 };
+    const rp = { x: 0, y: 0 };
+    expect(mittAt(p, 'L', lp) && mittAt(p, 'R', rp)).toBe(true);
+    const at = (q: { x: number; y: number }): number[] =>
+      f.log
+        .filter((r) => r.op === 'arc' && r.args[0] === q.x && r.args[1] === q.y)
+        .map((r) => r.args[2] as number);
+    expect(at(lp)).toContain(6); // the mitt, at jointR
+    expect(at(lp)).toContain(6 * BODY.ring); // the ring
+    expect(at(rp)).toContain(6);
+    expect(at(rp)).not.toContain(6 * BODY.ring); // not emphasised
+    // The ring is bright: the accent colour, stroked over an ink keyline.
+    const styles = f.log.filter((r) => r.op === 'set:strokeStyle').map((r) => r.args[0]);
+    expect(styles.at(-1)).toBe(C.accent);
+  });
+
+  it('composites the body ONCE through a layer, so partial alpha is a sticker, not an X-ray', () => {
+    // Painted straight onto the canvas at alpha 0.5, the ink under every limb
+    // shows through its colour and every overlap darkens.
+    const layer = fakeCanvas();
+    const f = fakeCanvas();
+    (f.raw as Record<string, unknown>)['ownerDocument'] = { createElement: () => layer.raw };
+    const g = new Canvas2DRenderer(f.canvas, { dpr: 2 });
+    g.beginFrame(0);
+    f.log.length = 0;
+    layer.log.length = 0;
+    g.skeleton(pose(), { alpha: 0.5 });
+    // The main canvas gets exactly one draw: the layer, at the body's alpha.
+    const draws = f.log.filter((r) => ['drawImage', 'fill', 'stroke', 'fillRect'].includes(r.op));
+    expect(draws.map((r) => r.op)).toEqual(['drawImage']);
+    expect(f.log.filter((r) => r.op === 'set:globalAlpha').map((r) => r.args[0])).toContain(0.5);
+    // The layer matches the backing store and holds the body itself...
+    expect(layer.raw.width).toBe(f.raw.width);
+    expect(layer.log.filter((r) => r.op === 'stroke').length).toBeGreaterThan(2);
+    // ...including the see-through belly, punched out of the LAYER only: on
+    // the opaque canvas `destination-out` would cut a black hole.
+    expect(layer.log.some((r) => r.op === 'set:globalCompositeOperation' &&
+      r.args[0] === 'destination-out')).toBe(true);
+    expect(f.log.some((r) => r.op === 'set:globalCompositeOperation' &&
+      r.args[0] === 'destination-out')).toBe(false);
+    // The composite copies only the body's box, device px to logical px.
+    const di = f.log.find((r) => r.op === 'drawImage')!.args as number[];
+    expect(di[3]! / 2).toBeCloseTo(di[7]!, 6);
+    expect(di[3]!).toBeLessThan(f.raw.width);
+  });
+
+  it('never punches the opaque canvas when there is no layer', () => {
     const f = fakeCanvas();
     const g = new Canvas2DRenderer(f.canvas, { dpr: 1 });
     f.log.length = 0;
-    g.skeleton(pose(), { jointR: 6, emphasize: [L.LEFT_WRIST] });
-    const at = (x: number, y: number): number[] =>
-      f.log
-        .filter((r) => r.op === 'arc' && r.args[0] === x && r.args[1] === y)
-        .map((r) => r.args[2] as number);
-    const wrist = Math.max(...at(520, 440)); // emphasised
-    const elbow = Math.max(...at(540, 350)); // ordinary
-    expect(at(520, 440)).toContain(12); // 2 * jointR
-    expect(wrist).toBeGreaterThan(elbow * 1.4);
+    g.skeleton(pose(), { alpha: 0.5 });
+    g.ghostBody(pose(), 0.1);
+    expect(f.log.some((r) => r.op === 'set:globalCompositeOperation' &&
+      r.args[0] !== 'source-over')).toBe(false);
+    expect(f.log.filter((r) => r.op === 'stroke').length).toBeGreaterThan(0);
   });
 });
 
@@ -481,12 +589,12 @@ describe('ghostBody', () => {
     f.log.length = 0;
     g.ghostBody(pose(), 0.6);
     expect(f.log.filter((r) => r.op === 'fill').length).toBeGreaterThan(0);
-    // Exactly two head circles (one per soft/solid pass) and nothing else
-    // centred on the nose: no eyes, no mouth. This is a shadow, not a portrait.
+    // Exactly one head circle and nothing else centred on the nose: no eyes,
+    // no mouth. This is a shadow, not a portrait.
     const atNose = f.log.filter(
       (r) => r.op === 'arc' && r.args[0] === 640 && r.args[1] === 170,
     );
-    expect(atNose).toHaveLength(2);
+    expect(atNose).toHaveLength(1);
     for (const n of numericArgs(f.log)) expect(Number.isFinite(n)).toBe(true);
   });
 
@@ -525,9 +633,13 @@ describe('skeleton: confidence and taper', () => {
     f.log.length = 0;
     // Just above the visibility floor: should draw, but faintly.
     g.skeleton(player({ [L.LEFT_WRIST]: MIN_VIS + 0.06 }));
-    const alphas = f.log.filter((r) => r.op === 'set:globalAlpha').map((r) => r.args[0] as number);
-    const partial = alphas.filter((a) => a > 0 && a < 0.9);
-    expect(partial.length).toBeGreaterThan(0);
+    const alphas = (log: Rec[]): Set<number> =>
+      new Set(log.filter((r) => r.op === 'set:globalAlpha').map((r) => r.args[0] as number));
+    const full = fakeCanvas();
+    new Canvas2DRenderer(full.canvas, { dpr: 1 }).skeleton(player());
+    const sure = alphas(full.log);
+    const faint = [...alphas(f.log)].filter((a) => a > 0 && a < 0.5 && !sure.has(a));
+    expect(faint.length).toBeGreaterThan(0);
   });
 
   it('draws nothing for a limb below the visibility floor', () => {
@@ -579,9 +691,16 @@ describe('skeleton: confidence and taper', () => {
   it('draws no joint dots at all when asked', () => {
     const f = fakeCanvas();
     const g = new Canvas2DRenderer(f.canvas, { dpr: 1 });
+    const p = pose();
     f.log.length = 0;
-    g.skeleton(player(), { jointSet: 'none', outline: false });
-    // The head ring is still drawn — a skeleton without one reads as decapitated.
-    expect(f.log.filter((r) => r.op === 'arc').length).toBeLessThanOrEqual(2);
+    g.skeleton(p, { jointSet: 'none', outline: false });
+    const arcAt = (x: number, y: number): boolean =>
+      f.log.some((r) => r.op === 'arc' && r.args[0] === x && r.args[1] === y);
+    const lp = { x: 0, y: 0 };
+    mittAt(p, 'L', lp);
+    expect(arcAt(lp.x, lp.y)).toBe(false); // no mitt
+    expect(arcAt(592, 660)).toBe(false); // no ankle dot
+    // The head is still drawn — a body without one reads as decapitated.
+    expect(arcAt(640, 170)).toBe(true);
   });
 });

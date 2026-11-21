@@ -2,14 +2,14 @@ import type { MiniGameManifest } from '@/engine/types';
 
 export const manifest: MiniGameManifest = {
   id: 'shooting-star-grab',
-  nameKo: '별똥별 낚아채기',
+  nameKo: '별똥별 잡기',
   taglineKo: '별이 가는 쪽으로 쓸어요!',
   howToKo: [
-    '별똥별이 가는 쪽으로 손을 움직여요',
-    '별이 손에 붙으면 그대로 쓸어요',
+    '별똥별을 손으로 쓸어 잡아요',
+    '별이 가는 쪽으로 쓸면 점수가 더 커요!',
     '두 개가 오면 양손을 써요',
   ],
-  icon: 'star',
+  icon: 'gi-shooting-star-grab',
   theme: { hue: 266 },
 
   difficulty: 2,
@@ -18,15 +18,15 @@ export const manifest: MiniGameManifest = {
   space: 'standing',
   players: { min: 1, max: 1, mode: 'solo' },
 
-  requiredLandmarks: ['head', 'arms', 'hands', 'torso'],
+  requiredLandmarks: ['arms', 'hands', 'torso'],
   gestures: ['reach'],
 
   durationMs: 50_000,
-  // ~30 stars cross in a round. A catch is 20, a direction-matched catch 40,
-  // plus a small combo bonus — so a strong round is ~26 catches with half of
-  // them clean. Calibrated against the swing-wide clip, which sweeps hard but
-  // matches nothing on purpose, and lands around two stars.
-  scoring: { kind: 'count', maxScore: 620, starCuts: [0.3, 0.55, 0.8] },
+  // ~41 stars cross in a round. A catch is 10, a catch swept the way the star
+  // is going is 30. A competent 9-year-old catches ~28 with over half swept
+  // right (~600); maxScore sits below that so 3 stars is reachable. The dev
+  // clip, a blind arm-windmill, catches ~14 by luck and lands one star.
+  scoring: { kind: 'count', maxScore: 520, starCuts: [0.3, 0.55, 0.8] },
 
   a11y: {
     keyboardFallback: true,
@@ -37,6 +37,6 @@ export const manifest: MiniGameManifest = {
   tags: ['순발력', '집중', '움직임'],
   version: 1,
   author: 'A2',
-  enabled: false,
+  enabled: true,
   dev: { clip: 'swing-wide' },
 };

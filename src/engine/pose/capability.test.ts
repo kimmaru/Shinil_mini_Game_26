@@ -32,7 +32,7 @@ describe('detectCapability', () => {
     const c = detectCapability({ maxPlayers: 2, probe: probe() });
     expect(c.tier).toBe('high');
     expect(c.numPoses).toBe(2);
-    expect(c.width).toBe(1280);
+    expect(c.width).toBe(960);
     expect(c.delegate).toBe('GPU');
     expect(c.warningKo).toBeUndefined();
   });

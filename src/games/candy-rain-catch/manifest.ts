@@ -4,9 +4,9 @@ export const manifest: MiniGameManifest = {
   id: 'candy-rain-catch',
   nameKo: '사탕비 받아요',
   taglineKo: '머리 바구니로 받아요!',
-  howToKo: ['머리 위에 바구니가 있어요', '몸을 움직여 사탕을 받으세요', '돌멩이는 피해요!'],
+  howToKo: ['머리 위에 바구니가 있어요', '몸을 움직여 사탕을 받아요', '돌멩이는 피해요!'],
   /** A sprite id from src/engine/render/sprites.ts — never an emoji. */
-  icon: 'candy',
+  icon: 'gi-candy-rain-catch',
   theme: { hue: 320 },
 
   difficulty: 1,

@@ -4,7 +4,7 @@ const S = {
   oops: '앗, 맞았어요!',
   duck: '숙여요!',
   dodge: '잘 피했어요!',
-  hint: '팔을 당겼다가 앞으로 던져요',
+  hint: '몸이 다 보이게 서 볼까요?',
 } as const;
 
 export type Key = keyof typeof S;

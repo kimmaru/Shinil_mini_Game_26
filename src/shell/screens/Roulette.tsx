@@ -3,39 +3,36 @@
 //
 // `decideRound()` picks the winner BEFORE this screen ever mounts: unbiased
 // `secureInt` (rejection sampling, not `% n`) wrapped in a shuffle bag so
-// nothing repeats until the bag empties — children notice a repeat within two
-// minutes ("또 이거야?"). The wheel then animates to a rotation computed from
-// that index. The animation is cosmetic and cannot disagree with the result.
+// nothing repeats until the bag empties. The board then plays a hop schedule
+// computed from that index (../hops.ts). The animation is cosmetic and cannot
+// disagree with the result.
 //
-// Eight slices, never 58. A 58-slice wheel is illegible and the "저거 싫어"
-// rate goes up.
+// Eight tiles, never 58: a guest who sees 58 options starts shopping instead
+// of playing. No "near miss" theatre either — the plan forbids teasing a child
+// with the game they almost got.
 // ════════════════════════════════════════════════════════════════════════════
-import { useEffect, useState } from 'react';
-import type { GameId } from '@/engine/types';
-import type { PoolFilter } from '@/engine/registry';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../components/Button';
-import { Wheel } from '../components/Wheel';
-import { WHEEL_SIZE, type WheelItem } from '../useSession';
-import { SpriteIcon } from '../components/SpriteIcon';
+import { RouletteBoard } from '../components/RouletteBoard';
+import type { WheelItem } from '../useSession';
 
 // Round selection lives in ../rounds.ts, which wraps RoundScheduler — the one
-// implementation of the no-repeat bag, mechanic variety and the child-safety
-// intensity pacing. Re-exported here so this screen stays the obvious place to
-// look for it.
+// implementation of the no-repeat bag and mechanic variety. Re-exported here
+// so this screen stays the obvious place to look for it.
 export { decideRound, type RoundPick } from '../rounds';
 
 export interface RouletteProps {
   shortlist: WheelItem[];
   chosenIndex: number;
   reducedMotion: boolean;
-  /** Proceed to the intro. */
+  /** Proceed to the countdown. */
   onDone: () => void;
   /** No games at all — the only honest thing is to say so. */
   onBack: () => void;
 }
 
-/** How long the winner stays on screen before the intro takes over. */
-const SHOWCASE_MS = 1100;
+/** How long the winner sits in the centre before the countdown takes over. */
+const SHOWCASE_MS = 1500;
 
 export function Roulette({
   shortlist,
@@ -45,20 +42,22 @@ export function Roulette({
   onBack,
 }: RouletteProps): React.ReactElement {
   const [landed, setLanded] = useState(false);
+  const [skip, setSkip] = useState(false);
   const winner = shortlist[chosenIndex];
+  const onLanded = useCallback(() => setLanded(true), []);
 
   useEffect(() => {
     if (!landed) return;
-    const id = window.setTimeout(onDone, reducedMotion ? 250 : SHOWCASE_MS);
+    const id = window.setTimeout(onDone, SHOWCASE_MS);
     return () => window.clearTimeout(id);
-  }, [landed, onDone, reducedMotion]);
+  }, [landed, onDone]);
 
   if (shortlist.length === 0 || !winner) {
     return (
       <main className="screen">
         <h1 className="h1 center">아직 놀 수 있는 게임이 없어요</h1>
-        <p className="body-lg center dim">조금만 기다려 주세요. 곧 게임이 들어와요!</p>
-        <Button variant="primary" size="huge" onClick={onBack}>
+        <p className="body-lg center slab-note">조금만 기다려 주세요. 곧 게임이 들어와요!</p>
+        <Button variant="go" size="huge" icon="ui-home" onClick={onBack}>
           돌아가기
         </Button>
       </main>
@@ -67,35 +66,32 @@ export function Roulette({
 
   return (
     <main className="screen screen--full roulette">
-      <h1 className="h2 center roulette__title">
+      <h1 className="display-2 center roulette__title" key={landed ? 'y' : 'n'}>
         {landed ? '이거 하자!' : '어떤 게임일까?'}
       </h1>
 
-      <Wheel
+      <RouletteBoard
         items={shortlist}
         chosenIndex={chosenIndex}
         reducedMotion={reducedMotion}
-        onLanded={() => setLanded(true)}
+        skip={skip}
+        onLanded={onLanded}
       />
 
-      {/* polite, not assertive: the wheel is already shouting visually. */}
-      <div className="roulette__result" aria-live="polite" aria-atomic="true">
-        {landed ? (
-          <div className="card card--tinted slam-in" style={{ ['--hue' as string]: winner.hue }}>
-            <span className="display-2" aria-hidden="true">
-              <SpriteIcon id={winner.icon} size={96} hue={winner.hue} />
-            </span>
-            <p className="h1">{winner.nameKo}</p>
-          </div>
+      {/* polite, not assertive: the board is already shouting visually. */}
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        {landed ? `${winner.nameKo}! 이 게임을 해요.` : ''}
+      </p>
+
+      {/* Children will mash this. It jumps to the landed state on the SAME
+          winner and then disappears, so mashing cannot skip the reveal. */}
+      <div className="roulette__foot">
+        {!landed && !skip ? (
+          <Button variant="ghost" icon="ui-next" onClick={() => setSkip(true)}>
+            건너뛰기
+          </Button>
         ) : null}
       </div>
-
-      {/* Children will mash this. Always allow skipping to the result. */}
-      {!landed ? (
-        <Button variant="ghost" onClick={onDone} className="roulette__skip">
-          건너뛰기 ⏭
-        </Button>
-      ) : null}
     </main>
   );
 }

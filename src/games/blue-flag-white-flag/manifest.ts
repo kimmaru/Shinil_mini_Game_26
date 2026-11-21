@@ -3,11 +3,11 @@ import type { MiniGameManifest } from '@/engine/types';
 export const manifest: MiniGameManifest = {
   id: 'blue-flag-white-flag',
   nameKo: '청기백기',
-  taglineKo: '청기 올리고 백기 내려요!',
-  howToKo: ['지시를 잘 듣고 보세요', '오른손=청기, 왼손=백기', '"~하지 말고"를 조심하세요'],
+  taglineKo: '청기 올려! 백기 내려!',
+  howToKo: ['지시를 잘 읽어요', '오른손은 청기, 왼손은 백기예요', '"하지 말고"는 조심해요'],
   /** A sprite id from src/engine/render/sprites.ts — never an emoji. The
    *  flags themselves are drawn by this game, not this lobby icon. */
-  icon: 'triangle',
+  icon: 'gi-blue-flag-white-flag',
   theme: { hue: 212 },
 
   // The whole point is cognitive load, not coordination: color + verb +
@@ -21,11 +21,10 @@ export const manifest: MiniGameManifest = {
   gestures: ['raise'],
 
   durationMs: 50_000,
-  // A strong player's score, not a theoretical maximum. Measured: the
-  // `swing-wide` clip — both arms sweeping opposite arcs, so every up/down x
-  // left/right combination recurs every ~2s — scores 150, just past three
-  // stars once `npm run shot` confirms the real distribution.
-  scoring: { kind: 'count', maxScore: 150, starCuts: [0.27, 0.5, 0.75] },
+  // About 16 instructions fit in a round at 10 points each; a strong child
+  // answers around 13 of them. `swing-wide` waves both arms on a fixed rhythm
+  // without reading anything and answers about half, so it lands near two stars.
+  scoring: { kind: 'count', maxScore: 130, starCuts: [0.27, 0.5, 0.75] },
 
   a11y: {
     // Z/X raise the subject's own left/right wrist independently, which is
@@ -38,6 +37,6 @@ export const manifest: MiniGameManifest = {
   tags: ['인지력', '전래놀이', '앉아서'],
   version: 1,
   author: 'A6',
-  enabled: false,
+  enabled: true,
   dev: { clip: 'swing-wide' },
 };

@@ -192,7 +192,7 @@ class FruitSlash implements MiniGame {
     // The blade trail IS this game. Drawn by the engine on top of the game, so
     // it survives hitstop and never fights the skeleton overlay.
     this.ctx.fx.trail(x0, y0, x1, y1, {
-      color: kick ? C.info : hue(manifest.theme?.hue ?? 26, 82, 46),
+      color: kick ? C.info : hue(manifest.theme?.hue ?? 205, 82, 46),
       width: kick ? 9 : 14,
       life: 0.22,
     });
@@ -408,7 +408,7 @@ class FruitSlash implements MiniGame {
     // reads as "it can see me"; a game that draws nothing reads as broken.
     if (this.player) {
       g.ghostBody(this.player, 0.09);
-      g.skeleton(this.player, { alpha: 0.42, emphasize: HANDS });
+      g.skeleton(this.player, { alpha: 0.6, emphasize: HANDS });
     }
 
     for (let i = 0; i < this.bits.n; i++) {
@@ -436,6 +436,16 @@ class FruitSlash implements MiniGame {
         const v = this.bits.hp[i]!;
         g.circle(x, y, r * 1.16 * grow, { stroke: fade(KEYLINE, 0.34), sw: 3 * g.s });
         g.sprite(FRUIT_SPRITE[v]!, x, y, r * 2 * grow, { rot, hue: FRUIT_HUE[v]! });
+        if (v !== STAR_FRUIT) {
+          // A leaf and a glint, so a round tinted disc reads as fruit. They
+          // turn with the fruit, which is what makes the spin visible.
+          g.circle(x + Math.sin(rot) * r * 0.98, y - Math.cos(rot) * r * 0.98, r * 0.2, {
+            fill: hue(125, 70, 38),
+          });
+          g.circle(x + Math.cos(rot - 2.3) * r * 0.5, y + Math.sin(rot - 2.3) * r * 0.5, r * 0.14, {
+            fill: fade(C.white, 0.7),
+          });
+        }
       }
       g.restore();
     }
@@ -443,7 +453,7 @@ class FruitSlash implements MiniGame {
     if (this.player) {
       const p = this.player;
       const hr = 20 * g.s;
-      const blade = hue(manifest.theme?.hue ?? 26, 82, 46);
+      const blade = hue(manifest.theme?.hue ?? 205, 82, 46);
       for (let s = 0; s < 2; s++) {
         const j = s === 0 ? L.LEFT_WRIST : L.RIGHT_WRIST;
         g.circle(p.px[j * 2]!, p.px[j * 2 + 1]!, hr, { stroke: blade, sw: 4 * g.s, glow: 10 });

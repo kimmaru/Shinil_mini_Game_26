@@ -32,11 +32,11 @@ export function Setup({
     <main className="screen screen--setup" aria-labelledby="setup-h">
       <div className="setup__card">
         <SpriteIcon id="ui-camera" size={96} hue={212} />
-        <h1 id="setup-h" className="setup__title">부스 준비</h1>
+        <h1 id="setup-h" className="setup__title">게임 준비</h1>
 
         {started ? (
           <>
-            <ProgressRing value={progress} size={160} />
+            <ProgressRing value={progress} size={160} color="var(--c-tangerine)" />
             <p className="setup__label" aria-live="polite">{labelKo}</p>
           </>
         ) : (
@@ -45,9 +45,9 @@ export function Setup({
                 rather than a guest, which is why it is allowed to be a
                 sentence instead of a graphic. */}
             <p className="setup__label">
-              카메라를 켜고 준비를 마치면 하루 종일 그대로 두면 돼요.
+              시작을 누르고 카메라를 허용하면 바로 놀 수 있어요.
             </p>
-            <Button variant="primary" size="huge" onClick={onStart}>시작</Button>
+            <Button variant="go" size="huge" icon="ui-play" onClick={onStart}>시작</Button>
           </>
         )}
 

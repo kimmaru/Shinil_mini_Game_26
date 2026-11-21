@@ -27,9 +27,10 @@ import { t } from './locale';
  * breaks the combo and soaks their feet, and the next wave is already coming.
  * The round ends when the clock does.
  */
+const LABELS = ['+0', '+1', '+2', '+3', '+4', '+5', '+6', '+7', '+8', '+9', '+10'] as const;
 /** Hard cap on waves, because every wave is a jump and jumping is the most
  *  tiring thing in the catalogue. */
-const MAX_WAVES = 14;
+const MAX_WAVES = 10;
 
 interface Wave {
   /** 0 = just spawned at the horizon, 1 = past the player. */
@@ -66,6 +67,7 @@ class WaveJump implements MiniGame {
   private combo = 0;
   private bestCombo = 0;
   private jumps = 0;
+  private spawned = 0;
   private time = 0;
   private airborne = false;
   private splash = 0;
@@ -75,7 +77,7 @@ class WaveJump implements MiniGame {
     this.ctx = ctx;
     this.jump = ctx.gestures.use('jump', {
       // Slightly easier than the attract screen's 1.9: here a missed jump
-      // costs a life, so a false negative is the worse failure.
+      // breaks the combo, so a false negative is the worse failure.
       enter: 1.45,
       cooldownMs: 320,
       requireFeetVisible: false,
@@ -84,7 +86,7 @@ class WaveJump implements MiniGame {
       // 2.8 -> 2.2s between waves. Tighter than this forces back-to-back
       // jumping, which the safety guidance rules out and which no 7-year-old
       // sustains for 35 seconds anyway.
-      { startInterval: 2.8, endInterval: 2.2, jitter: 0.18 },
+      { startInterval: 3.4, endInterval: 2.6, jitter: 0.18 },
       ctx.rng,
       manifest.durationMs / 1000,
     );
@@ -117,7 +119,7 @@ class WaveJump implements MiniGame {
       }
     }
 
-    if (this.jumps < MAX_WAVES && this.spawner.tick(dt) > 0) this.spawnWave();
+    if (this.spawned < MAX_WAVES && this.spawner.tick(dt) > 0) this.spawnWave();
     this.advance(dt);
   }
 
@@ -128,6 +130,7 @@ class WaveJump implements MiniGame {
     // Foam only appears once the real rhythm is established, or the game is
     // just confusing rather than playful.
     w.foam = d > 0.35 && chance(this.ctx.rng, 0.25);
+    if (!w.foam) this.spawned++;
     w.p = 0;
     w.speed = lerp(0.42, 0.62, d) * randRange(this.ctx.rng, 0.92, 1.08);
     w.judged = false;
@@ -178,7 +181,7 @@ class WaveJump implements MiniGame {
       this.ctx.fx.burst(this.ctx.view.w / 2, y, {
         count: 16, color: hue(manifest.theme!.hue), sprite: 'droplet', speed: 380, gravity: 500,
       });
-      this.ctx.fx.popText(this.ctx.view.w / 2, y - 40, `+${4 + Math.floor(this.combo / 3)}`);
+      this.ctx.fx.popText(this.ctx.view.w / 2, y - 40, LABELS[Math.min(4 + Math.floor(this.combo / 3), LABELS.length - 1)]!);
       this.ctx.audio.playLadder('splash', this.combo);
       if (this.combo % 3 === 0) this.ctx.hud.toast(t('nice'), { color: C.accent });
       this.ctx.hud.setScore(this.score);
@@ -193,8 +196,7 @@ class WaveJump implements MiniGame {
     this.splash = 1;
     this.ctx.hud.setCombo(0);
     this.ctx.hud.toast(t('wet'), { color: C.info });
-    this.ctx.audio.play('splash', { gain: 0.6 });
-    this.ctx.fx.shake(0.12);
+    this.ctx.audio.play('splash', { gain: 0.25 });
     this.ctx.emit({ kind: 'miss' });
   }
 
@@ -221,10 +223,10 @@ class WaveJump implements MiniGame {
         : inWindow ? C.accent : hue(200, 85, 62);
       g.line(g.w / 2 - halfW, y, g.w / 2 + halfW, y, thick, { stroke: col, glow: w.foam ? 0 : 10 });
       if (!w.foam && w.p > 0.45) {
-        g.sprite('wave', g.w / 2, y - thick, lerp(34, 100, w.p) * g.s, { hue: 200 });
+        g.sprite('wave', g.w / 2, y - thick, lerp(70, 190, w.p) * g.s, { hue: 200 });
       }
       if (w.foam && w.p > 0.45) {
-        g.sprite('bubble', g.w / 2, y - thick, lerp(26, 64, w.p) * g.s);
+        g.sprite('bubble', g.w / 2, y - thick, lerp(50, 120, w.p) * g.s);
       }
     }
 

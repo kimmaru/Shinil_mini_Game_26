@@ -4,10 +4,12 @@ export const manifest: MiniGameManifest = {
   id: 'fruit-slash',
   nameKo: '과일 쓱싹',
   taglineKo: '과일을 쓱 베어요!',
-  howToKo: ['날아오는 과일을 손으로 쓱!', '발로 차도 잘려요', '돌은 건드리지 마세요'],
+  howToKo: ['날아오는 과일을 손으로 쓱 베어요', '발로 차도 잘려요', '돌은 건드리지 마세요'],
   /** A sprite id from src/engine/render/sprites.ts — never an emoji. */
-  icon: 'star',
-  theme: { hue: 26 },
+  icon: 'gi-fruit-slash',
+  // A cool sky wash: red, green and gold fruit pop on it, and none of them
+  // would on the orange this game started with.
+  theme: { hue: 205 },
 
   difficulty: 2,
   // Big arm arcs plus the occasional kick. Tiring, but nothing repetitive and
@@ -39,6 +41,6 @@ export const manifest: MiniGameManifest = {
   tags: ['반사신경', '전신', '서서'],
   version: 1,
   author: 'A3',
-  enabled: false,
+  enabled: true,
   dev: { clip: 'swing-wide' },
 };

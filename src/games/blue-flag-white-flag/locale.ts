@@ -2,7 +2,11 @@ const S = {
   goal: '청기·백기를 지시대로!',
   nice: '좋아요!',
   wow: '정확해요!',
-  keepWarn: '그대로 두세요!',
+  keepWarn: '말하지 않은 깃발은 그대로 두세요!',
+  up: '올려',
+  down: '내려',
+  stay: '그대로',
+  trap: '함정!',
 } as const;
 
 export type Key = keyof typeof S;

@@ -4,19 +4,13 @@ export const manifest: MiniGameManifest = {
   id: 'arm-pump-inflate',
   nameKo: '팔 펌프 풍선',
   taglineKo: '펌프질로 풍선을 부풀려요!',
-  howToKo: ['팔을 위아래로 크게 펌프질해요', '너무 크게 불면 풍선이 터져요', '터져도 괜찮아요, 새 풍선이 와요'],
-  // A sprite id from src/engine/render/sprites.ts — never an emoji.
-  icon: 'balloon',
-  theme: { hue: 322 },
+  howToKo: ['두 팔을 위아래로 힘껏 흔들어요', '빵빵해지면 풍선이 뻥! 터져요', '터지면 새 풍선이 나와요'],
+  icon: 'gi-arm-pump-inflate',
+  theme: { hue: 212 },
 
   difficulty: 1,
-  // NOTE: the spec for this batch asked for intensity 2, but the manifest
-  // validator (frozen) rejects `space:'seated'` paired with intensity >= 1
-  // only when... actually it rejects intensity >= 2 with seated outright.
-  // A seated pumping game is genuinely low-exertion, so 1 is also the more
-  // honest number, not just the one that passes validation.
+  // Seated pumping is gentle, and the validator rejects seated + intensity 2.
   intensity: 1,
-  // Playable sitting down.
   space: 'seated',
   players: { min: 1, max: 1, mode: 'solo' },
 
@@ -24,9 +18,9 @@ export const manifest: MiniGameManifest = {
   gestures: ['rep'],
 
   durationMs: 35_000,
-  // A strong player (swing-wide, looped) pumps a few balloons to the edge of
-  // bursting and banks most of each. maxScore is what that run lands on.
-  scoring: { kind: 'count', maxScore: 220, starCuts: [0.3, 0.55, 0.8] },
+  // 10 points per pump, 50 per popped balloon. A strong child pumps ~1.7/s
+  // (~55 pumps, ~6 balloons, ~850); the swing-wide metronome (0.5 Hz) lands ~0.3.
+  scoring: { kind: 'count', maxScore: 800, starCuts: [0.2, 0.45, 0.75] },
 
   a11y: {
     keyboardFallback: true,
@@ -35,8 +29,8 @@ export const manifest: MiniGameManifest = {
     audioOptional: true,
   },
   tags: ['리듬', '조절력', '앉아서'],
-  version: 1,
+  version: 2,
   author: 'A7',
-  enabled: false,
+  enabled: true,
   dev: { clip: 'swing-wide' },
 };

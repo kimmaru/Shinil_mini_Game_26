@@ -6,7 +6,7 @@
 // than aspirational, and it is why it is a build step and not a wiki page.
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -73,13 +73,14 @@ async function verifyVendored() {
 
 const hits = [...(await verifyVendored())];
 for (const f of await walk(DIST)) {
-  const rel = f.replace(ROOT + '/', '');
+  // Forward slashes on every OS, or the vendored prefix never matches on Windows.
+  const rel = relative(ROOT, f).replaceAll('\\', '/');
   if (rel.startsWith(VENDORED)) continue; // hash-verified above instead
   const src = await readFile(f, 'utf8');
   for (const [re, what] of BANNED) {
     const m = re.exec(src);
     if (m) {
-      hits.push(`${f.replace(ROOT + '/', '')}: ${what} — matched ${JSON.stringify(m[0])}`);
+      hits.push(`${rel}: ${what} — matched ${JSON.stringify(m[0])}`);
     }
   }
 }

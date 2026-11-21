@@ -120,7 +120,71 @@ describe('loop: fixed timestep', () => {
   });
 });
 
+describe('loop: render cap', () => {
+  it('renders at maxFps but still simulates every step', () => {
+    // The attract reel is a backdrop: half the draws, same game.
+    const raf = fakeRaf();
+    const h = harness();
+    const loop = createLoop(h.game, stubPose(), h.g, { fx: h.fx, maxFps: 30 });
+    loop.start();
+    raf.advance(0);
+    for (let i = 0; i < 60; i++) raf.advance(16.667); // 1.0s of 60 Hz rAF
+    expect(h.game.update).toHaveBeenCalledTimes(60);
+    const renders = (h.game.render as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(renders).toBeGreaterThanOrEqual(29);
+    expect(renders).toBeLessThanOrEqual(31);
+    loop.stop();
+  });
+
+  it('holds the cap on a 120 Hz display too', () => {
+    const raf = fakeRaf();
+    const h = harness();
+    const loop = createLoop(h.game, stubPose(), h.g, { fx: h.fx, maxFps: 30 });
+    loop.start();
+    raf.advance(0);
+    for (let i = 0; i < 120; i++) raf.advance(8.334); // 1.0s of 120 Hz rAF
+    expect(h.game.update).toHaveBeenCalledTimes(60);
+    const renders = (h.game.render as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(renders).toBeGreaterThanOrEqual(29);
+    expect(renders).toBeLessThanOrEqual(31);
+    loop.stop();
+  });
+
+  it('renders every tick without a cap', () => {
+    const raf = fakeRaf();
+    const h = harness();
+    const loop = createLoop(h.game, stubPose(), h.g, { fx: h.fx });
+    loop.start();
+    raf.advance(0);
+    for (let i = 0; i < 60; i++) raf.advance(16.667);
+    expect((h.game.render as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(60);
+    loop.stop();
+  });
+});
+
 describe('loop: effects ordering', () => {
+  it('brackets every frame with the renderer frame hooks, with g.t advancing', () => {
+    // Without beginFrame, g.t is stuck at 0 and the glow budget is spent once
+    // per round instead of once per frame.
+    const raf = fakeRaf();
+    const h = harness();
+    const ts: number[] = [];
+    const g = Object.assign(h.g, {
+      beginFrame: (t: number) => { ts.push(t); h.order.push('beginFrame'); },
+      endFrame: () => h.order.push('endFrame'),
+    });
+    const loop = createLoop(h.game, stubPose(), g, { fx: h.fx });
+    loop.start();
+    raf.advance(0);
+    raf.advance(16);
+    raf.advance(16);
+    const i = (s: string): number => h.order.indexOf(s);
+    expect(i('beginFrame')).toBeLessThan(i('save'));
+    expect(i('fx.draw')).toBeLessThan(i('endFrame'));
+    expect(ts.at(-1)!).toBeGreaterThan(ts[0]!);
+    loop.stop();
+  });
+
   it('draws shake around the game but the fx pass on top of it', () => {
     // Camera shake must move the world; particles, floating text and the
     // flash must NOT shake with it or the screen reads as broken.
@@ -200,5 +264,20 @@ describe('loop: pause', () => {
     expect((h.game.update as ReturnType<typeof vi.fn>).mock.calls.length - before)
       .toBeLessThanOrEqual(2);
     loop.stop();
+  });
+
+  it('hands a paused pose source back running when the round is torn down', () => {
+    // Page hidden mid-round: the host pauses the loop, then the shell aborts
+    // the round. The camera source is shared with every later round.
+    fakeRaf();
+    const h = harness();
+    const pose = stubPose();
+    const loop = createLoop(h.game, pose, h.g, { fx: h.fx });
+    loop.start();
+    loop.pause();
+    loop.stop();
+    expect(pose.resume).toHaveBeenCalledTimes(1);
+    loop.stop();
+    expect(pose.resume).toHaveBeenCalledTimes(1);
   });
 });

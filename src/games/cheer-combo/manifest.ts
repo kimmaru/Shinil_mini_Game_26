@@ -4,13 +4,11 @@ export const manifest: MiniGameManifest = {
   id: 'cheer-combo',
   nameKo: '응원 콤보',
   taglineKo: '지시대로 손을 들어요!',
-  howToKo: ['왼손! 오른손! 양손!', '지시대로 번쩍 들어요', '만세는 번쩍 더 높이!'],
-  /** A sprite id from src/engine/render/sprites.ts — never an emoji. */
-  icon: 'star',
+  howToKo: ['왼손! 오른손! 양손! 만세!', '말한 손만 번쩍 들어요', '이어서 하면 콤보가 쌓여요'],
+  icon: 'gi-cheer-combo',
   theme: { hue: 322 },
 
-  // Reaction + listening, not coordination between limbs: one clean signal
-  // per cue. The "반대로" twist in the back half is what earns a 2, not a 3.
+  // Reaction + listening, one clean signal per cue.
   difficulty: 2,
   intensity: 1,
   space: 'seated',
@@ -20,22 +18,21 @@ export const manifest: MiniGameManifest = {
   gestures: ['raise'],
 
   durationMs: 45_000,
-  // A strong player's score, not a theoretical maximum. Measured: the
-  // `hold-poses` clip (T / Y / overhead / one-leg / asymmetric / lean, each
-  // held ~3s — a real pose, not a metronome) scores 268, just past three stars.
-  scoring: { kind: 'count', maxScore: 260, starCuts: [0.26, 0.5, 0.75] },
+  // A cue plus its rest beat takes ~1.6 s, so a round holds ~28 cues. A strong
+  // child lands ~24 of them at 10-20 points each with the combo bonus.
+  scoring: { kind: 'count', maxScore: 330, starCuts: [0.2, 0.5, 0.75] },
 
   a11y: {
     // Z/X raise the subject's own left/right wrist; holding both together
-    // drives the virtual body to an overhead pose, which also clears 만세.
+    // drives the virtual body overhead, which also clears 만세.
     keyboardFallback: true,
     noFlashing: true,
     colorBlindSafe: true,
     audioOptional: true,
   },
   tags: ['반응속도', '응원', '앉아서'],
-  version: 1,
+  version: 2,
   author: 'A6',
-  enabled: false,
-  dev: { clip: 'hold-poses' },
+  enabled: true,
+  dev: { clip: 'swing-wide' },
 };

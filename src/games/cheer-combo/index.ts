@@ -1,19 +1,27 @@
 // ─── cheer-combo — 응원 콤보 (Shape A, discrete cue x pose trigger) ───────────
 //
 // MIRRORING, checked against src/engine/pose/landmarks.ts rather than assumed:
-// "left"/"right" everywhere in this engine (Side 'L'/'R', L.LEFT_WRIST, the
-// RaiseDetector's `left`/`right`) are already THE PLAYER'S OWN left and right.
-// The preview is mirrored so the player's actual left hand appears on the
-// screen-LEFT — landmarks.ts says so explicitly, and VirtualPoseSource's Z/X
-// keys confirm it the other way (Z, the physically-left key, raises
-// LEFT_WRIST). So "왼손!" simply watches `raiseEither.left`; there is no flip
-// to apply anywhere in this file — the engine already did it, once, for everyone.
+// "left"/"right" everywhere in this engine (L.LEFT_WRIST, the raise detector's
+// `left`/`right`) are already THE PLAYER'S OWN left and right, and the preview
+// is mirrored, so the player's left hand appears on the screen-LEFT. "왼손!"
+// simply watches `raise.left`; the pictogram and the glowing hand marker for a
+// left cue are drawn on the screen's left. No flip is needed anywhere.
+//
+// FAIRNESS OF THE CUE: "왼손" means the left hand ONLY. Without the `!right`
+// condition, keeping both hands up would satisfy 왼손, 오른손, 양손 and 만세
+// alike and the game would be a free-points machine. A cue is also never
+// chosen if the player's current pose already satisfies it, so a match always
+// means the player moved after the cue appeared.
+//
+// Two rented raise detectors do the work: `above: 0.25` for the ordinary cues
+// and a stricter `above: 0.85` for 만세. A miss is quiet: the combo ends, a
+// soft "다음!" shows, and the next cue comes after a short rest.
 import type {
   Detector, EndReason, GameContext, GameResult, MiniGame,
-  PlayerPose, PoseFrame, Renderer, SignalOf,
+  PlayerPose, PoseFrame, Pt, Renderer, SignalOf,
 } from '@/engine/types';
 import { palm } from '@/engine/pose/landmarks';
-import { clamp01, lerp, pulse, TAU } from '@/engine/math';
+import { clamp01, easeOutBack, lerp, pulse, TAU } from '@/engine/math';
 import { randRange } from '@/engine/spawn';
 import { C, fade, hue } from '@/engine/render/palette';
 import { manifest } from './manifest';
@@ -25,21 +33,23 @@ const CUE_BOTH = 2;
 const CUE_MANSAE = 3;
 const CUE_COUNT = 4;
 
-const WINDOW_START = 1.6;
-const WINDOW_END = 0.7;
-/** Fraction of the round at which the cue window reaches its minimum. */
-const RAMP_UNTIL = 0.85;
-/** Fraction of the round after which cues occasionally come in a pair. */
-const DOUBLE_AFTER = 0.45;
-const DOUBLE_CHANCE = 0.32;
-/** Fraction of the round after which "반대로" (opposite) mode stays on. */
-const REVERSE_AT = 0.6;
+const WINDOW_START = 2.4;
+const WINDOW_END = 1.5;
+const RAMP_UNTIL = 0.8;
+const REST_START = 0.7;
+const REST_END = 0.4;
+const FIRST_REST = 0.9;
 
 const BASE_POINTS = 10;
-/** Combo steps to reach the x1.5 cap (5% per step). */
 const COMBO_MULT_STEPS = 10;
-
 const CROWD_CAP = 14;
+const INK_18 = fade(C.ink, 0.18);
+const INK_15 = fade(C.ink, 0.15);
+const BACKDROP = hue(290, 75, 91);
+
+/** Precomputed "+N" labels: no string building while playing. */
+const LABELS: string[] = [];
+for (let i = 0; i <= 40; i++) LABELS.push(`+${i}`);
 
 class CheerCombo implements MiniGame {
   private ctx!: GameContext;
@@ -47,13 +57,12 @@ class CheerCombo implements MiniGame {
   private raiseOver!: Detector<'raise'>;
 
   private player: PlayerPose | null = null;
-  private readonly handL = { x: 0, y: 0 };
-  private readonly handR = { x: 0, y: 0 };
+  private readonly handL: Pt = { x: 0, y: 0 };
+  private readonly handR: Pt = { x: 0, y: 0 };
 
-  // Crowd silhouettes: positions fixed at init, count grows with best combo.
   private readonly crowdX = new Float32Array(CROWD_CAP);
-  private readonly crowdY = new Float32Array(CROWD_CAP);
   private readonly crowdHue = new Float32Array(CROWD_CAP);
+  private readonly crowdCol: string[] = [];
 
   private time = 0;
   private score = 0;
@@ -64,30 +73,26 @@ class CheerCombo implements MiniGame {
 
   private cueKind = CUE_L;
   private prevCue = -1;
-  private cueWindow = 0;
-  private cueWindowTotal = 1;
-  /** Extra cues already decided to chain immediately after this one. */
-  private queueDepth = 0;
-  private reverseActive = false;
-
+  /** True while a cue is live; false during the rest beat. */
+  private live = false;
+  private window = 0;
+  private windowTotal = 1;
+  private rest = FIRST_REST;
+  private lastHit = true;
   private flash = 0;
-  private flashGood = false;
+  private born = 1;
+  private lastGoodX = 0;
+  private lastGoodY = 0;
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
-    // Normal threshold for 왼손/오른손/양손. Shoulder-relative, so a short
-    // 7-year-old and a tall 12-year-old clear it at the same effort.
     this.raise = ctx.gestures.use('raise', { side: 'either', above: 0.25 });
-    // 만세 needs real overhead, not just "above the shoulder" — this is a
-    // second rented Trigger with its own hysteresis, not a hand threshold.
     this.raiseOver = ctx.gestures.use('raise', { side: 'both', above: 0.85 });
-
     for (let i = 0; i < CROWD_CAP; i++) {
-      this.crowdX[i] = randRange(ctx.rng, 0.04, 0.96);
-      this.crowdY[i] = randRange(ctx.rng, 0.03, 0.17);
+      this.crowdX[i] = (i + 0.5 + randRange(ctx.rng, -0.25, 0.25)) / CROWD_CAP;
       this.crowdHue[i] = randRange(ctx.rng, 0, 360);
+      this.crowdCol.push(hue(this.crowdHue[i]!, 70, 58));
     }
-    this.startNextCue();
     ctx.hud.setGoal(t('goal'));
   }
 
@@ -99,6 +104,7 @@ class CheerCombo implements MiniGame {
   update(dt: number, f: PoseFrame): void {
     this.time += dt;
     if (this.flash > 0) this.flash = Math.max(0, this.flash - dt);
+    if (this.born < 1) this.born = Math.min(1, this.born + dt * 6);
 
     const p = f.p1;
     this.player = p ?? null;
@@ -106,33 +112,57 @@ class CheerCombo implements MiniGame {
       palm(p, 'L', this.handL);
       palm(p, 'R', this.handR);
     }
-
-    this.reverseActive = this.time >= (manifest.durationMs / 1000) * REVERSE_AT;
-
     const r = this.raise.read(f);
     const rOver = this.raiseOver.read(f);
+    // Nobody in frame: freeze the clock rather than punish an empty room.
+    if (!p || !r.ok) return;
 
-    if (p && r.ok && this.matches(r, rOver)) {
-      this.resolve(true);
-    } else if (this.cueWindow > 0) {
-      this.cueWindow -= dt;
-      if (this.cueWindow <= 0) this.resolve(false);
+    const frac = clamp01(this.time / (manifest.durationMs / 1000) / RAMP_UNTIL);
+
+    if (!this.live) {
+      this.rest -= dt;
+      if (this.rest <= 0) this.startCue(r, rOver, frac);
+      return;
+    }
+    if (this.satisfied(this.cueKind, r, rOver)) {
+      this.resolve(true, frac);
+    } else {
+      this.window -= dt;
+      if (this.window <= 0) this.resolve(false, frac);
     }
   }
 
-  /** Does the player's CURRENT pose satisfy the ACTIVE cue? Reads only the
-   *  rented detectors' already-debounced booleans — no raw threshold here. */
-  private matches(r: SignalOf<'raise'>, rOver: SignalOf<'raise'>): boolean {
-    switch (this.cueKind) {
-      case CUE_L: return this.reverseActive ? r.right : r.left;
-      case CUE_R: return this.reverseActive ? r.left : r.right;
+  /** Is the player's CURRENT pose a correct answer to `kind`? Reads only the
+   *  rented detectors' debounced booleans — no raw threshold here. */
+  private satisfied(kind: number, r: SignalOf<'raise'>, rOver: SignalOf<'raise'>): boolean {
+    switch (kind) {
+      case CUE_L: return r.left && !r.right;
+      case CUE_R: return r.right && !r.left;
       case CUE_BOTH: return r.both;
-      case CUE_MANSAE: return rOver.both;
-      default: return false;
+      default: return rOver.both;
     }
   }
 
-  private resolve(hit: boolean): void {
+  private startCue(r: SignalOf<'raise'>, rOver: SignalOf<'raise'>, frac: number): void {
+    let k = Math.floor(this.ctx.rng() * CUE_COUNT);
+    // Never open on an answer the player is already giving.
+    for (let tries = 0; tries < CUE_COUNT; tries++) {
+      if (k !== this.prevCue && !this.satisfied(k, r, rOver)) break;
+      k = (k + 1) % CUE_COUNT;
+    }
+    this.prevCue = k;
+    this.cueKind = k;
+    this.window = lerp(WINDOW_START, WINDOW_END, frac);
+    this.windowTotal = this.window;
+    this.live = true;
+    this.born = 0;
+    this.ctx.audio.play('ui.tick', { gain: 0.35 });
+  }
+
+  private resolve(hit: boolean, frac: number): void {
+    this.live = false;
+    this.rest = lerp(REST_START, REST_END, frac);
+    this.lastHit = hit;
     if (hit) {
       this.hits++;
       this.combo++;
@@ -140,18 +170,18 @@ class CheerCombo implements MiniGame {
       const mult = 1 + Math.min(this.combo, COMBO_MULT_STEPS) * 0.05;
       const pts = Math.round(BASE_POINTS * mult);
       this.score += pts;
-      this.flash = 0.3;
-      this.flashGood = true;
-
+      this.flash = 0.35;
       const ix = (this.handL.x + this.handR.x) / 2;
       const iy = (this.handL.y + this.handR.y) / 2;
+      this.lastGoodX = ix;
+      this.lastGoodY = iy;
       this.ctx.fx.impact(ix, iy, this.combo >= 8 ? 'big' : 'hit', {
         color: this.cueColor(),
         sprite: 'sparkle',
-        label: `+${pts}`,
+        label: LABELS[Math.min(pts, 40)],
       });
       this.ctx.audio.playLadder('pop', this.combo);
-      if (this.combo > 0 && this.combo % 4 === 0) {
+      if (this.combo % 4 === 0) {
         this.ctx.audio.play('combo.up');
         this.ctx.hud.toast(this.combo >= 12 ? t('huge') : this.combo >= 8 ? t('wow') : t('nice'), {
           color: C.accent,
@@ -163,34 +193,10 @@ class CheerCombo implements MiniGame {
     } else {
       this.misses++;
       this.combo = 0;
-      this.flash = 0.2;
-      this.flashGood = false;
-      // Quiet by construction: no shake, no flash, no red.
+      // Quiet by construction: no shake, no flash, no red, no buzzer.
       this.ctx.fx.miss();
       this.ctx.hud.setCombo(0);
       this.ctx.emit({ kind: 'miss' });
-    }
-    this.startNextCue();
-  }
-
-  private startNextCue(): void {
-    const totalSec = manifest.durationMs / 1000;
-    const elapsedFrac = clamp01(this.time / totalSec);
-    const rampFrac = clamp01(elapsedFrac / RAMP_UNTIL);
-    const chained = this.queueDepth > 0;
-    const window = lerp(WINDOW_START, WINDOW_END, rampFrac) * (chained ? 0.8 : 1);
-
-    let k = Math.floor(this.ctx.rng() * CUE_COUNT);
-    if (k === this.prevCue) k = (k + 1) % CUE_COUNT;
-    this.prevCue = k;
-    this.cueKind = k;
-    this.cueWindow = window;
-    this.cueWindowTotal = window;
-
-    if (chained) {
-      this.queueDepth--;
-    } else if (elapsedFrac > DOUBLE_AFTER && this.ctx.rng() < DOUBLE_CHANCE) {
-      this.queueDepth = 1;
     }
   }
 
@@ -199,7 +205,7 @@ class CheerCombo implements MiniGame {
       case CUE_L: return C.primary;
       case CUE_R: return C.hot;
       case CUE_BOTH: return C.secondary;
-      default: return C.accent;
+      default: return C.accentHi;
     }
   }
 
@@ -214,106 +220,122 @@ class CheerCombo implements MiniGame {
 
   render(g: Renderer, _interp: number): void {
     g.clear(manifest.theme?.hue);
-
+    g.rect(0, 0, g.w, g.h, { fill: BACKDROP });
+    const s = g.s;
     this.drawCrowd(g);
 
-    if (this.player) g.ghostBody(this.player, 0.1);
-    if (this.player) g.skeleton(this.player, { alpha: 0.5 });
+    const live = this.live;
+    const leftOn = live && this.cueKind !== CUE_R;
+    const rightOn = live && this.cueKind !== CUE_L;
+    const high = live && this.cueKind === CUE_MANSAE;
+    this.drawHandMarker(g, g.w * 0.14, high ? g.h * 0.3 : g.h * 0.52, leftOn);
+    this.drawHandMarker(g, g.w * 0.86, high ? g.h * 0.3 : g.h * 0.52, rightOn);
+
+    if (this.player) {
+      g.ghostBody(this.player, 0.1);
+      g.skeleton(this.player, { alpha: 0.7, outline: true });
+    }
     this.drawPompom(g, this.handL.x, this.handL.y, 0);
     this.drawPompom(g, this.handR.x, this.handR.y, Math.PI);
-
-    this.drawCueBanner(g);
+    this.drawBanner(g, s);
 
     if (this.flash > 0) {
-      const k = this.flash / 0.3;
-      const cx = (this.handL.x + this.handR.x) / 2;
-      const cy = (this.handL.y + this.handR.y) / 2;
-      g.circle(cx, cy, Math.min(g.w, g.h) * 0.12 * (1.1 - k * 0.4), {
-        stroke: this.flashGood ? C.success : fade(C.white, 0.35),
-        sw: (this.flashGood ? 6 : 3) * g.s,
+      const k = this.flash / 0.35;
+      g.circle(this.lastGoodX, this.lastGoodY, Math.min(g.w, g.h) * 0.14 * (1.15 - k * 0.4), {
+        stroke: fade(C.success, k), sw: 7 * s,
       });
+    }
+  }
+
+  /** A big marker at the screen edge, on the side of the hand to raise. */
+  private drawHandMarker(g: Renderer, x: number, y: number, on: boolean): void {
+    const s = g.s;
+    const r = 78 * s;
+    const col = this.cueColor();
+    if (on) {
+      const k = 0.95 + 0.05 * pulse((this.time * 2.5) % 1);
+      g.circle(x, y, r * k, { fill: fade(col, 0.28), stroke: col, sw: 6 * s });
+      g.chevron(x, y - 4 * s + Math.sin(this.time * 7) * 6 * s, 40 * s, -Math.PI / 2, { fill: col, stroke: C.ink, sw: 3 * s });
+    } else {
+      g.circle(x, y, r * 0.8, { stroke: INK_18, sw: 4 * s });
     }
   }
 
   private drawCrowd(g: Renderer): void {
-    const shown = Math.min(CROWD_CAP, Math.floor(this.bestCombo / 2));
-    if (shown <= 0) return;
-    g.save();
-    g.alpha(0.5);
+    const shown = Math.min(CROWD_CAP, Math.floor(this.bestCombo / 2) + (this.hits > 0 ? 2 : 0));
+    const base = g.h * 0.96;
+    const r = 34 * g.s;
     for (let i = 0; i < shown; i++) {
       const x = this.crowdX[i]! * g.w;
-      const y = this.crowdY[i]! * g.h;
-      const r = 14 * g.s;
-      const col = hue(this.crowdHue[i]!, 70, 60);
-      g.circle(x, y - r * 1.3, r * 0.55, { fill: col });
-      g.roundRect(x - r * 0.6, y - r * 0.6, r * 1.2, r * 1.3, r * 0.4, { fill: col });
+      const up = Math.sin(this.time * 5 + i * 1.7) * 6 * g.s * (this.combo > 0 ? 1 : 0.3);
+      const col = this.crowdCol[i]!;
+      g.circle(x, base - r * 1.9 - up, r * 0.62, { fill: col, stroke: C.ink, sw: 3 * g.s });
+      g.roundRect(x - r * 0.75, base - r * 1.3 - up, r * 1.5, r * 1.5, r * 0.5, { fill: col, stroke: C.ink, sw: 3 * g.s });
     }
-    g.restore();
   }
 
-  /** The cheer tool: a small burst of colored streamers at the palm. */
+  /** The cheer tool: a small burst of coloured streamers at the palm. */
   private drawPompom(g: Renderer, x: number, y: number, phase: number): void {
     const n = 7;
-    const len = 20 * g.s;
-    const sw = 3 * g.s;
+    const len = 34 * g.s;
+    const sw = 5 * g.s;
     for (let i = 0; i < n; i++) {
       const a = phase + (i / n) * TAU + this.time * 0.6;
       const wig = Math.sin(this.time * 4 + i) * 0.18;
-      const ex = x + Math.cos(a + wig) * len;
-      const ey = y + Math.sin(a + wig) * len;
-      g.line(x, y, ex, ey, sw, { stroke: i % 2 === 0 ? C.primary : C.white });
+      g.line(x, y, x + Math.cos(a + wig) * len, y + Math.sin(a + wig) * len, sw, {
+        stroke: i % 2 === 0 ? C.accent : C.hot,
+      });
     }
-    g.circle(x, y, 7 * g.s, { fill: C.accent, stroke: C.ink, sw: 2 * g.s });
+    g.circle(x, y, 12 * g.s, { fill: C.accentHi, stroke: C.ink, sw: 3 * g.s });
   }
 
-  private drawCueBanner(g: Renderer): void {
-    const col = this.cueColor();
-    const bw = Math.min(g.w * 0.74, 560 * g.s);
-    const bh = 128 * g.s;
+  private drawBanner(g: Renderer, s: number): void {
+    const live = this.live;
+    const col = live ? this.cueColor() : this.lastHit ? C.success : C.textFaint;
+    const bw = Math.min(g.w * 0.62, 640 * s);
+    const bh = 150 * s;
+    const grow = live ? easeOutBack(this.born) : 1;
     const bx = g.w / 2 - bw / 2;
-    const by = g.h * 0.08;
+    const by = g.h * 0.03;
 
-    g.roundRect(bx, by, bw, bh, 20 * g.s, { fill: fade(col, 0.16), stroke: col, sw: 3 * g.s });
-
-    const leftUp = this.cueKind === CUE_L || this.cueKind === CUE_BOTH || this.cueKind === CUE_MANSAE;
-    const rightUp = this.cueKind === CUE_R || this.cueKind === CUE_BOTH || this.cueKind === CUE_MANSAE;
-    const overhead = this.cueKind === CUE_MANSAE;
-    drawPictogram(g, bx + bh * 0.62, by + bh * 0.5, bh * 0.82, leftUp, rightUp, overhead, col);
-
-    g.text(this.cueLabel(), bx + bw * 0.58, by + bh * 0.42, {
-      size: 44 * g.s, weight: 800, display: true, align: 'center', baseline: 'middle',
-      fill: col, stroke: C.bg, sw: 5 * g.s,
-    });
-
-    // Shrinking response-window bar: green with time to spare, red as it runs
-    // out — the one sanctioned use of red, per the catalogue's own rule.
-    const ratio = this.cueWindowTotal > 0 ? clamp01(this.cueWindow / this.cueWindowTotal) : 0;
-    const barW = bw * 0.82;
-    const barX = g.w / 2 - barW / 2;
-    const barY = by + bh + 10 * g.s;
-    const barCol = ratio > 0.4 ? C.success : ratio > 0.18 ? C.warn : C.danger;
-    g.roundRect(barX, barY, barW, 10 * g.s, 5 * g.s, { fill: fade(C.ink, 0.12) });
-    g.roundRect(barX, barY, barW * ratio, 10 * g.s, 5 * g.s, { fill: barCol });
-
-    if (this.reverseActive) {
-      const p = 0.9 + 0.1 * pulse((this.time * 2) % 1);
-      g.save();
-      g.translate(g.w / 2, by + bh + 42 * g.s);
-      g.scale(p, p);
-      g.roundRect(-70 * g.s, -18 * g.s, 140 * g.s, 36 * g.s, 12 * g.s, {
-        fill: C.warn, stroke: C.ink, sw: 2 * g.s,
+    g.save();
+    g.translate(g.w / 2, by + bh / 2);
+    g.scale(0.88 + 0.12 * grow, 0.88 + 0.12 * grow);
+    g.translate(-g.w / 2, -(by + bh / 2));
+    g.roundRect(bx, by, bw, bh, 26 * s, { fill: C.white, stroke: col, sw: 6 * s });
+    if (live) {
+      const leftUp = this.cueKind !== CUE_R;
+      const rightUp = this.cueKind !== CUE_L;
+      drawPictogram(g, bx + bh * 0.7, by + bh * 0.47, bh * 0.72, leftUp, rightUp, this.cueKind === CUE_MANSAE, col);
+      g.text(this.cueLabel(), bx + bw * 0.6, by + bh * 0.5, {
+        size: 76 * s, weight: 800, display: true, align: 'center', baseline: 'middle',
+        fill: col, stroke: C.white, sw: 6 * s,
       });
-      g.text(t('reverse'), 0, 0, {
-        size: 20 * g.s, weight: 800, align: 'center', baseline: 'middle', fill: C.ink,
+    } else {
+      g.text(this.lastHit ? t('nice') : t('next'), g.w / 2, by + bh * 0.5, {
+        size: 64 * s, weight: 800, display: true, align: 'center', baseline: 'middle',
+        fill: col, stroke: C.white, sw: 6 * s,
       });
-      g.restore();
+    }
+    g.restore();
+
+    // Shrinking time bar: calm green, then amber. Never red.
+    if (live) {
+      const ratio = this.windowTotal > 0 ? clamp01(this.window / this.windowTotal) : 0;
+      const barW = bw * 0.9;
+      const barX = g.w / 2 - barW / 2;
+      const barY = by + bh + 12 * s;
+      g.roundRect(barX, barY, barW, 14 * s, 7 * s, { fill: INK_15 });
+      if (ratio > 0.02) {
+        g.roundRect(barX, barY, barW * ratio, 14 * s, 7 * s, { fill: ratio > 0.35 ? C.success : C.warn });
+      }
     }
   }
 
   end(_reason: EndReason): GameResult {
     const highlights: string[] = [];
     if (this.bestCombo >= 8) highlights.push(`콤보 ${this.bestCombo}연속!`);
-    if (this.hits >= 20) highlights.push(`지시 ${this.hits}번 성공!`);
+    if (this.hits >= 15) highlights.push(`지시 ${this.hits}번 성공!`);
     return {
       gameId: manifest.id,
       cleared: this.hits > 0,
@@ -336,26 +358,22 @@ class CheerCombo implements MiniGame {
 }
 
 /** A tiny mannequin pictogram: which arm(s) are raised, and how high. Drawn
- *  from primitives, not a shared sprite — this exact 4-pose set (L/R/both/
- *  overhead) is specific to this game and would cost more than 2 new sprite
- *  ids to express as the shared registry's authored shapes. */
+ *  from primitives: this exact 4-pose set is specific to this game. */
 function drawPictogram(
   g: Renderer, cx: number, cy: number, size: number,
   leftUp: boolean, rightUp: boolean, overhead: boolean, color: string,
 ): void {
-  const headR = size * 0.15;
-  const headY = cy - size * 0.22;
+  const headR = size * 0.16;
+  const headY = cy - size * 0.24;
   const hipY = cy + size * 0.3;
-  const sw = Math.max(2, size * 0.09);
-  const shoulderY = headY + headR * 1.5;
+  const sw = Math.max(3, size * 0.1);
+  const shoulderY = headY + headR * 1.6;
 
   g.circle(cx, headY, headR, { fill: color });
   g.line(cx, shoulderY, cx, hipY, sw, { stroke: color });
-  g.line(cx, hipY, cx - size * 0.16, cy + size * 0.56, sw, { stroke: color });
-  g.line(cx, hipY, cx + size * 0.16, cy + size * 0.56, sw, { stroke: color });
-
-  // Screen-left is the player's actual left (the engine mirrors px for us),
-  // so the icon's left arm is drawn on its own screen-left.
+  g.line(cx, hipY, cx - size * 0.16, cy + size * 0.58, sw, { stroke: color });
+  g.line(cx, hipY, cx + size * 0.16, cy + size * 0.58, sw, { stroke: color });
+  // Screen-left is the player's actual left (the engine mirrors px for us).
   drawArm(g, cx, shoulderY, -1, leftUp, overhead, size, sw, color);
   drawArm(g, cx, shoulderY, 1, rightUp, overhead, size, sw, color);
 }
@@ -364,7 +382,7 @@ function drawArm(
   g: Renderer, sx: number, sy: number, side: -1 | 1, up: boolean, overhead: boolean,
   size: number, sw: number, color: string,
 ): void {
-  const len = size * 0.42;
+  const len = size * 0.44;
   const ex = up ? sx + side * len * (overhead ? 0.22 : 0.8) : sx + side * len * 0.82;
   const ey = up ? sy - len * (overhead ? 1.1 : 0.5) : sy + len * 0.78;
   g.line(sx, sy, ex, ey, sw, { stroke: color });

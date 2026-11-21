@@ -1,58 +1,73 @@
 // ─── SHAPE A — discrete trigger x screen-space joints x hit test ─────────────
 //
-// A 3-column x 2-row grid of holes. The top row is hand territory (reach
-// palms, speed-gated); the bottom row is knee territory (a rented `zone`
-// detector per cell). Forcing both halves of the body into one game is the
-// whole point (see the brief in docs — this is the one game in the wave that
-// must not be playable with hands alone).
+// Moles pop up in the air AROUND THE PLAYER, not at fixed screen spots: the
+// five hand cells sit on a fan at 80% of this child's own reach (calib.armLen
+// x scalePx), and the two knee cells sit half-way up this child's own thigh. A short
+// child and a tall one are therefore asked for the same effort. A hand touches
+// a mole; a lifted knee touches a low mole. If the legs are not visible only
+// hand moles spawn, so a child standing close to the laptop still has a game.
 import type {
-  Detector, EndReason, GameContext, GameResult, MiniGame,
-  PlayerPose, PoseFrame, Renderer,
+  EndReason, GameContext, GameResult, MiniGame,
+  PlayerPose, PoseFrame, Pt, Renderer,
 } from '@/engine/types';
-import { L } from '@/engine/pose/landmarks';
-import { clamp01, dist, easeOutBack, lerp, pulse } from '@/engine/math';
+import { L, MIN_VIS, hipPx, jointPx, palm, shoulderPx } from '@/engine/pose/landmarks';
+import { clamp, clamp01, dist, easeOutBack, lerp, pulse } from '@/engine/math';
 import { Entities } from '@/engine/entities';
-import { chance, Spawner } from '@/engine/spawn';
-import { C, fade } from '@/engine/render/palette';
+import { chance, randRange, Spawner } from '@/engine/spawn';
+import { C, KEYLINE, fade, hue } from '@/engine/render/palette';
 import { manifest } from './manifest';
 import { t } from './locale';
 
 const MOLE = 0;
 const BOMB = 1;
 const GOLD = 2;
-/** Sentinel written into `kind` the instant a mole is resolved by a hit, so
- *  the sweep's natural-expiry callback does not also count it as a miss. */
-const RESOLVED = -1;
 
-const COLS = 3;
-/** Cell index 0-2 = top row (hand), 3-5 = bottom row (knee). */
-const CELLS = 6;
-const CELL_X = [0.22, 0.5, 0.78] as const;
-const TOP_Y = 0.36;
-const BOTTOM_Y = 0.72;
+/** Hand cells 0-4 are a fan above/beside the shoulders; 5-6 are knee cells. */
+const HAND_CELLS = 5;
+const CELLS = 7;
+const FAN_DEG = [168, 126, 90, 54, 12] as const;
+/** Fraction of the player's own reach a hand cell sits at. */
+const REACH_FRAC = 0.8;
+/** Knee cell, as fractions of THIS child's own standing thigh drop (knee y
+ *  minus hip y, measured when the mole spawns): under half-way up, hit radius a quarter
+ *  of it. A standing knee sits a full thigh below the hip, so it is ~2 radii
+ *  away from the cell and can never touch by itself, whatever the proportions. */
+const KNEE_DX = 0.35;
+const KNEE_DY_FRAC = 0.45;
+const KNEE_HIT_FRAC = 0.27;
+/** Below this the knees are already lifted (or mis-tracked): no knee mole. */
+const MIN_THIGH = 0.6;
+/** Leg tracking is too noisy to trust on a distant child (shoulder width under
+ *  7% of the view): hand moles only. */
+const MIN_SW_FOR_KNEES = 0.07;
 
-const KNEES = [L.LEFT_KNEE, L.RIGHT_KNEE] as const;
-// Pre-built once at module scope — render() must not allocate, so the
-// skeleton's emphasized-joint list cannot be assembled with a spread there.
+/** Limbs: 0/1 = left/right hand, 2/3 = left/right knee. */
+const LIMBS = 4;
+const HIT_CD = 0.26;
+const CONFIRM = 2;
+
+const FALLBACK_ARM_LEN = 1.6;
+const PALM_EXT = 0.3;
+
+const LABEL: string[] = [];
+for (let i = 0; i <= 60; i++) LABEL.push('+' + i);
+
 const EMPHASIZE = [L.LEFT_WRIST, L.RIGHT_WRIST, L.LEFT_KNEE, L.RIGHT_KNEE] as const;
 
 class AirWhackMole implements MiniGame {
   private ctx!: GameContext;
-  private reach!: Detector<'reach'>;
-  private readonly footZones: Detector<'zone'>[] = [];
   private spawner!: Spawner;
 
   private readonly moles = new Entities(8);
-  // Cell geometry, computed once in init() from the view and never touched
-  // again in update()/render().
-  private readonly cellPxX = new Float32Array(CELLS);
-  private readonly cellPxY = new Float32Array(CELLS);
-  private holeR = 0;
-  private handGate = 0;
-  /** Consecutive-frame confirm counters for the 3 hand cells — the "noise
-   *  removal" the brief calls for. The knee cells get the same debounce for
-   *  free from the rented zone detectors' own confirmFrames. */
-  private readonly topConfirm = new Uint8Array(COLS);
+  private readonly sh: Pt = { x: 0, y: 0 };
+  private readonly hip: Pt = { x: 0, y: 0 };
+  private readonly limb: Pt[] = [
+    { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 },
+  ];
+  private readonly limbOk = new Uint8Array(LIMBS);
+  private readonly limbCd = new Float32Array(LIMBS);
+  private moleR = 0;
+  private lastKneeSide = 0;
 
   private player: PlayerPose | null = null;
   private score = 0;
@@ -64,34 +79,10 @@ class AirWhackMole implements MiniGame {
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
-    const { w, h } = ctx.view;
-    this.holeR = Math.min(w, h) * 0.15;
-    // A resting hand must not farm holes: it has to actually be moving in.
-    // Same fraction-of-view-size gate candy-rain-catch uses for its catchers.
-    this.handGate = Math.min(w, h) * 0.22;
-
-    for (let c = 0; c < CELLS; c++) {
-      this.cellPxX[c] = CELL_X[c % COLS]! * w;
-      this.cellPxY[c] = (c < COLS ? TOP_Y : BOTTOM_Y) * h;
-    }
-
-    const rx = this.holeR / w;
-    const ry = this.holeR / h;
-    for (let c = 0; c < COLS; c++) {
-      const fx = CELL_X[c]!;
-      this.footZones.push(
-        ctx.gestures.use('zone', {
-          x: fx - rx, y: BOTTOM_Y - ry, w: rx * 2, h: ry * 2,
-          joints: KNEES,
-          confirmFrames: 2,
-          margin: 0.18,
-        }),
-      );
-    }
-    this.reach = ctx.gestures.use('reach', { side: 'both' });
-
+    // 8.5% of the short side: a ~120 px wide mole on a 1280x720 view.
+    this.moleR = Math.min(ctx.view.w, ctx.view.h) * 0.085;
     this.spawner = new Spawner(
-      { startInterval: 0.75, endInterval: 0.42, jitter: 0.3, burstLate: 1 },
+      { startInterval: 0.9, endInterval: 0.55, jitter: 0.3, burstLate: 1 },
       ctx.rng,
       manifest.durationMs / 1000,
     );
@@ -105,65 +96,139 @@ class AirWhackMole implements MiniGame {
 
   update(dt: number, f: PoseFrame): void {
     this.time += dt;
-    for (let i = 0, k = this.spawner.tick(dt); i < k; i++) this.spawnMole();
-    this.moles.step(dt);
-
     const p = f.p1;
     this.player = p ?? null;
+    for (let k = 0; k < LIMBS; k++) {
+      if (this.limbCd[k]! > 0) this.limbCd[k] = this.limbCd[k]! - dt;
+    }
+
     if (p) {
-      const r = this.reach.read(f);
-      this.resolveHands(r.leftPalm.x, r.leftPalm.y, r.leftSpeed, r.rightPalm.x, r.rightPalm.y, r.rightSpeed);
-      for (let c = 0; c < COLS; c++) {
-        const z = this.footZones[c]!.read(f);
-        if (z.entered) this.resolveCell(c + COLS, this.cellPxX[c + COLS]!, this.cellPxY[c + COLS]!);
-      }
-    } else {
-      this.topConfirm[0] = 0; this.topConfirm[1] = 0; this.topConfirm[2] = 0;
+      for (let i = 0, k = this.spawner.tick(dt); i < k; i++) this.spawnMole(p);
     }
-
-    this.moles.sweep((i) => {
-      // Only a mole that timed out un-hit counts as a quiet miss. A mole the
-      // player already resolved was marked RESOLVED before kill() and must
-      // not be double-counted here.
-      if (this.moles.kind[i] === MOLE) this.misses++;
-    });
-  }
-
-  private resolveHands(
-    lx: number, ly: number, lSpeed: number,
-    rx: number, ry: number, rSpeed: number,
-  ): void {
-    const fastL = lSpeed > this.handGate;
-    const fastR = rSpeed > this.handGate;
-    for (let c = 0; c < COLS; c++) {
-      const cx = this.cellPxX[c]!;
-      const cy = this.cellPxY[c]!;
-      const hitL = fastL && dist(lx, ly, cx, cy) <= this.holeR;
-      const hitR = fastR && dist(rx, ry, cx, cy) <= this.holeR;
-      if (hitL || hitR) {
-        const n = this.topConfirm[c]! + 1;
-        this.topConfirm[c] = n > 2 ? 2 : n;
-      } else {
-        this.topConfirm[c] = 0;
-      }
-      if (this.topConfirm[c]! >= 2) {
-        this.topConfirm[c] = 0;
-        this.resolveCell(c, cx, cy);
+    this.moles.step(dt);
+    if (p) {
+      this.readLimbs(p);
+      this.resolveTouches();
+    }
+    for (let i = this.moles.n - 1; i >= 0; i--) {
+      // Timed out un-hit: a quiet miss — the combo breaks, nothing else.
+      if (this.moles.life[i]! <= 0 && this.moles.kind[i] === MOLE) {
+        this.misses++;
+        if (this.combo > 0) {
+          this.combo = 0;
+          this.ctx.hud.setCombo(0);
+        }
       }
     }
+    this.moles.sweep();
   }
 
-  /** Pick an unoccupied cell. A handful of rejection-sampled attempts rather
-   *  than building a free-list — CELLS is 6, so this never allocates and
-   *  rarely loops more than once. */
-  private spawnMole(): void {
+  private readLimbs(p: PlayerPose): void {
+    const okL = p.vis[L.LEFT_WRIST]! >= MIN_VIS;
+    const okR = p.vis[L.RIGHT_WRIST]! >= MIN_VIS;
+    this.limbOk[0] = okL ? 1 : 0;
+    this.limbOk[1] = okR ? 1 : 0;
+    if (okL) palm(p, 'L', this.limb[0]!);
+    if (okR) palm(p, 'R', this.limb[1]!);
+    const kl = p.vis[L.LEFT_KNEE]! >= MIN_VIS && p.vis[L.LEFT_HIP]! >= MIN_VIS;
+    const kr = p.vis[L.RIGHT_KNEE]! >= MIN_VIS && p.vis[L.RIGHT_HIP]! >= MIN_VIS;
+    this.limbOk[2] = kl ? 1 : 0;
+    this.limbOk[3] = kr ? 1 : 0;
+    if (kl) jointPx(p, L.LEFT_KNEE, this.limb[2]!);
+    if (kr) jointPx(p, L.RIGHT_KNEE, this.limb[3]!);
+  }
+
+  private resolveTouches(): void {
+    for (let i = this.moles.n - 1; i >= 0; i--) {
+      if (this.moles.life[i]! <= 0) continue;
+      const cell = this.moles.data[i]!;
+      const knee = cell >= HAND_CELLS;
+      const first = knee ? 2 : 0;
+      const rad = this.moles.spin[i]!;
+      const mx = this.moles.x[i]!;
+      const my = this.moles.y[i]!;
+      let by = -1;
+      for (let k = first; k < first + 2; k++) {
+        if (this.limbOk[k] === 0 || this.limbCd[k]! > 0) continue;
+        const pt = this.limb[k]!;
+        if (dist(pt.x, pt.y, mx, my) <= rad) { by = k; break; }
+      }
+      if (by < 0) { this.moles.hp[i] = 0; continue; }
+      // A touch must hold for two frames: one noisy landmark frame is not a hit.
+      const n = this.moles.hp[i]! + 1;
+      this.moles.hp[i] = n;
+      if (n >= CONFIRM) {
+        this.limbCd[by] = HIT_CD;
+        this.resolve(i);
+      }
+    }
+  }
+
+  private spawnMole(p: PlayerPose): void {
     if (this.moles.n >= 2) return;
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const c = Math.floor(this.ctx.rng() * CELLS);
-      if (this.cellFree(c)) {
-        this.doSpawn(c);
-        return;
+    const d = this.spawner.difficulty;
+    let thigh = 0;
+    if (p.calib.lowerBodyVisible && p.scalePx >= MIN_SW_FOR_KNEES * this.ctx.view.w
+      && p.vis[L.LEFT_KNEE]! >= MIN_VIS && p.vis[L.RIGHT_KNEE]! >= MIN_VIS
+      && p.vis[L.LEFT_HIP]! >= MIN_VIS && p.vis[L.RIGHT_HIP]! >= MIN_VIS) {
+      // The lower knee is the planted one: its drop below the hip is one thigh.
+      const dl = p.px[L.LEFT_KNEE * 2 + 1]! - p.px[L.LEFT_HIP * 2 + 1]!;
+      const dr = p.px[L.RIGHT_KNEE * 2 + 1]! - p.px[L.RIGHT_HIP * 2 + 1]!;
+      thigh = Math.max(dl, dr) / p.scalePx;
+    }
+    const kneesOk = thigh >= MIN_THIGH;
+    const knee = kneesOk && chance(this.ctx.rng, 0.3);
+    let cell = -1;
+    for (let attempt = 0; attempt < 6 && cell < 0; attempt++) {
+      let c: number;
+      if (knee) {
+        this.lastKneeSide = 1 - this.lastKneeSide;
+        c = HAND_CELLS + this.lastKneeSide;
+      } else {
+        c = Math.floor(this.ctx.rng() * HAND_CELLS);
       }
+      if (this.cellFree(c)) cell = c;
+    }
+    if (cell < 0) return;
+
+    const gold = !knee && d > 0.6 && chance(this.ctx.rng, 0.1);
+    const bomb = !knee && !gold && d > 0.25 && chance(this.ctx.rng, 0.14);
+    const kind = gold ? GOLD : bomb ? BOMB : MOLE;
+    const life = gold ? 2.2 : lerp(knee ? 2.0 : 1.7, knee ? 1.3 : 1.0, d);
+
+    const sw = p.scalePx; 
+    let x = 0;
+    let y = 0;
+    if (cell >= HAND_CELLS) {
+      hipPx(p, this.hip);
+      x = this.hip.x + (cell === HAND_CELLS ? -KNEE_DX : KNEE_DX) * sw;
+      y = this.hip.y + KNEE_DY_FRAC * thigh * sw;
+    } else {
+      shoulderPx(p, this.sh);
+      const armLen = p.calib.armLen > 0.5 ? p.calib.armLen : FALLBACK_ARM_LEN;
+      let reach = (armLen + PALM_EXT) * REACH_FRAC * sw;
+      const a = ((FAN_DEG[cell]! + randRange(this.ctx.rng, -6, 6)) * Math.PI) / 180;
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const { w, h } = this.ctx.view;
+      const m = this.moleR * 1.2;
+      // Off the edge of the view: pull the mole in along the same ray from the
+      // shoulder, so it stays somewhere this arm can point at.
+      for (let k = 0; k < 8; k++) {
+        x = this.sh.x + ca * reach;
+        y = this.sh.y - sa * reach;
+        if (x >= m && x <= w - m && y >= m && y <= h - m) break;
+        reach *= 0.88;
+      }
+    }
+    const m2 = this.moleR * 1.2;
+    x = clamp(x, m2, this.ctx.view.w - m2);
+    y = clamp(y, m2, this.ctx.view.h - m2);
+    const i = this.moles.spawn(x, y, 0, 0, this.moleR, life, kind, 0);
+    if (i >= 0) {
+      this.moles.data[i] = cell;
+      // Hit radius in px, fixed for this mole's life.
+      this.moles.spin[i] = cell >= HAND_CELLS ? KNEE_HIT_FRAC * thigh * sw : this.moleR * 1.15;
     }
   }
 
@@ -172,39 +237,19 @@ class AirWhackMole implements MiniGame {
     return true;
   }
 
-  private doSpawn(c: number): void {
-    const d = this.spawner.difficulty;
-    const gold = d > 0.72 && chance(this.ctx.rng, 0.12);
-    const bomb = !gold && chance(this.ctx.rng, 0.16);
-    const kind = gold ? GOLD : bomb ? BOMB : MOLE;
-    // Golden moles get a generous 2s window — a breather and a big reward,
-    // not another thing to react to in 0.5s. Regular moles ramp 1.2s -> 0.5s.
-    const life = gold ? 2.0 : lerp(1.2, 0.5, d);
-    const r = this.holeR * (gold ? 0.72 : 0.64);
-    const i = this.moles.spawn(this.cellPxX[c]!, this.cellPxY[c]!, 0, 0, r, life, kind);
-    if (i >= 0) this.moles.data[i] = c;
-  }
-
-  private resolveCell(cellIdx: number, atX: number, atY: number): void {
-    let found = -1;
-    for (let i = 0; i < this.moles.n; i++) {
-      if (this.moles.data[i] === cellIdx) { found = i; break; }
-    }
-    if (found < 0) return; // swung at an empty hole — not a miss, just air
-
-    const kind = this.moles.kind[found]!;
-    const x = this.moles.x[found]!;
-    const y = this.moles.y[found]!;
-    this.moles.kind[found] = RESOLVED;
-    this.moles.kill(found);
+  private resolve(i: number): void {
+    const kind = this.moles.kind[i]!;
+    const x = this.moles.x[i]!;
+    const y = this.moles.y[i]!;
+    this.moles.kill(i);
 
     if (kind === BOMB) {
-      this.combo = 0;
-      this.score = Math.max(0, this.score - 5);
-      this.ctx.hud.setCombo(0);
-      this.ctx.hud.setScore(this.score);
-      this.ctx.hud.toast(t('bomb'), { color: C.warn });
-      this.ctx.audio.play('miss', { gain: 0.55 });
+      // Quiet: the combo breaks and a soft puff, no score loss, no red.
+      if (this.combo > 0) {
+        this.combo = 0;
+        this.ctx.hud.setCombo(0);
+      }
+      this.ctx.audio.play('miss', { gain: 0.4 });
       this.ctx.fx.miss(x, y);
       this.ctx.emit({ kind: 'miss' });
       return;
@@ -213,21 +258,21 @@ class AirWhackMole implements MiniGame {
     this.hits++;
     this.combo++;
     if (this.combo > this.bestCombo) this.bestCombo = this.combo;
-    const points = kind === GOLD ? 30 : 10 + Math.floor(this.combo / 4) * 2;
+    const points = kind === GOLD ? 30 : 10 + Math.min(Math.floor(this.combo / 5), 4) * 2;
     this.score += points;
 
-    this.ctx.fx.impact(atX, atY, kind === GOLD ? 'big' : 'hit', {
+    this.ctx.fx.impact(x, y, kind === GOLD ? 'big' : 'hit', {
       color: kind === GOLD ? C.accent : C.success,
-      sprite: 'sparkle',
-      label: `+${points}`,
+      sprite: kind === GOLD ? 'star' : 'sparkle',
+      label: LABEL[points]!,
     });
     this.ctx.audio.playLadder('pop', this.combo);
     if (kind === GOLD) {
       this.ctx.hud.toast(t('gold'), { color: C.accent, big: true });
       this.ctx.audio.play('bonus');
-    } else if (this.combo > 0 && this.combo % 4 === 0) {
+    } else if (this.combo % 5 === 0) {
       this.ctx.audio.play('combo.up');
-      this.ctx.hud.toast(this.combo >= 8 ? t('wow') : t('nice'), { color: C.accent });
+      this.ctx.hud.toast(this.combo >= 10 ? t('wow') : t('nice'), { color: C.accent });
     }
     this.ctx.hud.setScore(this.score);
     this.ctx.hud.setCombo(this.combo);
@@ -236,16 +281,8 @@ class AirWhackMole implements MiniGame {
 
   render(g: Renderer, _interp: number): void {
     g.clear(manifest.theme?.hue);
-
-    for (let c = 0; c < CELLS; c++) {
-      const x = this.cellPxX[c]!;
-      const y = this.cellPxY[c]!;
-      g.circle(x, y, this.holeR, { fill: fade(C.ink, 0.16) });
-      g.circle(x, y, this.holeR, { stroke: fade(C.ink, 0.3), sw: 3 * g.s });
-    }
-
-    if (this.player) g.ghostBody(this.player, 0.1);
-    if (this.player) g.skeleton(this.player, { alpha: 0.45, emphasize: EMPHASIZE });
+    if (this.player) g.ghostBody(this.player, 0.12);
+    if (this.player) g.skeleton(this.player, { alpha: 0.55, emphasize: EMPHASIZE });
 
     for (let i = 0; i < this.moles.n; i++) {
       const x = this.moles.x[i]!;
@@ -253,22 +290,38 @@ class AirWhackMole implements MiniGame {
       const r = this.moles.r[i]!;
       const kind = this.moles.kind[i]!;
       const age = this.moles.age(i);
-      const grow = age < 0.12 ? easeOutBack(age / 0.12) : 1;
-      const size = r * 2.1 * grow;
+      const grow = age < 0.14 ? easeOutBack(age / 0.14) : 1;
+      const rr = r * grow;
+
+      // The hole it pops out of.
+      g.roundRect(x - rr * 1.15, y + rr * 0.45, rr * 2.3, rr * 0.7, rr * 0.35, { fill: hue(26, 35, 20, 0.55) });
+
       if (kind === BOMB) {
-        g.sprite('rock', x, y, size);
-      } else {
-        const hue = kind === GOLD ? 42 : manifest.theme?.hue ?? 92;
-        g.sprite('circle', x, y, size, { hue });
-        // Eyes only — a creature you chase, never a mouth (ART.md 2.5).
-        const er = 4 * g.s * grow;
-        g.circle(x - r * 0.3, y - r * 0.15, er, { fill: C.ink });
-        g.circle(x + r * 0.3, y - r * 0.15, er, { fill: C.ink });
-        if (kind === GOLD) {
-          g.circle(x, y, r * 1.35 * pulse(1 - clamp01(age)), {
-            stroke: fade(C.accent, 0.6), sw: 3 * g.s,
-          });
-        }
+        const fuse = this.time * 9;
+        g.circle(x, y, rr * 0.95, { fill: hue(236, 30, 26), stroke: KEYLINE, sw: 4 * g.s });
+        g.circle(x - rr * 0.3, y - rr * 0.3, rr * 0.2, { fill: hue(236, 20, 60) });
+        g.line(x + rr * 0.35, y - rr * 0.8, x + rr * 0.6, y - rr * 1.2, 5 * g.s, { stroke: KEYLINE });
+        g.sprite('burst', x + rr * 0.62, y - rr * 1.25, rr * (0.5 + 0.12 * Math.sin(fuse)), { rot: fuse * 0.3 });
+        continue;
+      }
+
+      const gold = kind === GOLD;
+      const th = gold ? 42 : 26;
+      g.circle(x - rr * 0.62, y - rr * 0.62, rr * 0.3, { fill: hue(th, 60, 34), stroke: KEYLINE, sw: 3 * g.s });
+      g.circle(x + rr * 0.62, y - rr * 0.62, rr * 0.3, { fill: hue(th, 60, 34), stroke: KEYLINE, sw: 3 * g.s });
+      g.sprite('circle', x, y, rr * 2.1, { hue: th });
+      // Snout and eyes only — a creature you chase never gets a mouth.
+      g.circle(x, y + rr * 0.22, rr * 0.42, { fill: hue(th, 70, 78) });
+      g.circle(x, y + rr * 0.06, rr * 0.15, { fill: C.hot });
+      g.circle(x - rr * 0.36, y - rr * 0.2, rr * 0.16, { fill: C.white });
+      g.circle(x + rr * 0.36, y - rr * 0.2, rr * 0.16, { fill: C.white });
+      g.circle(x - rr * 0.34, y - rr * 0.18, rr * 0.08, { fill: C.ink });
+      g.circle(x + rr * 0.34, y - rr * 0.18, rr * 0.08, { fill: C.ink });
+      if (gold) {
+        g.circle(x, y, rr * 1.35 * (0.9 + 0.1 * pulse(clamp01((this.time * 2) % 1))), {
+          stroke: C.accent, sw: 4 * g.s, glow: 10,
+        });
+        g.sprite('star', x, y - rr * 1.3, rr * 0.7, { rot: this.time });
       }
     }
   }

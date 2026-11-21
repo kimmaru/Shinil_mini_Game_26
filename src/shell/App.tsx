@@ -38,6 +38,7 @@ import { Attract } from './screens/Attract';
 import { Countdown } from './screens/Countdown';
 import { Results } from './screens/Results';
 import { Roulette, decideRound } from './screens/Roulette';
+import { recordRound } from './rounds';
 import { Settings } from './screens/Settings';
 import { Setup } from './screens/Setup';
 import { SetupHelp } from './screens/SetupHelp';
@@ -211,8 +212,12 @@ export function App({ services = {} }: AppProps): React.ReactElement {
         dispatch({ type: 'cameraFailed', error: cameraErrorKind(e), detail });
         return;
       }
-      if (!alive) return;
+      // Dispatched even if this chain was cancelled meanwhile (the 60 s
+      // timeout already moved on to attract): the camera IS live, and the
+      // 카메라 켜짐 chip must say so. A deliberate cancel (카메라 없이 쓰기)
+      // closes the camera first, and openCamera then rejects instead.
       dispatch({ type: 'cameraGranted' });
+      if (!alive) return;
 
       // Stage B is NOT advisory: this is the lazy shader compile, and letting
       // it land mid-round is the stutter it exists to prevent.
@@ -237,24 +242,36 @@ export function App({ services = {} }: AppProps): React.ReactElement {
 
   // ─── Background calibration ─────────────────────────────────────────────
   //
-  // shortcut: a one-shot capture the first time a guest appears on `attract`.
-  // The continuous AutoCalibrator (engine/pose/calibration.ts) replaces this
-  // and will also handle a guest who walks closer mid-wait; until it lands,
-  // this at least means nobody is asked to stand still for a progress bar.
+  // The engine's AutoCalibrator measures whoever is standing there,
+  // continuously, without asking anybody to hold a pose. On attract the shell
+  // only PUBLISHES it into session state — on a new customer or when the
+  // profile becomes their own (`ready`), not every tick. `services` is read
+  // directly (not ctxValue): `calibration` is a getter that only becomes
+  // non-null once the camera is up, hence `cameraLive` in the deps.
   useEffect(() => {
-    if (state.phase !== 'attract' || state.calib || !pose) return;
-    let alive = true;
-    const id = window.setTimeout(() => {
-      pose
-        .calibrate(1200)
-        .then((profile) => alive && dispatch({ type: 'calibrated', profile }))
-        .catch(() => alive && dispatch({ type: 'calibrated', profile: defaultCalibration() }));
-    }, 300);
-    return () => {
-      alive = false;
-      window.clearTimeout(id);
-    };
-  }, [state.phase, state.calib, pose, dispatch]);
+    const cal = services.calibration;
+    if (state.phase !== 'attract' || !cal) return;
+    let key = '';
+    const id = window.setInterval(() => {
+      const k = `${cal.customerId}:${cal.ready}`;
+      if (k !== key) {
+        key = k;
+        dispatch({ type: 'calibrated', profile: { ...cal.profile } });
+      }
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [state.phase, state.cameraLive, services, dispatch]);
+
+  // A profile that moved mid-round would score the same movement differently
+  // in the two halves of it: freeze for the round, thaw after. Forgetting the
+  // thaw would leave the next customer playing on this one's body.
+  useEffect(() => {
+    const cal = services.calibration;
+    if (!cal) return;
+    const inRound = state.phase === 'play' || state.phase === 'paused';
+    if (inRound && !cal.frozen) pose?.setCalibration(cal.freeze());
+    else if (!inRound && cal.frozen) cal.thaw();
+  }, [state.phase, services, pose]);
 
   // Keyboard mode has no body to measure, so it gets the measured default
   // immediately rather than a null profile every game has to guard against.
@@ -314,8 +331,16 @@ export function App({ services = {} }: AppProps): React.ReactElement {
       seed: state.seed,
       signal: ac.signal,
     })
-      .then((result: GameResult) => dispatch({ type: 'roundEnded', result }))
-      .catch(() => push('게임을 불러오지 못했어요. 다른 게임을 해 볼까요?', 'warn'));
+      .then((result: GameResult) => {
+        // Feeds the scheduler's "not the same kind of game twice running".
+        recordRound(result.gameId, result);
+        dispatch({ type: 'roundEnded', result });
+      })
+      .catch(() => {
+        // Never strand the child on an empty stage: back to the start screen.
+        push('게임을 불러오지 못했어요. 다른 게임을 해 볼까요?', 'warn');
+        dispatch({ type: 'home' });
+      });
 
     return () => {
       ac.abort();
@@ -336,22 +361,57 @@ export function App({ services = {} }: AppProps): React.ReactElement {
   }, [pose, push]);
 
   // ─── Teardown: the camera dies on every exit path ───────────────────────
+  //
+  // STABLE on purpose. This used to depend on `pose`, which is read from the
+  // `services.pose` getter at render time: the render after openCamera()
+  // resolved gave it a new identity, the teardown effect below re-ran, and
+  // its CLEANUP stopped the camera that had just started — while the chip
+  // still said 카메라 켜짐. Read the live source at call time instead.
   const closeCamera = useCallback(() => {
     services.closeCamera?.();
-    pose?.stop();
+    services.pose?.stop();
     dispatch({ type: 'cameraOff' });
-  }, [services, pose, dispatch]);
+  }, [services, dispatch]);
+  const closeCameraRef = useRef(closeCamera);
+  closeCameraRef.current = closeCamera;
+  const inputModeRef = useRef(state.inputMode);
+  inputModeRef.current = state.inputMode;
 
+  /** The 끄기 chip. Back to 게임 준비, where 시작 turns the camera on again —
+   *  otherwise attract would keep asking a child to stand in front of a
+   *  camera that is off, with no way back short of a reload. */
+  const turnCameraOff = useCallback(() => {
+    closeCamera();
+    setSetupStarted(false);
+    dispatch({ type: 'setupStart' });
+  }, [closeCamera, dispatch]);
+
+  // Rule for every effect in this file: one whose CLEANUP stops the camera
+  // must not list `pose` or anything derived from it in its deps, or a
+  // re-render tears the camera down. Effects that only READ pose may re-run.
   useEffect(() => {
     const onHide = () => services.closeCamera?.();
     window.addEventListener('pagehide', onHide);
     let idle = 0;
+    let idleClosed = false;
     const onVisibility = () => {
       if (document.hidden) {
         dispatch({ type: 'pause' });
-        idle = window.setTimeout(() => closeCamera(), CAMERA_IDLE_MS);
+        idle = window.setTimeout(() => {
+          idleClosed = true;
+          closeCameraRef.current();
+        }, CAMERA_IDLE_MS);
       } else {
         window.clearTimeout(idle);
+        if (idleClosed) {
+          idleClosed = false;
+          // We gave the camera back while nobody was looking; take it again.
+          // Permission is already granted, so this is the quick path.
+          if (inputModeRef.current === 'camera') {
+            setSetupStarted(true);
+            dispatch({ type: 'setupStart' });
+          }
+        }
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
@@ -361,7 +421,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
       window.clearTimeout(idle);
       services.closeCamera?.();
     };
-  }, [services, dispatch, closeCamera]);
+  }, [services, dispatch]);
 
   // Esc closes an overlay, then pauses.
   useEffect(() => {
@@ -376,20 +436,29 @@ export function App({ services = {} }: AppProps): React.ReactElement {
 
   // ─── Transitions the shell owns ─────────────────────────────────────────
   const startRound = useCallback(() => {
+    // Read the calibrator live: `state.calib` is only republished on a new
+    // guest, so it holds whatever the legs looked like in their first second.
+    const cal = services.calibration;
+    const legs = cal?.ready ? cal.lowerBodyVisible : state.calib?.lowerBodyVisible;
     const pick = decideRound({
       players: state.players,
       space: ['seated', 'standing', 'room'],
       cameraOn: state.inputMode === 'camera',
-      ...(state.calib && !state.calib.lowerBodyVisible ? { lowerBodyVisible: false } : {}),
+      ...(legs === false ? { lowerBodyVisible: false } : {}),
       ...(includeDisabled ? { includeDisabled: true } : {}),
     });
     dispatch({ type: 'spin', shortlist: pick.shortlist, chosenIndex: pick.chosenIndex });
-  }, [state.players, state.inputMode, state.calib, includeDisabled, dispatch]);
+  }, [state.players, state.inputMode, state.calib, services, includeDisabled, dispatch]);
 
   // Transitions a screen fires from a TIMER must be referentially stable, or a
   // re-render here (a toast, a pose warning) restarts that timer and the
   // auto-advance never completes. `dispatch` from useReducer is stable.
-  const goKeyboard = useCallback(() => dispatch({ type: 'chooseKeyboard' }), [dispatch]);
+  const goKeyboard = useCallback(() => {
+    // "카메라 없이 쓰기" can be pressed while the camera is still starting:
+    // close it, or it ends up live with no chip and steals the keyboard body.
+    services.closeCamera?.();
+    dispatch({ type: 'chooseKeyboard' });
+  }, [services, dispatch]);
   const goRetry = useCallback(() => {
     setSetupStarted(true);
     dispatch({ type: 'retryCamera' });
@@ -397,7 +466,16 @@ export function App({ services = {} }: AppProps): React.ReactElement {
   const goSpinDone = useCallback(() => dispatch({ type: 'spinDone' }), [dispatch]);
   const goCountdownDone = useCallback(() => dispatch({ type: 'countdownDone' }), [dispatch]);
   const goHome = useCallback(() => dispatch({ type: 'home' }), [dispatch]);
-  const goAgain = useCallback(() => dispatch({ type: 'again' }), [dispatch]);
+  // 다시 하기: same guest (calib kept by 'again'), straight back to the roulette
+  // — pressing it IS pressing START again.
+  const goAgain = useCallback(() => {
+    dispatch({ type: 'again' });
+    startRound();
+  }, [dispatch, startRound]);
+  const resetAll = useCallback(() => {
+    reset();
+    dispatch({ type: 'clearRecords' });
+  }, [reset, dispatch]);
 
   const onSetupStart = useCallback(() => {
     setSetupStarted(true);
@@ -446,12 +524,14 @@ export function App({ services = {} }: AppProps): React.ReactElement {
       screen = (
         <Attract
           pose={pose}
+          calibration={services.calibration ?? null}
           gestures={services.gestures}
           inputMode={state.inputMode}
           reel={reel}
           reducedMotion={reducedMotion}
           onStart={startRound}
           onSettings={openSettings}
+          blocked={state.overlay !== 'none'}
           {...(fakePose ? { fakePose: true } : {})}
         />
       );
@@ -474,6 +554,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
         <Countdown
           game={game}
           pose={pose}
+          calibration={services.calibration ?? null}
           reducedMotion={reducedMotion}
           onDone={goCountdownDone}
         />
@@ -515,7 +596,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
 
         {/* The camera runs all day on a kiosk, so this chip is the honest
             indicator rather than a formality. It is never hidden. */}
-        <CameraChip live={state.cameraLive} onOff={closeCamera} />
+        <CameraChip live={state.cameraLive} onOff={turnCameraOff} />
 
         {(state.phase === 'play' || state.phase === 'paused') && (
           <HudOverlay
@@ -530,7 +611,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
           <Settings
             settings={settings}
             set={set}
-            onReset={reset}
+            onReset={resetAll}
             onClose={closeOverlay}
           />
         )}

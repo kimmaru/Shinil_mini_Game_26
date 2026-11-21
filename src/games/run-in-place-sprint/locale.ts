@@ -1,8 +1,11 @@
 const S = {
-  goal: '결승선까지 달려가요!',
-  spurt: '라스트 스퍼트!',
-  finish: '결승선 통과!',
-  rest: '숨을 골라요~',
+  goal: '무릎을 번갈아 올려 달려요!',
+  prompt: '제자리에서 달려요!',
+  promptSub: '무릎을 번갈아 올려요',
+  spurt: '마지막 힘내요! 점수 두 배!',
+  lap: '결승선 통과!',
+  flag: '결승선',
+  distance: '달린 거리',
 } as const;
 
 export type Key = keyof typeof S;

@@ -9,7 +9,7 @@ export const manifest: MiniGameManifest = {
     '큰 눈덩이는 몸을 숙여요',
     '팔을 당겼다가 앞으로 던져요',
   ],
-  icon: 'circle',
+  icon: 'gi-snowball-fight',
   theme: { hue: 192 },
 
   difficulty: 2,
@@ -25,10 +25,11 @@ export const manifest: MiniGameManifest = {
   gestures: ['reach'],
 
   durationMs: 60_000,
-  // ~22 counter-throws land in a strong round at 15 each, and the player keeps
-  // most of their 5 hearts. Calibrated against swing-wide — the closest thing
-  // in the clip corpus to a throw, and a clip that never dodges anything.
-  scoring: { kind: 'count', maxScore: 330, starCuts: [0.3, 0.55, 0.8] },
+  // ~25 counter-throws land in a strong round at 15-20 each, plus 8 for every
+  // snowball dodged. Being hit only breaks the combo and never ends the round.
+  // swing-wide is the closest clip to a throw and never dodges, and lands above
+  // maxScore: a perfect flail is better than a real child.
+  scoring: { kind: 'count', maxScore: 480, starCuts: [0.3, 0.55, 0.78] },
 
   a11y: {
     keyboardFallback: true,
@@ -39,6 +40,6 @@ export const manifest: MiniGameManifest = {
   tags: ['순발력', '파티', '움직임'],
   version: 1,
   author: 'A2',
-  enabled: false,
+  enabled: true,
   dev: { clip: 'swing-wide' },
 };

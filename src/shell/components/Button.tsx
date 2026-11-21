@@ -1,4 +1,6 @@
 // The one pressable thing in the product. Everything else is a variant.
+// `go` is the party slab (START, 다시 하기): white outlined label on a
+// sun-to-tangerine gradient. Use it once per screen.
 //
 // The 3D slab (a solid-colour bottom shadow plus `:active { translateY }`)
 // lives in base.css; this component exists to guarantee two things no CSS can:
@@ -9,13 +11,12 @@ import type { SfxId } from '@/engine/types';
 import { useServices } from '../useSession';
 import { SpriteIcon } from './SpriteIcon';
 
-export type ButtonVariant = 'primary' | 'accent' | 'success' | 'danger' | 'ghost' | 'link';
+export type ButtonVariant = 'go' | 'primary' | 'accent' | 'success' | 'danger' | 'ghost' | 'link';
 export type ButtonSize = 'sm' | 'md' | 'huge';
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
   size?: ButtonSize;
-  /** Emoji, shown before the label. Decorative: always aria-hidden. */
   /** A sprite id (see src/engine/render/sprites*.ts), never an emoji. */
   icon?: string;
   block?: boolean;
@@ -59,8 +60,7 @@ export function Button({
       {icon ? (
         <SpriteIcon
           id={icon}
-          size={size === 'huge' ? 34 : size === 'sm' ? 20 : 26}
-         
+          size={size === 'huge' ? 44 : size === 'sm' ? 24 : 30}
           className="btn__icon"
         />
       ) : null}

@@ -23,7 +23,7 @@ import type {
   PlayerPose, PoseFrame, Renderer,
 } from '@/engine/types';
 import { L, visible } from '@/engine/pose/landmarks';
-import { clamp01, easeOutCubic, hitSegCircle, lerp, TAU } from '@/engine/math';
+import { easeOutCubic, hitSegCircle, lerp } from '@/engine/math';
 import { Entities } from '@/engine/entities';
 import { chance, randInt, randRange, Spawner } from '@/engine/spawn';
 import { C, fade, hue, KEYLINE } from '@/engine/render/palette';
@@ -53,10 +53,12 @@ const SLOT_BOTH = 4;
 
 /** Lateral offset of each slot from the shoulder centre, in shoulder-widths,
  *  before the player's own arm length is folded in. */
+/** The colour each slot belongs to, so the guide rings teach the rule. */
+const SLOT_COLOUR = [RED, BLUE, YELLOW, YELLOW, GREEN] as const;
+
 const SLOT_Y = [-0.5, -0.5, -0.72, -0.72, -0.3] as const;
 
 const POINTS = 20;
-const LIVES = 5;
 /** Consecutive frames the part must be on the ball. One frame of landmark
  *  noise must never be worth 20 points. */
 const CONFIRM = 2;
@@ -86,12 +88,6 @@ const GREEN_AT = 0.5;
 /** "Colour changes in flight" — the late-round twist. */
 const SWAP_AT = 0.7;
 
-/** Seconds the shield stays broken at zero lives before it is mended back to
- *  two. Benching a child for the back half of a 50-second round is the worst
- *  thing this catalogue can do (see wave-jump: "there are deliberately no
- *  lives"), so the meter is pressure, never an exit. */
-const MEND_SEC = 1.6;
-
 const PARTS = [L.LEFT_WRIST, L.RIGHT_WRIST, L.NOSE] as const;
 
 class ColorShieldBlock implements MiniGame {
@@ -119,8 +115,6 @@ class ColorShieldBlock implements MiniGame {
   private blocks = 0;
   private wrong = 0;
   private passed = 0;
-  private lives = LIVES;
-  private mend = 0;
   private time = 0;
   private greenShown = false;
   private swapShown = false;
@@ -143,16 +137,15 @@ class ColorShieldBlock implements MiniGame {
       manifest.durationMs / 1000,
     );
     const g = Math.min(ctx.view.w, ctx.view.h);
-    this.ballR = g * 0.05;
-    this.handR = g * 0.075;
-    this.headR = g * 0.07;
+    this.ballR = g * 0.07;
+    this.handR = g * 0.09;
+    this.headR = g * 0.085;
     for (let i = 0; i < 80; i++) this.labels.push('+' + String(i));
     ctx.hud.setGoal(t('goal'));
   }
 
   start(): void {
     this.ctx.hud.setScore(0);
-    this.ctx.hud.setLives(this.lives, LIVES);
     this.ctx.audio.music({ bpm: 112 });
   }
 
@@ -168,16 +161,6 @@ class ColorShieldBlock implements MiniGame {
       this.swapShown = true;
       this.ctx.hud.announce(t('swap'));
     }
-    if (this.mend > 0) {
-      this.mend = Math.max(0, this.mend - dt);
-      if (this.mend === 0) {
-        this.lives = 2;
-        this.ctx.hud.setLives(this.lives, LIVES);
-        this.ctx.hud.toast(t('mend'), { color: C.info });
-        this.ctx.audio.play('unfreeze', { gain: 0.5 });
-      }
-    }
-
     const p = f.p1;
     this.player = p ?? null;
     if (p) {
@@ -200,7 +183,7 @@ class ColorShieldBlock implements MiniGame {
       for (let i = 0; i < 6; i++) this.prev[i] = this.cur[i]!;
     } else {
       // No player: balls hold where they are rather than sailing past and
-      // eating lives while nobody is in frame.
+      // missing while nobody is in frame.
       this.prevOk = false;
     }
 
@@ -339,9 +322,8 @@ class ColorShieldBlock implements MiniGame {
       this.wrong++;
       this.combo = 0;
       this.ctx.hud.setCombo(0);
-      this.ctx.audio.play('ui.tick', { gain: 0.45 });
+      this.ctx.audio.play('ui.tick', { gain: 0.3 });
       this.ctx.fx.miss(x, y);
-      this.ctx.hud.toast(t('wrong'), { color: C.textDim });
     }
     return false;
   }
@@ -391,16 +373,7 @@ class ColorShieldBlock implements MiniGame {
     this.ctx.hud.setCombo(0);
     // Quiet by construction: the engine refuses to shake, flash or redden here.
     this.ctx.fx.miss(x, y);
-    this.ctx.audio.play('thud', { gain: 0.4 });
     this.ctx.emit({ kind: 'miss' });
-    if (this.mend > 0) return;
-    this.lives--;
-    this.ctx.hud.setLives(Math.max(0, this.lives), LIVES);
-    if (this.lives <= 0) {
-      this.lives = 0;
-      this.mend = MEND_SEC;
-      this.ctx.audio.play('break', { gain: 0.45 });
-    }
   }
 
   render(g: Renderer, _interp: number): void {
@@ -414,10 +387,15 @@ class ColorShieldBlock implements MiniGame {
       for (let s = 0; s < 5; s++) {
         if (s === SLOT_BOTH && !this.greenShown) continue;
         this.slotAt(s, p);
-        g.circle(this.sxOut, this.syOut, (s >= SLOT_HEAD_R && s <= SLOT_HEAD_L ? this.headR : this.handR), {
-          stroke: fade(KEYLINE, 0.14),
-          sw: 3 * g.s,
+        const sr = s >= SLOT_HEAD_R && s <= SLOT_HEAD_L ? this.headR : this.handR;
+        g.save();
+        g.alpha(0.4);
+        g.circle(this.sxOut, this.syOut, sr, { stroke: hue(COLOR_HUE[SLOT_COLOUR[s]!]!, 82, 46), sw: 5 * g.s });
+        g.sprite(COLOR_BADGE[SLOT_COLOUR[s]!]!, this.sxOut, this.syOut, sr * 0.6, {
+          rot: COLOR_BADGE_ROT[SLOT_COLOUR[s]!]!,
+          flatten: hue(COLOR_HUE[SLOT_COLOUR[s]!]!, 82, 40),
         });
+        g.restore();
       }
     }
 
@@ -486,16 +464,6 @@ class ColorShieldBlock implements MiniGame {
           g.sprite('square', mx, my, this.handR * 0.9, { flatten: hue(COLOR_HUE[GREEN]!, 82, 44) });
         }
       }
-    }
-
-    if (this.mend > 0) {
-      // The shield is broken and mending. Shown as a ring filling, never as a
-      // red failure screen.
-      const k = 1 - this.mend / MEND_SEC;
-      g.arc(g.w * 0.5, g.h * 0.12, 30 * g.s, -Math.PI / 2, -Math.PI / 2 + TAU * clamp01(k), {
-        stroke: C.info,
-        sw: 7 * g.s,
-      });
     }
   }
 

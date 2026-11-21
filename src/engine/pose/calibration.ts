@@ -32,6 +32,7 @@ import type { CalibrationProfile, PlayerPose } from '../types';
 import { approach, clamp, median } from '../math';
 import { L, MIN_VIS } from './landmarks';
 import { defaultCalibration } from './source';
+import { DEFAULT_IDENTITY } from './identity';
 
 /**
  * Joints whose speed counts as "motion energy".
@@ -682,7 +683,12 @@ export class AutoCalibrator {
     const usable = p !== undefined && p.present && p.conf >= MIN_VIS;
 
     // ── customer swap, before anything is measured ──────────────────────────
-    if (this.lastSeenT >= 0 && tSec - this.lastSeenT > this.o.swapAbsenceSec) {
+    // `present` already lags the departure: the tracker holds an unmatched
+    // body present on its last positions for `hideSec` before letting go. The
+    // absence is counted from when the body was last really SEEN, so the reset
+    // lands with the tracker's own drop (0.6s), not hideSec after it.
+    const absence = tSec - this.lastSeenT + DEFAULT_IDENTITY.hideSec;
+    if (this.lastSeenT >= 0 && absence > this.o.swapAbsenceSec) {
       if (this.isFrozen) {
         // Mid-round departure. The round is still being scored against the
         // snapshot, so the reset waits for `thaw()`.

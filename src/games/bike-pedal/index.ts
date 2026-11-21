@@ -1,40 +1,43 @@
-// ─── SHAPE A variant — scalar rep counter (two-hand pedal) ────────────────────
+// ─── bike-pedal — scalar rep counter driving a bicycle ────────────────────────
 //
-// Signal: `kneeLift(p, side)`, the same scalar run-in-place-sprint uses. The
-// brief wants a circular/rotation signal, but `rep` only ever takes a plain
-// scalar and no clip in the corpus exercises a real hand rotation — see
-// NEEDS.md. `kneeLift`'s own fallback (knee, else elbow-above-shoulder)
-// happens to cover both postures the brief describes (seated hand-pedal via
-// the elbow branch, standing knee-alternate via the primary branch) without
-// any extra code, which is why it is reused rather than a bespoke formula.
+// Signal: wrist height above the SAME-SIDE ELBOW, in shoulder-widths. A hand
+// drawing a circle in front of the chest swings above and below its elbow once
+// per lap, so one lap = one rising edge of this scalar. Elbow-relative means no
+// absolute height is assumed: a child circling at the chest, the belly or the
+// shoulder is judged by the same loop. One rented `rep` per hand; a stride is
+// counted only when it ALTERNATES with the previous one, so a single hand
+// bobbing does not pedal. (True rotation direction is not checked — NEEDS.md.)
 //
-// "Proper pedalling" is rewarded, not required: the two hands' rep PHASES are
-// compared, and close to antiphase (0.5 apart) is scored as better form —
-// the honest, available proxy for "hands 180 degrees apart in a circle".
+// Distance is a cadence integral shaped by the hill under the bike: uphill is
+// slower, downhill faster. A star hangs every STAR_GAP strides of distance.
 import type {
   Detector, EndReason, GameContext, GameResult, MiniGame,
-  PlayerPose, PoseFrame, Pt, Renderer,
+  PlayerPose, PoseFrame, Renderer,
 } from '@/engine/types';
-import { L, palm } from '@/engine/pose/landmarks';
-import { kneeLift } from '@/engine/gestures/reps';
-import { approach, clamp, clamp01, smoothstep, TAU } from '@/engine/math';
-import { C, fade } from '@/engine/render/palette';
+import { L, ny } from '@/engine/pose/landmarks';
+import { approach, pulse, TAU } from '@/engine/math';
+import { C, fade, hue } from '@/engine/render/palette';
 import { manifest } from './manifest';
 import { t } from './locale';
 
-const HILL_PERIOD_SEC = 20;
-const REQ_BASE = 1.4;
-const REQ_HILL_AMP = 0.6;
-const PACE_MIN = 0.45;
-const PACE_MAX = 1.5;
-const FORM_BONUS_MAX = 0.3;
-const REVERSE_AT = 0.72;
-const REVERSE_DUR_SEC = 8;
-const REVERSE_BONUS = 1.15;
-/** Scales the raw cadence integral down to a comfortable score range. */
-const K_DIST = 0.3;
-
+const PERIOD = 16;
+const STAR_GAP = 5;
+const STAR_POINTS = 10;
+const HILL_SLOW = 0.38;
+const STREAK_GAP = 1.2;
+const POINT_LABEL = '+10';
 const HANDS = [L.LEFT_WRIST, L.RIGHT_WRIST] as const;
+const TERRAIN_PTS = 17;
+const CLOUDS = 4;
+const RING = fade(C.primaryHi, 0.5);
+const WHEEL_FILL = fade(C.white, 0.5);
+const SPOKE = fade(C.ink, 0.45);
+const SKY = hue(200, 85, 80);
+
+const sigL = (p: PlayerPose): number => ny(p, L.LEFT_ELBOW) - ny(p, L.LEFT_WRIST);
+const sigR = (p: PlayerPose): number => ny(p, L.RIGHT_ELBOW) - ny(p, L.RIGHT_WRIST);
+const NEED_L = [L.LEFT_WRIST, L.LEFT_ELBOW] as const;
+const NEED_R = [L.RIGHT_WRIST, L.RIGHT_ELBOW] as const;
 
 class BikePedal implements MiniGame {
   private ctx!: GameContext;
@@ -42,187 +45,254 @@ class BikePedal implements MiniGame {
   private repR!: Detector<'rep'>;
   private player: PlayerPose | null = null;
 
-  private readonly handL: Pt = { x: 0, y: 0 };
-  private readonly handR: Pt = { x: 0, y: 0 };
+  private readonly terrain = new Float32Array((TERRAIN_PTS + 2) * 2);
+  private readonly cloudX = new Float32Array(CLOUDS);
+  private readonly cloudY = new Float32Array(CLOUDS);
 
   private time = 0;
-  private distance = 0;
+  private dist = 0;
   private strideRate = 0;
-  private bestRate = 0;
-  private lastStrideT = -1;
+  private speed = 0;
+  private lastStrideT = -10;
   private lastSide: 0 | 1 | 2 = 0;
   private strides = 0;
-  private formQuality = 0;
-  private formGood = false;
-  private reverseActive = false;
-  private reverseAnnounced = false;
-  private wheelAngle = 0;
+  private bestRate = 0;
+  private stars = 0;
+  private starStreak = 0;
+  private bestStreak = 0;
+  private slopeNorm = 0;
+  private crank = 0;
+  private wheel = 0;
+  private bob = 0;
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
-    // Same signal family as run-in-place-sprint, same reason: the engine's
-    // own default enter/exit on `rep` is already measured against this
-    // scalar, so there is nothing to retune.
-    this.repL = ctx.gestures.use('rep', { signal: (p) => kneeLift(p, 'L') });
-    this.repR = ctx.gestures.use('rep', { signal: (p) => kneeLift(p, 'R') });
+    // enter/exit in shoulder-widths of wrist-above-elbow. A relaxed hanging
+    // arm reads about -0.9; a hand circled up past its elbow reads +0.2..0.5.
+    this.repL = ctx.gestures.use('rep', { signal: sigL, enter: 0.12, exit: -0.12, needs: NEED_L, cooldownMs: 250 });
+    this.repR = ctx.gestures.use('rep', { signal: sigR, enter: 0.12, exit: -0.12, needs: NEED_R, cooldownMs: 250 });
+    for (let i = 0; i < CLOUDS; i++) {
+      this.cloudX[i] = (i + ctx.rng() * 0.6) / CLOUDS;
+      this.cloudY[i] = 0.08 + ctx.rng() * 0.2;
+    }
     ctx.hud.setGoal(t('goal'));
   }
 
   start(): void {
     this.ctx.hud.setScore(0);
-    this.ctx.hud.setBar('distance', 0, { labelKo: '거리' });
   }
 
   update(dt: number, f: PoseFrame): void {
     this.time += dt;
+    if (this.bob > 0) this.bob = Math.max(0, this.bob - dt * 4);
     const p = f.p1;
     this.player = p ?? null;
 
-    let formNow = this.formQuality;
     if (p) {
-      palm(p, 'L', this.handL);
-      palm(p, 'R', this.handR);
       const sl = this.repL.read(f);
       const sr = this.repR.read(f);
       if (sl.ok && sl.justCounted) this.confirmStride(1);
       if (sr.ok && sr.justCounted) this.confirmStride(2);
-
-      if (sl.ok && sr.ok) {
-        // Circular distance between the two phases, 0..0.5. 0.5 = perfect
-        // antiphase — the honest proxy for "hands opposite in the circle".
-        const diff = Math.abs(sl.phase - sr.phase);
-        const circ = diff > 0.5 ? 1 - diff : diff;
-        formNow = clamp01(circ / 0.5);
-      }
-    }
-    this.formQuality = formNow;
-    if (!this.formGood && formNow > 0.85) {
-      this.formGood = true;
-      this.ctx.hud.toast(t('goodForm'), { color: C.accent });
-      this.ctx.audio.play('chime', { gain: 0.5 });
-    } else if (formNow < 0.4) {
-      this.formGood = false;
     }
 
-    if (this.lastStrideT >= 0 && this.time - this.lastStrideT > 0.8) {
+    // Stopping is quiet: the cadence decays and the bike coasts to a halt.
+    if (this.time - this.lastStrideT > 0.8) {
       this.strideRate = approach(this.strideRate, 0, 2.5, dt);
+      if (this.time - this.lastStrideT > STREAK_GAP) this.starStreak = 0;
     }
 
-    const durationSec = manifest.durationMs / 1000;
-    const prog = clamp01(this.time / durationSec);
-    this.reverseActive = prog >= REVERSE_AT && this.time < durationSec
-      && this.time - REVERSE_AT * durationSec < REVERSE_DUR_SEC;
-    if (this.reverseActive && !this.reverseAnnounced) {
-      this.reverseAnnounced = true;
-      this.ctx.hud.toast(t('reverse'), { color: C.info, big: true });
-      this.ctx.audio.play('whoosh', { gain: 0.5 });
+    this.slopeNorm = Math.cos((TAU * this.dist) / PERIOD);
+    const hill = 1 - HILL_SLOW * this.slopeNorm;
+    this.speed = approach(this.speed, this.strideRate * hill, 4, dt);
+    this.dist += this.speed * dt;
+    this.crank += this.speed * Math.PI * dt;
+    this.wheel += this.speed * dt * 1.4;
+
+    // Stars sit on the road every STAR_GAP; the bike scoops them up.
+    while (this.dist >= (this.stars + 1) * STAR_GAP) {
+      this.stars++;
+      this.starStreak++;
+      if (this.starStreak > this.bestStreak) this.bestStreak = this.starStreak;
+      this.bob = 1;
+      const { w, h } = this.ctx.view;
+      this.ctx.fx.impact(w * 0.3, this.groundY(h, 0) - h * 0.2, 'hit', {
+        color: C.accent, sprite: 'star', label: POINT_LABEL,
+      });
+      this.ctx.audio.playLadder('pop', Math.min(this.starStreak, 12));
+      this.ctx.hud.setScore(this.stars * STAR_POINTS);
+      this.ctx.emit({ kind: 'scored', points: STAR_POINTS });
     }
-
-    const hill = Math.sin((this.time / HILL_PERIOD_SEC) * TAU);
-    const reqCadence = REQ_BASE + hill * REQ_HILL_AMP;
-    const pace = clamp(this.strideRate / reqCadence, PACE_MIN, PACE_MAX);
-    const formBonus = 1 + FORM_BONUS_MAX * smoothstep(this.formQuality);
-    const reverseBonus = this.reverseActive ? REVERSE_BONUS : 1;
-
-    this.distance += this.strideRate * pace * formBonus * reverseBonus * K_DIST * dt;
-    this.wheelAngle += this.strideRate * dt * (this.reverseActive ? -1 : 1);
-
-    this.ctx.hud.setBar('distance', clamp01(this.distance / manifest.scoring.maxScore), { labelKo: '거리' });
-    this.ctx.hud.setScore(Math.round(this.distance));
   }
 
   private confirmStride(side: 1 | 2): void {
     if (this.lastSide === side) return;
-    this.strides++;
-    if (this.lastStrideT >= 0) {
-      const gap = this.time - this.lastStrideT;
-      if (gap > 1e-3 && gap < 5) {
-        this.strideRate = this.strideRate > 0
-          ? this.strideRate + (1 / gap - this.strideRate) * 0.5
-          : 1 / gap;
+    const now = this.time;
+    if (this.lastStrideT >= 0 && now - this.lastStrideT < 5) {
+      const gap = now - this.lastStrideT;
+      if (gap > 1e-3) {
+        const inst = 1 / gap;
+        this.strideRate = this.strideRate > 0 ? this.strideRate + (inst - this.strideRate) * 0.4 : inst;
         if (this.strideRate > this.bestRate) this.bestRate = this.strideRate;
       }
     }
-    this.lastStrideT = this.time;
+    this.lastStrideT = now;
     this.lastSide = side;
+    this.strides++;
+    this.ctx.audio.play('step', { gain: 0.25, rate: 1.4 });
+  }
+
+  /** Road surface y at `dx` strides ahead of the bike (negative = behind). */
+  private groundY(h: number, dx: number): number {
+    return h * 0.78 - Math.sin((TAU * (this.dist + dx)) / PERIOD) * h * 0.09;
   }
 
   render(g: Renderer, _interp: number): void {
     g.clear(manifest.theme?.hue);
+    const s = g.s;
+    const unitPx = g.w * 0.09;
+    const bikeX = g.w * 0.28;
 
-    const groundY = g.h * 0.82;
-    g.rect(0, groundY, g.w, g.h - groundY, { fill: fade(C.bgDeep, 0.6) });
-    // A tilting road hints at the current hill without any text.
-    const hill = Math.sin((this.time / HILL_PERIOD_SEC) * TAU);
-    const tilt = hill * g.h * 0.03;
-    g.line(0, groundY + tilt, g.w, groundY - tilt, 3 * g.s, { stroke: fade(C.ink, 0.2) });
-
-    const bigR = Math.min(g.w, g.h) * 0.1;
-    const smallR = bigR * 0.6;
-    const pedalX = g.w * 0.32;
-    const wheelX = g.w * 0.68;
-    const hubY = groundY - bigR * 1.1;
-
-    // Chain: two tangent lines between the pedal gear and the wheel hub.
-    g.line(pedalX, hubY - bigR, wheelX, hubY - smallR, 4 * g.s, { stroke: fade(C.ink, 0.35) });
-    g.line(pedalX, hubY + bigR, wheelX, hubY + smallR, 4 * g.s, { stroke: fade(C.ink, 0.35) });
-
-    // The wheel: a rim with spokes, spinning faster than the pedal gear —
-    // the gearing feedback the brief asks for. Rotation reverses visually
-    // during the "반대로!" window.
-    g.circle(wheelX, hubY, smallR * 1.5, { stroke: fade(C.ink, 0.3), sw: 4 * g.s });
-    const spokeAngle = this.wheelAngle * 2.4;
-    for (let i = 0; i < 6; i++) {
-      const a = spokeAngle + (i / 6) * TAU;
-      g.line(
-        wheelX, hubY,
-        wheelX + Math.cos(a) * smallR * 1.5, hubY + Math.sin(a) * smallR * 1.5,
-        3 * g.s, { stroke: fade(C.ink, 0.3) },
-      );
-    }
-    g.sprite('ui-gear', wheelX, hubY, smallR * 2, { rot: this.wheelAngle * 2.4 });
-    g.sprite('ui-gear', pedalX, hubY, bigR * 2, { rot: this.wheelAngle });
-
-    // Hands as the pedals themselves, tinted by how close to antiphase they
-    // currently are — the visual readout for "good form".
-    const formColor = this.formQuality > 0.7 ? C.success : C.textFaint;
-    for (const hp of [this.handL, this.handR]) {
-      g.circle(hp.x, hp.y, 18 * g.s, { stroke: formColor, sw: 3 * g.s, glow: this.formQuality > 0.7 ? 8 : 0 });
+    // Sun and clouds.
+    g.rect(0, 0, g.w, g.h, { fill: SKY });
+    g.circle(g.w * 0.84, g.h * 0.16, 58 * s, { fill: C.accentHi, stroke: C.ink, sw: 4 * s });
+    for (let i = 0; i < CLOUDS; i++) {
+      const x = (((this.cloudX[i]! - this.dist * 0.004) % 1) + 1) % 1;
+      const cx = (x * 1.3 - 0.15) * g.w;
+      const cy = this.cloudY[i]! * g.h;
+      const k = 32 * s;
+      g.circle(cx, cy, k, { fill: C.white });
+      g.circle(cx + k * 1.1, cy + k * 0.15, k * 0.8, { fill: C.white });
+      g.circle(cx - k, cy + k * 0.2, k * 0.7, { fill: C.white });
     }
 
-    if (this.player) g.ghostBody(this.player, 0.1);
-    if (this.player) g.skeleton(this.player, { alpha: 0.45, emphasize: HANDS });
+    // Rolling road: the same sine the bike's slope and speed come from.
+    const tp = this.terrain;
+    for (let i = 0; i < TERRAIN_PTS; i++) {
+      const x = (i / (TERRAIN_PTS - 1)) * g.w;
+      tp[i * 2] = x;
+      tp[i * 2 + 1] = this.groundY(g.h, (x - bikeX) / unitPx);
+    }
+    tp[TERRAIN_PTS * 2] = g.w;
+    tp[TERRAIN_PTS * 2 + 1] = g.h;
+    tp[TERRAIN_PTS * 2 + 2] = 0;
+    tp[TERRAIN_PTS * 2 + 3] = g.h;
+    g.poly(tp, TERRAIN_PTS + 2, { fill: C.success, stroke: C.ink, sw: 4 * s }, true);
 
-    if (this.reverseActive) {
-      g.text(t('reverse'), g.w / 2, g.h * 0.14, {
-        size: 32 * g.s, weight: 700, align: 'center', fill: C.info,
-        stroke: C.ink, sw: 5 * g.s,
+    // Stars on the road ahead.
+    const first = this.stars;
+    for (let k = first; k < first + 8; k++) {
+      const dx = (k + 1) * STAR_GAP - this.dist;
+      const x = bikeX + dx * unitPx;
+      if (x > g.w + 60 * s) break;
+      const y = this.groundY(g.h, dx) - 120 * s - Math.sin(this.time * 4 + k) * 6 * s;
+      g.sprite('star', x, y, 120 * s, { hue: 45 });
+    }
+
+    this.drawBike(g, bikeX, this.groundY(g.h, 0), s);
+
+    if (this.player) {
+      g.ghostBody(this.player, 0.1);
+      g.skeleton(this.player, { alpha: 0.75, color: C.white, outline: true, emphasize: HANDS });
+    }
+
+    if (this.time - this.lastStrideT > 1.6) {
+      const k = 0.92 + 0.08 * pulse((this.time * 1.5) % 1);
+      g.text(t('prompt'), g.w / 2, g.h * 0.12, {
+        size: 56 * s * k, weight: 800, display: true, align: 'center', baseline: 'middle',
+        fill: C.primaryHi, stroke: C.white, sw: 8 * s,
       });
+      g.text(t('promptSub'), g.w / 2, g.h * 0.2, {
+        size: 38 * s, weight: 700, align: 'center', baseline: 'middle',
+        fill: C.text, stroke: C.white, sw: 6 * s,
+      });
+      // Two orbit rings with a dot each, half a lap apart: "take turns".
+      const ph = this.time * 3;
+      const ry = g.h * 0.36;
+      const rr = 62 * s;
+      for (let i = 0; i < 2; i++) {
+        const cx = g.w * (i === 0 ? 0.68 : 0.86);
+        g.circle(cx, ry, rr, { stroke: RING, sw: 6 * s });
+        const a = ph + i * Math.PI;
+        g.circle(cx + Math.cos(a) * rr, ry + Math.sin(a) * rr, 16 * s, { fill: C.hot, stroke: C.ink, sw: 3 * s });
+      }
     }
   }
 
+  private drawBike(g: Renderer, bx: number, by: number, s: number): void {
+    const R = 70 * s;
+    const tilt = -Math.atan(Math.cos((TAU * this.dist) / PERIOD) * (g.h * 0.09 * TAU) / (PERIOD * g.w * 0.09));
+    const bounce = Math.sin(this.bob * Math.PI) * 10 * s;
+    g.save();
+    g.translate(bx, by - bounce);
+    g.rotate(tilt);
+    const rx = -115 * s;
+    const fx = 115 * s;
+    const hy = -R;
+    const bbx = -5 * s;
+    const bby = -R * 0.95;
+    const seatX = -50 * s;
+    const seatY = -R * 2.15;
+    const headX = 95 * s;
+    const headY = -R * 2.2;
+    const ink = C.ink;
+
+    for (let w = 0; w < 2; w++) {
+      const cx = w === 0 ? rx : fx;
+      g.circle(cx, hy, R, { fill: WHEEL_FILL, stroke: ink, sw: 9 * s });
+      for (let i = 0; i < 4; i++) {
+        const a = this.wheel + (i / 4) * Math.PI;
+        g.line(cx - Math.cos(a) * R, hy - Math.sin(a) * R, cx + Math.cos(a) * R, hy + Math.sin(a) * R, 2.5 * s, { stroke: SPOKE });
+      }
+    }
+    const fr = C.primary;
+    g.line(rx, hy, bbx, bby, 8 * s, { stroke: fr });
+    g.line(bbx, bby, seatX, seatY, 8 * s, { stroke: fr });
+    g.line(seatX, seatY, headX, headY, 8 * s, { stroke: fr });
+    g.line(bbx, bby, headX, headY, 8 * s, { stroke: fr });
+    g.line(headX, headY, fx, hy, 8 * s, { stroke: fr });
+    g.line(seatX - 18 * s, seatY, seatX + 18 * s, seatY, 10 * s, { stroke: ink });
+    g.line(headX, headY, headX - 22 * s, headY - 14 * s, 8 * s, { stroke: ink });
+
+    // Rider: legs follow the crank, arms hold the bars.
+    const cr = 38 * s;
+    const p1x = bbx + Math.cos(this.crank) * cr;
+    const p1y = bby + Math.sin(this.crank) * cr;
+    const p2x = bbx - Math.cos(this.crank) * cr;
+    const p2y = bby - Math.sin(this.crank) * cr;
+    const hipX = seatX;
+    const hipY = seatY - 8 * s;
+    g.line(hipX, hipY, p2x, p2y, 14 * s, { stroke: C.hot });
+    g.line(hipX, hipY, p1x, p1y, 14 * s, { stroke: C.hot });
+    g.circle(p1x, p1y, 11 * s, { fill: C.accent, stroke: ink, sw: 3 * s });
+    g.circle(p2x, p2y, 11 * s, { fill: C.accent, stroke: ink, sw: 3 * s });
+    const shX = hipX + 38 * s;
+    const shY = hipY - 92 * s;
+    g.line(hipX, hipY, shX, shY, 22 * s, { stroke: C.secondary });
+    g.line(shX, shY, headX - 8 * s, headY - 10 * s, 11 * s, { stroke: C.hot });
+    g.circle(shX + 12 * s, shY - 38 * s, 30 * s, { fill: C.accentHi, stroke: ink, sw: 4 * s });
+    g.circle(shX + 22 * s, shY - 42 * s, 4 * s, { fill: ink });
+    g.restore();
+  }
+
   end(_reason: EndReason): GameResult {
+    const score = this.stars * STAR_POINTS;
     const highlights: string[] = [];
-    if (this.formGood) highlights.push('페달링 자세가 좋았어요!');
-    if (this.distance >= manifest.scoring.maxScore * 0.75) highlights.push('멀리까지 달렸어요!');
+    if (this.stars >= 12) highlights.push(`별을 ${this.stars}개 모았어요!`);
+    if (this.bestRate >= 3) highlights.push('페달을 아주 빨리 돌렸어요!');
     return {
       gameId: manifest.id,
       cleared: this.strides > 0,
-      rawScore: Math.round(this.distance),
+      rawScore: score,
       maxScore: manifest.scoring.maxScore,
       normalized: 0,
       stars: 0,
       durationMs: manifest.durationMs,
       perPlayer: [{
-        playerId: 0, slot: 0, score: Math.round(this.distance),
-        hits: this.strides, misses: 0, bestCombo: Math.round(this.bestRate),
+        playerId: 0, slot: 0, score,
+        hits: this.stars, misses: 0, bestCombo: this.bestStreak,
       }],
       highlightsKo: highlights.length > 0 ? highlights : undefined,
     };
-  }
-
-  dispose(): void {
-    // Nothing pooled, no music started.
   }
 }
 

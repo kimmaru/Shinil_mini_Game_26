@@ -28,9 +28,21 @@ export interface LoopHooks {
   onStep?(dt: number, frame: PoseFrame): void;
   /** Called after the fx pass, for the debug overlay. */
   onAfterRender?(g: Renderer, interp: number): void;
-  /** Per-frame diagnostics for the debug overlay. */
+  /** Per-frame diagnostics for the debug overlay. Called on rendered frames
+   *  only; `fps` is still the tick rate, so a capped loop does not look slow
+   *  to the DPR governor. */
   onFrameStats?(s: FrameStats): void;
+  /**
+   * Cap the RENDER rate (the attract reel uses 30). Ticks over the cap still
+   * run the fixed-step simulation, so game time stays exact and a seeded round
+   * plays out identically; they just do not draw.
+   */
+  maxFps?: number;
 }
+
+/** Slack under the render interval, so at a 30 cap a 60 Hz display lands on
+ *  every other tick despite rAF jitter instead of every third. */
+const RENDER_SLACK = 0.004;
 
 export interface FrameStats {
   /** Render frames per second, smoothed. */
@@ -59,6 +71,15 @@ export interface Loop {
 
 type RafLike = (cb: (t: number) => void) => number;
 
+/** Per-frame hooks the real renderers have and the frozen `Renderer` contract
+ *  does not. `beginFrame` sets `g.t` and refills the glow budget; without it
+ *  `g.t` stays 0 (ambient animation frozen) and the budget is spent once per
+ *  ROUND, not per frame. The test harness has always called these. */
+interface FrameHooks {
+  beginFrame?(tSec: number): void;
+  endFrame?(): void;
+}
+
 export function createLoop(
   game: MiniGame,
   pose: PoseSource,
@@ -71,7 +92,13 @@ export function createLoop(
   let running = false;
   let paused = false;
   let elapsed = 0;
+  /** Unpaused real seconds, for `g.t`: ambient animation keeps moving through
+   *  a hitstop, which the fixed-step clock does not. */
+  let renderT = 0;
   let fps = 60;
+  const minFrame = hooks.maxFps && hooks.maxFps > 0 ? 1 / hooks.maxFps - RENDER_SLACK : 0;
+  let sinceRender = Infinity;
+  const frameHooks = g as Renderer & FrameHooks;
 
   const requestFrame: RafLike =
     typeof requestAnimationFrame === 'function'
@@ -122,12 +149,18 @@ export function createLoop(
     const t1 = perfNow();
 
     const interp = acc / STEP;
+    renderT += frameTime;
+    sinceRender += frameTime;
+    if (sinceRender < minFrame) return;
+    sinceRender = 0;
+    frameHooks.beginFrame?.(renderT);
     g.save();
     hooks.fx?.applyCamera(g);   // shake moves the world...
     game.render(g, interp);
     g.restore();
     hooks.fx?.draw(g);          // ...but not the particles, text or flash
     hooks.onAfterRender?.(g, interp);
+    frameHooks.endFrame?.();
     const t2 = perfNow();
 
     hooks.onFrameStats?.({
@@ -150,6 +183,13 @@ export function createLoop(
     stop(): void {
       running = false;
       cancelFrame(raf);
+      // The pose source outlives this round (it is the shell's camera). A round
+      // torn down while paused — page hidden mid-round — must hand it back
+      // running, or every later round and the attract skeleton stay frozen.
+      if (paused) {
+        paused = false;
+        pose.resume();
+      }
     },
     pause(): void {
       if (paused) return;

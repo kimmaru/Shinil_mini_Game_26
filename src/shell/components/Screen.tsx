@@ -58,12 +58,12 @@ export function Screen({
       ) : null}
       {icon ? (
         <div className="screen__icon pop-in">
-          <SpriteIcon id={icon} size={92} />
+          <SpriteIcon id={icon} size={112} />
         </div>
       ) : null}
       {kickerKo ? <p className="label dim center">{kickerKo}</p> : null}
       {titleKo ? <h1 className="h1 center">{titleKo}</h1> : null}
-      {leadKo ? <p className="body-lg center dim">{leadKo}</p> : null}
+      {leadKo ? <p className="body-lg center screen__lead">{leadKo}</p> : null}
       {children}
       {actions ? <div className="actions">{actions}</div> : null}
       {footer ? <div className="screen__footer row">{footer}</div> : null}

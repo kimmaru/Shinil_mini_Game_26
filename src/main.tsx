@@ -11,8 +11,10 @@ import { App } from './shell/App';
 import type { ShellServices } from './shell/useSession';
 import type { PoseSource } from './engine/pose/source';
 import { VirtualPoseSource } from './engine/pose/virtual';
-import { MediaPipePoseSource } from './engine/pose/mediapipe';
+import { cameraConstraints, MediaPipePoseSource } from './engine/pose/mediapipe';
 import { detectCapability } from './engine/pose/capability';
+import { visionWasmPaths } from './engine/pose/poseWorkerProtocol';
+import type { AutoCalibrator } from './engine/pose/calibration';
 import { createGestureService } from './engine/gestures/service';
 import { createAudioService } from './engine/audio/service';
 import { createFxService } from './engine/fx/service';
@@ -22,6 +24,9 @@ const params = new URLSearchParams(location.search);
 /** `?pose=virtual` forces the keyboard-driven body — how every game is
  *  reviewed without a camera. */
 const forceVirtual = params.get('pose') === 'virtual';
+/** `?worker=off` runs pose inference on the main thread — the escape hatch if
+ *  the worker path misbehaves on some machine. */
+const useWorker = params.get('worker') !== 'off';
 
 /** Live view size. Mutated in place so everything holding the ref sees resizes. */
 const view = { w: window.innerWidth, h: window.innerHeight };
@@ -55,6 +60,16 @@ document.body.appendChild(video);
 
 let pose: PoseSource | null = null;
 let camera: MediaPipePoseSource | null = null;
+/** Bumped by closeCamera(). An openCamera() still awaiting getUserMedia or the
+ *  engine when the camera is closed sees the change and backs out, instead of
+ *  bringing a camera back to life that nobody asked for. */
+let cameraGen = 0;
+
+function cancelled(): Error {
+  const e = new Error('camera closed while it was starting');
+  e.name = 'AbortError';
+  return e;
+}
 
 function virtual(): VirtualPoseSource {
   const v = new VirtualPoseSource({ view });
@@ -73,7 +88,9 @@ function virtual(): VirtualPoseSource {
  */
 async function prefetchVisionAssets(onProgress: (p: number) => void): Promise<void> {
   const urls = [
-    '/wasm/vision_wasm_internal.wasm',
+    // The worker loads the module build of the wasm, the main thread the
+    // classic one: warm the one that will actually be used.
+    visionWasmPaths('/wasm', useWorker).wasmBinaryPath,
     '/models/pose_landmarker_lite.task',
   ];
   let done = 0;
@@ -91,8 +108,13 @@ async function prefetchVisionAssets(onProgress: (p: number) => void): Promise<vo
   }));
 }
 
-const services: ShellServices = {
+const services: ShellServices & {
+  /** Continuous kiosk calibration for whoever is in front of the camera; null
+   *  without a camera. Not on ShellServices yet — the shell opts in. */
+  readonly calibration: AutoCalibrator | null;
+} = {
   get pose() { return pose; },
+  get calibration() { return camera?.autoCalibration ?? null; },
   gestures: createGestureService(
     () => pose?.sample(performance.now() / 1000),
     view,
@@ -106,6 +128,11 @@ const services: ShellServices = {
 
   async openCamera() {
     if (forceVirtual) { pose = virtual(); return; }
+    // A retry must not leave the previous stream, worker and WebGL context
+    // alive behind the new ones.
+    services.closeCamera?.();
+    const gen = cameraGen;
+    const config = detectCapability({ maxPlayers: 1 });
 
     // Two distinct failures, two distinct messages.
     //
@@ -116,34 +143,48 @@ const services: ShellServices = {
     // wrong thing.
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 540 } },
-        audio: false,
-      });
+      // The tier's constraints: 16:9 at a size the model can use, capped at
+      // 30fps so the camera never doubles the frame budget.
+      stream = await navigator.mediaDevices.getUserMedia(cameraConstraints(config));
     } catch (e) {
       throw e; // a real permission/device problem: the shell knows these
     }
+    if (gen !== cameraGen) {
+      for (const t of stream.getTracks()) t.stop();
+      throw cancelled();
+    }
     video.srcObject = stream;
 
+    const cam = new MediaPipePoseSource({
+      video,
+      view: () => ({ w: view.w, h: view.h }),
+      config,
+      warmup: true,
+      worker: useWorker,
+      // Engine-internal detail (worker fallback, warmup misses) for whoever
+      // opens devtools on the real machine; child-facing text goes to info.warning.
+      onWarning: (m) => console.warn(m),
+    });
+    camera = cam;
     try {
-      camera = new MediaPipePoseSource({
-        video,
-        view: () => ({ w: view.w, h: view.h }),
-        config: detectCapability({ maxPlayers: 1 }),
-        warmup: true,
-      });
-      await camera.start();
-      pose = camera;
+      await cam.start();
     } catch (e) {
       // The camera is fine; the engine is not. Say so, and say what broke.
-      for (const t of stream.getTracks()) t.stop();
-      video.srcObject = null;
-      camera = null;
+      // stop() releases the tracks, the worker and any half-built landmarker.
+      cam.stop();
+      if (camera === cam) camera = null;
+      if (gen !== cameraGen) throw cancelled();
       const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
       const err = new Error(detail);
       err.name = 'EngineStartError';
       throw err;
     }
+    // closeCamera() ran while we were starting: do not resurrect it.
+    if (gen !== cameraGen) {
+      cam.stop();
+      throw cancelled();
+    }
+    pose = cam;
   },
 
   async warmup(onProgress) {
@@ -152,6 +193,7 @@ const services: ShellServices = {
   },
 
   closeCamera() {
+    cameraGen++;
     camera?.stop();
     camera = null;
     if (!forceVirtual) pose = null;

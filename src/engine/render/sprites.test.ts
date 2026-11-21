@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { getSprite, spriteIds, spriteToSvg } from './sprite';
 import './sprites';
 import './sprites-ui';
+import './sprites-games';
 
 const ALL = spriteIds();
 

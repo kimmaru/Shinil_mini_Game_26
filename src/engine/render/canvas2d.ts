@@ -20,9 +20,10 @@
 // rather than poisoning the path. A dropped circle is a cosmetic bug; a NaN in
 // the current path silently blanks every subsequent draw in the frame.
 import { TAU } from '../math';
-import { L, MIN_VIS, POSE_EDGES } from '../pose/landmarks';
-import type { Paint, PlayerPose, Renderer, SkeletonOpts, TextOpts } from '../types';
-import { C, fade, hue, KEYLINE } from './palette';
+import { L, MIN_VIS, palm, POSE_EDGES } from '../pose/landmarks';
+import type { Paint, PlayerPose, Pt, Renderer, SkeletonOpts, TextOpts } from '../types';
+import { C, hue, KEYLINE } from './palette';
+import { SKY_DOT_FILL, SKY_DOTS, skyStops } from './sky';
 import {
   compiledPath, getSprite, type PaintRole, type SpriteId, type SpriteOpts,
 } from './sprite';
@@ -74,6 +75,138 @@ const SKELETON_JOINTS: readonly number[] = (() => {
   }
   return [...seen];
 })();
+
+/** Limbs as flat joint pairs. Feet are part of the leg: a short thick stub
+ *  past the ankle reads as a boot. */
+export const ARM_EDGES: readonly number[] = [
+  L.LEFT_SHOULDER, L.LEFT_ELBOW, L.LEFT_ELBOW, L.LEFT_WRIST,
+  L.RIGHT_SHOULDER, L.RIGHT_ELBOW, L.RIGHT_ELBOW, L.RIGHT_WRIST,
+];
+export const LEG_EDGES: readonly number[] = [
+  L.LEFT_HIP, L.LEFT_KNEE, L.LEFT_KNEE, L.LEFT_ANKLE, L.LEFT_ANKLE, L.LEFT_FOOT_INDEX,
+  L.RIGHT_HIP, L.RIGHT_KNEE, L.RIGHT_KNEE, L.RIGHT_ANKLE, L.RIGHT_ANKLE, L.RIGHT_FOOT_INDEX,
+];
+/** Every joint the avatar can draw something on, for its bounding box. */
+const BODY_JOINTS: readonly number[] = [L.NOSE, ...SKELETON_JOINTS];
+
+/**
+ * The player avatar's proportions, in shoulder widths (`p.scalePx`). Shared
+ * with the SVG shot renderer, so a shot shows the body a child actually sees.
+ */
+export const BODY = {
+  /** Limb diameters. Chunky on purpose: a stick figure reads as a debug view. */
+  arm: 0.24,
+  leg: 0.3,
+  /** Stroke width that rounds the torso quad's corners. */
+  torso: 0.3,
+  neck: 0.3,
+  /** Big, like every party-game character: a child's head is ~0.6 shoulder
+   *  widths across, this is ~0.9. */
+  head: 0.46,
+  mitt: 0.21,
+  shoe: 0.2,
+  /** Plain joint dots, `jointSet: 'all'` only. */
+  dot: 0.09,
+  /** Emphasis ring radius, as a multiple of that joint's dot radius. */
+  ring: 1.6,
+  ringW: 0.075,
+  /** The belly inside the body layer: white at this alpha, then the body
+   *  colour at `bellyTint` — a light tint about half opaque, so objects behind
+   *  the child's chest stay visible. The limbs need not be see-through. */
+  bellyWhite: 0.35,
+  bellyTint: 0.3,
+  /** Head = body colour at this alpha over white: a lighter tint of any CSS
+   *  colour without parsing it. */
+  headTint: 0.55,
+  /** How far the ghost silhouette reaches past the body. */
+  ghostGrow: 0.14,
+  /** Ghost = body colour at this alpha over white. */
+  ghostTint: 0.5,
+  /** Shine on the head and mitts: a short white arc at the top-left. */
+  gloss: 0.7,
+  glossW: 0.055,
+} as const;
+
+/** The shine arc on a ball of radius r: at GLOSS_K * r, from GLOSS_A0 to
+ *  GLOSS_A1 — top-left, a sixth of the way round. Shared with the SVG shot
+ *  renderer. */
+export const GLOSS_K = 0.66;
+export const GLOSS_A0 = Math.PI * 1.1;
+export const GLOSS_A1 = Math.PI * 1.4;
+/** Add that arc to the current path. */
+function glossArc(c: CanvasRenderingContext2D, x: number, y: number, r: number): void {
+  const k = r * GLOSS_K;
+  c.moveTo(x + Math.cos(GLOSS_A0) * k, y + Math.sin(GLOSS_A0) * k);
+  c.arc(x, y, k, GLOSS_A0, GLOSS_A1, false);
+}
+
+/** Shoulder-width unit in px, clamped: a child leaning into the lens must not
+ *  become a wall, and one far away must not shrink back into a stick figure. */
+export function bodyUnit(scalePx: number, s: number): number {
+  const u = Number.isFinite(scalePx) && scalePx > 0 ? scalePx : 120 * s;
+  return Math.min(Math.max(u, 50 * s), 320 * s);
+}
+
+/** Ink keyline outside the body colour, per side: the house sticker edge. */
+export const bodyInk = (s: number): number => Math.max(2.5, 5.5 * s);
+
+/** A wrist gets a mitt, an ankle a shoe, anything else a small dot; an
+ *  explicit `jointR` (> 0) overrides all three. */
+export function dotRadius(j: number, u: number, jr: number): number {
+  if (jr > 0) return jr;
+  if (j === L.LEFT_WRIST || j === L.RIGHT_WRIST) return u * BODY.mitt;
+  if (j === L.LEFT_ANKLE || j === L.RIGHT_ANKLE) return u * BODY.shoe;
+  return u * BODY.dot;
+}
+
+/**
+ * Confidence as a FADE, not a switch: 0 at MIN_VIS, 1 a quarter above it.
+ * Hard-gating makes a limb blink between frames; fading keeps the body whole
+ * while still refusing to draw a joint the model is guessing at.
+ */
+export function limbFade(va: number, vb: number): number {
+  const v = va < vb ? va : vb;
+  if (!(v > MIN_VIS)) return 0;
+  const t = (v - MIN_VIS) / 0.25;
+  const k = t > 1 ? 1 : t;
+  return k * k * (3 - 2 * k); // smoothstep
+}
+
+/**
+ * Where a hand's mitt goes: the palm, which is where the games hit-test — or
+ * the wrist when neither the fingers nor the elbow are trustworthy enough to
+ * extrapolate from. False when the wrist itself is not.
+ */
+export function mittAt(p: PlayerPose, side: 'L' | 'R', out: Pt): boolean {
+  const w = side === 'L' ? L.LEFT_WRIST : L.RIGHT_WRIST;
+  const v = p.vis;
+  if (!(v[w]! >= MIN_VIS)) return false;
+  const fingers = side === 'L'
+    ? v[L.LEFT_PINKY]! >= MIN_VIS && v[L.LEFT_INDEX]! >= MIN_VIS && v[L.LEFT_THUMB]! >= MIN_VIS
+    : v[L.RIGHT_PINKY]! >= MIN_VIS && v[L.RIGHT_INDEX]! >= MIN_VIS && v[L.RIGHT_THUMB]! >= MIN_VIS;
+  const elbow = side === 'L' ? L.LEFT_ELBOW : L.RIGHT_ELBOW;
+  if (fingers || v[elbow]! >= MIN_VIS) {
+    palm(p, side, out);
+  } else {
+    out.x = p.px[w * 2]!;
+    out.y = p.px[w * 2 + 1]!;
+  }
+  return Number.isFinite(out.x) && Number.isFinite(out.y);
+}
+
+/** Where a shoe goes: halfway from ankle to toe, so with the foot stub it
+ *  reads as a boot — or on the ankle when the toe is not trustworthy. */
+export function shoeAt(p: PlayerPose, side: 'L' | 'R', out: Pt): boolean {
+  const a = side === 'L' ? L.LEFT_ANKLE : L.RIGHT_ANKLE;
+  const t = side === 'L' ? L.LEFT_FOOT_INDEX : L.RIGHT_FOOT_INDEX;
+  if (!(p.vis[a]! >= MIN_VIS)) return false;
+  const ax = p.px[a * 2]!;
+  const ay = p.px[a * 2 + 1]!;
+  const toe = p.vis[t]! >= MIN_VIS;
+  out.x = toe ? (ax + p.px[t * 2]!) / 2 : ax;
+  out.y = toe ? (ay + p.px[t * 2 + 1]!) / 2 : ay;
+  return Number.isFinite(out.x) && Number.isFinite(out.y);
+}
 
 const fin = (a: number): boolean => Number.isFinite(a);
 const fin2 = (a: number, b: number): boolean => Number.isFinite(a) && Number.isFinite(b);
@@ -135,10 +268,14 @@ export class Canvas2DRenderer implements Renderer {
   private glowLeft = GLOW_BUDGET;
   private glowsDropped = 0;
 
-  // Cached full-screen gradients, rebuilt only when the hue or the size changes.
-  private bgKey = '';
+  // Cached sky gradient and dot layout, rebuilt only when the hue or the size
+  // changes. Compared as numbers: a string key would allocate every frame.
+  private bgHue = Number.NaN;
+  private bgW = 0;
+  private bgH = 0;
   private bgGrad: CanvasGradient | null = null;
-  private vigGrad: CanvasGradient | null = null;
+  private readonly dots = new Float32Array(SKY_DOTS.length);
+  private dotN = 0;
 
   // Text metric caches, keyed by the ctx.font string.
   private readonly digitCache = new Map<string, number>();
@@ -191,7 +328,7 @@ export class Canvas2DRenderer implements Renderer {
       this.canvas.style.width = `${this._w}px`;
       this.canvas.style.height = `${this._h}px`;
     }
-    this.bgKey = '';
+    this.bgGrad = null;
     this.digitCache.clear();
     this.charCache.clear();
     this.resetState();
@@ -285,38 +422,38 @@ export class Canvas2DRenderer implements Renderer {
     c.globalCompositeOperation = 'source-over';
     c.shadowBlur = 0;
 
-    const key = `${hd}|${w}|${h}`;
-    if (key !== this.bgKey || !this.bgGrad) {
-      this.bgKey = key;
+    if (hd !== this.bgHue || w !== this.bgW || h !== this.bgH || !this.bgGrad) {
+      this.bgHue = hd;
+      this.bgW = w;
+      this.bgH = h;
       const g = c.createLinearGradient(0, 0, 0, h);
-      if (hd < 0) {
-        g.addColorStop(0, C.bg);
-        g.addColorStop(1, C.bgDeep);
-      } else {
-        // A wash of the game's own colour from the top, settling into the warm
-        // ground. A tint, not a repaint: every game is recognisably the same
-        // product, and the sky reads as "this one is the green game".
-        g.addColorStop(0, `hsl(${hd} 62% 88%)`);
-        g.addColorStop(0.46, `hsl(${hd} 48% 94%)`);
-        g.addColorStop(1, C.bgDeep);
-      }
+      for (const [at, color] of skyStops(hd)) g.addColorStop(at, color);
       this.bgGrad = g;
-      // A soft ground shadow rather than a dark vignette: on a light canvas a
-      // darkened frame reads as grime, while a warm floor reads as a room.
-      const r = c.createRadialGradient(
-        w / 2, h * 1.05, Math.min(w, h) * 0.1,
-        w / 2, h * 0.95, Math.max(w, h) * 0.9,
-      );
-      r.addColorStop(0, 'rgb(120 90 40 / 0.1)');
-      r.addColorStop(0.5, 'rgb(120 90 40 / 0.035)');
-      r.addColorStop(1, 'rgb(120 90 40 / 0)');
-      this.vigGrad = r;
+      // Lay the party-light dots out once per size; a hue-less clear is the
+      // plain warm ground and gets none.
+      const m = Math.min(w, h);
+      this.dotN = hd >= 0 ? SKY_DOTS.length / 3 : 0;
+      for (let i = 0; i < this.dotN; i++) {
+        this.dots[i * 3] = SKY_DOTS[i * 3]! * w;
+        this.dots[i * 3 + 1] = SKY_DOTS[i * 3 + 1]! * h;
+        this.dots[i * 3 + 2] = SKY_DOTS[i * 3 + 2]! * m;
+      }
     }
+    // Two draws: the gradient, then every dot in one path.
     c.fillStyle = this.bgGrad;
     c.fillRect(0, 0, w, h);
-    if (this.vigGrad) {
-      c.fillStyle = this.vigGrad;
-      c.fillRect(0, 0, w, h);
+    if (this.dotN > 0) {
+      const d = this.dots;
+      c.beginPath();
+      for (let i = 0; i < this.dotN; i++) {
+        const x = d[i * 3]!;
+        const y = d[i * 3 + 1]!;
+        const r = d[i * 3 + 2]!;
+        c.moveTo(x + r, y);
+        c.arc(x, y, r, 0, TAU);
+      }
+      c.fillStyle = SKY_DOT_FILL;
+      c.fill();
     }
     c.restore();
   }
@@ -726,312 +863,600 @@ export class Canvas2DRenderer implements Renderer {
   // ─── Body ──────────────────────────────────────────────────────────────────
 
   /**
-   * The skeleton overlay.
+   * The player avatar: a chunky flat "sticker" of the child's own body.
    *
-   * Two full passes over POSE_EDGES: a dark outline underneath, then the
-   * slot-coloured stroke on top. One stroke call each, so it is two paths per
-   * body regardless of how many edges are visible. The outline is not decoration
-   * — a cyan limb over a cyan shirt is invisible, and the player then believes
-   * tracking is broken.
+   * Thick round limbs, a see-through rounded torso, a plain round head (no
+   * face — ART.md §5) and big round mitts on the hands, over one ink keyline.
+   * Drawn opaque into an offscreen layer, then composited ONCE at the
+   * requested alpha. Painted straight onto the canvas at alpha 0.5 instead,
+   * the ink under every limb shows through its colour and every overlap
+   * darkens, and the body reads as an X-ray rather than a sticker.
+   *
+   * Cost: ~20 small fills/strokes into the layer (no shadow blur, no
+   * allocation) plus one clear and one drawImage of the body's bounding box.
    *
    * Mirroring is already applied in `p.px`. Do not mirror again.
    */
   skeleton(p: PlayerPose, o?: SkeletonOpts): void {
     if (!p || !p.px || !p.vis) return;
-    const c = this.c;
-    const col = o?.color ?? C.slot[p.slot] ?? C.slot[0];
     const al = clamp01(o?.alpha ?? 0.92);
     if (al <= 0) return;
-    const lw = Math.max(3, o?.lineWidth ?? 9 * this._s);
-    const outline = o?.outline ?? true;
-    const ow = Math.max(2, 3.2 * this._s);
-    const jr = o?.jointR ?? lw * 0.72;
+    const col = o?.color ?? C.slot[p.slot] ?? C.slot[0];
+    const u = bodyUnit(p.scalePx, this._s);
+    const ink = o?.outline === false ? 0 : bodyInk(this._s);
+    const lw = o?.lineWidth;
+    const armW = lw !== undefined && fin(lw) && lw > 0 ? lw : u * BODY.arm;
+    const legW = armW * (BODY.leg / BODY.arm);
+    // -1 = each joint's own default size; 0 = no dots at all.
+    const jr = o?.jointR !== undefined && fin(o.jointR) ? Math.max(0, o.jointR) : -1;
+    const set = o?.jointSet;
+    const dots = jr === 0 || set === 'none'
+      ? EMPTY_JOINTS
+      : set === 'all' ? SKELETON_JOINTS : set === 'hands' ? HAND_JOINTS : END_JOINTS;
+    // Ankle "dots" are shoes, drawn with the legs so they merge into them.
+    const shoes = dots === END_JOINTS || dots === SKELETON_JOINTS;
+    const emph = o?.emphasize ?? EMPTY_JOINTS;
+    const ringW = u * BODY.ringW;
+    const pad = Math.max(
+      u * BODY.head, legW, BODY.ring * Math.max(u * BODY.mitt, jr) + ringW,
+    ) + 2 * ink + 2;
+    if (!this.prepBody(p, pad)) return;
 
-    c.save();
-    c.globalAlpha = this.a * al;
-    c.lineCap = 'round';
-    c.lineJoin = 'round';
+    const c = this.openBody(al);
+    const layered = c !== this.c;
+    const ba = layered ? 1 : this.a * al;
+    const shoeR = jr > 0 ? jr : u * BODY.shoe;
 
-    if (outline) {
-      // A pale halo first, so the body separates from the sky wash, then the
-      // ink edge that actually draws the limb. On a dark canvas this was a
-      // single dark outline under a bright core; on a light one the order and
-      // the colours both invert.
-      c.strokeStyle = 'rgb(255 255 255 / 0.85)';
-      this.strokeEdges(p, lw, ow * 3);
-      c.strokeStyle = C.ink;
-      this.strokeEdges(p, lw, ow * 1.4);
-      this.strokeHead(p, jr, lw + ow * 1.4, true);
+    // Legs and shoes first: the torso covers their tops.
+    if (ink > 0) {
+      c.strokeStyle = KEYLINE;
+      this.strokeLimbs(c, p, LEG_EDGES, legW + 2 * ink, ba);
+      if (shoes && this.shoesPath(c, shoeR + ink) > 0) {
+        c.fillStyle = KEYLINE;
+        c.fill();
+      }
     }
     c.strokeStyle = col;
-    this.strokeEdges(p, lw, 0);
-    this.strokeHead(p, jr, lw, false, col);
+    this.strokeLimbs(c, p, LEG_EDGES, legW, ba);
+    if (shoes && this.shoesPath(c, shoeR) > 0) {
+      c.fillStyle = col;
+      c.fill();
+    }
 
-    if (jr > 0) {
-      // Joint dots: dark ring under a coloured core, same reason as the limbs.
-      // Only the ENDS by default — wrists, ankles, head. Elbows and knees are
-      // already rounded by lineJoin, and a dot on all eighteen joints reads as
-      // a medical scan of a child rather than a character.
-      const dots = o?.jointSet === 'all'
-        ? SKELETON_JOINTS
-        : o?.jointSet === 'none'
-          ? EMPTY_JOINTS
-          : o?.jointSet === 'hands'
-            ? HAND_JOINTS
-            : END_JOINTS;
+    // Neck and head before the torso, so the neck disappears into the collar.
+    // The head is the body colour over white: a lighter tint of any CSS
+    // colour a game passes, without parsing it.
+    if (this.headOk) {
+      const hr = u * BODY.head;
+      const nw = u * BODY.neck;
+      if (ink > 0) this.headPass(c, KEYLINE, nw + 2 * ink, hr + ink);
+      this.headPass(c, C.white, nw, hr);
+      c.globalAlpha = ba * BODY.headTint;
+      this.headPass(c, col, nw, hr);
+      c.globalAlpha = ba;
+      c.beginPath();
+      glossArc(c, this.hx, this.hy, hr);
+      this.strokeGloss(c, u, ba);
+    }
+
+    // Torso: an ink rim around a see-through belly, so whatever the game drew
+    // behind the child's chest stays visible.
+    const tr = (u * BODY.torso) / 2;
+    if (ink > 0) this.paintTorso(c, p, tr + ink, KEYLINE);
+    if (layered) {
+      // Punch the inside out of the layer (ink, neck base, leg tops), then
+      // refill it translucent. Only possible on the layer: on the opaque
+      // canvas this would cut a black hole.
+      c.globalCompositeOperation = 'destination-out';
+      this.paintTorso(c, p, tr, KEYLINE);
+      c.globalCompositeOperation = 'source-over';
+    }
+    // A light tint, not a thin wash of the full colour: translucent blue over
+    // a peach sky mixes to grey.
+    c.globalAlpha = ba * BODY.bellyWhite;
+    this.paintTorso(c, p, tr, C.white);
+    c.globalAlpha = ba * BODY.bellyTint;
+    this.paintTorso(c, p, tr, col);
+    c.globalAlpha = ba;
+
+    // Arms over the torso and head: hands raised in front of the face are in
+    // front of it.
+    if (ink > 0) {
+      c.strokeStyle = KEYLINE;
+      this.strokeLimbs(c, p, ARM_EDGES, armW + 2 * ink, ba);
+    }
+    c.strokeStyle = col;
+    this.strokeLimbs(c, p, ARM_EDGES, armW, ba);
+
+    // Mitts on the palms (and plain dots for `jointSet: 'all'`): one path per
+    // pass. Only the ENDS by default — a dot on every joint reads as a
+    // medical scan of a child rather than a character.
+    if (dots.length > 0) {
+      if (ink > 0 && this.dotsPath(c, p, dots, jr, u, ink) > 0) {
+        c.fillStyle = KEYLINE;
+        c.fill();
+      }
+      if (this.dotsPath(c, p, dots, jr, u, 0) > 0) {
+        c.fillStyle = col;
+        c.fill();
+      }
+      // A shine on each mitt: a vinyl toy, not a target marker.
+      c.beginPath();
+      let shine = 0;
       for (let i = 0; i < dots.length; i++) {
         const j = dots[i]!;
-        if (p.vis[j]! < MIN_VIS) continue;
-        const jxp = p.px[j * 2]!;
-        const jyp = p.px[j * 2 + 1]!;
-        if (!fin2(jxp, jyp)) continue;
-        if (outline) {
-          c.beginPath();
-          c.arc(jxp, jyp, jr + ow, 0, TAU);
-          c.fillStyle = C.ink;
-          c.fill();
-        }
-        c.beginPath();
-        c.arc(jxp, jyp, jr, 0, TAU);
-        c.fillStyle = col;
-        c.fill();
+        if ((j !== L.LEFT_WRIST && j !== L.RIGHT_WRIST) || !this.dotAt(p, j)) continue;
+        glossArc(c, this.tx, this.ty, dotRadius(j, u, jr));
+        shine++;
       }
+      if (shine > 0) this.strokeGloss(c, u, ba);
     }
 
-    const emph = o?.emphasize;
-    if (emph && emph.length > 0) {
-      const er = Math.max(jr * 2, 10 * this._s);
-      for (let i = 0; i < emph.length; i++) {
-        const j = emph[i]!;
-        if (j < 0 || j * 2 + 1 >= p.px.length) continue;
-        if (p.vis[j]! < MIN_VIS) continue;
-        const jxp = p.px[j * 2]!;
-        const jyp = p.px[j * 2 + 1]!;
-        if (!fin2(jxp, jyp)) continue;
-        c.beginPath();
-        c.arc(jxp, jyp, er + ow, 0, TAU);
-        c.fillStyle = C.ink;
-        c.fill();
-        c.beginPath();
-        c.arc(jxp, jyp, er, 0, TAU);
-        c.fillStyle = C.white;
-        c.fill();
-        c.beginPath();
-        c.arc(jxp, jyp, er * 0.62, 0, TAU);
-        c.fillStyle = col;
-        c.fill();
+    // "This is the hand that matters": a bright ring with a gap, so it reads
+    // as a halo around the mitt rather than a bigger mitt.
+    if (emph.length > 0 && this.ringsPath(c, p, emph, jr, u) > 0) {
+      if (ink > 0) {
+        c.strokeStyle = KEYLINE;
+        c.lineWidth = ringW + 2 * ink;
+        c.stroke();
       }
-    }
-    c.restore();
-  }
-
-  /**
-   * Limb thickness relative to the base width, in POSE_EDGES order.
-   *
-   * A uniform stroke reads as a stick puppet. Scaling each limb by roughly its
-   * real mass turns the same fourteen lines into a body, at no extra cost.
-   */
-  private static readonly EDGE_W = [
-    1.45, // shoulders
-    1.0, 0.78, // left upper arm, forearm
-    1.0, 0.78, // right
-    1.45, 1.45, // torso sides
-    1.45, // hips
-    1.2, 0.88, // left thigh, shin
-    1.2, 0.88, // right
-    0.7, 0.7, // feet
-  ];
-
-  /**
-   * Confidence as a FADE, not a switch.
-   *
-   * Hard-gating on MIN_VIS makes a limb vanish and reappear between frames,
-   * which reads as the tracking having broken. Fading it out over a narrow
-   * band above the threshold keeps the body whole while still refusing to
-   * draw a joint the model is guessing at.
-   */
-  private edgeAlpha(p: PlayerPose, a: number, b: number): number {
-    const va = p.vis[a]!;
-    const vb = p.vis[b]!;
-    const v = va < vb ? va : vb;
-    if (v <= MIN_VIS) return 0;
-    const t = (v - MIN_VIS) / 0.25;
-    const k = t > 1 ? 1 : t;
-    return k * k * (3 - 2 * k); // smoothstep
-  }
-
-  /** Stroke the skeleton's limbs. `widthScale` multiplies the per-limb table,
-   *  so the outline pass and the colour pass stay in proportion. */
-  private strokeEdges(p: PlayerPose, base = 0, extra = 0): void {
-    const c = this.c;
-    const lw = base > 0 ? base : c.lineWidth;
-    const baseAlpha = c.globalAlpha;
-    for (let i = 0; i < POSE_EDGES.length; i++) {
-      const e = POSE_EDGES[i]!;
-      const a = e[0];
-      const b = e[1];
-      const al = this.edgeAlpha(p, a, b);
-      if (al <= 0) continue;
-      const ax = p.px[a * 2]!;
-      const ay = p.px[a * 2 + 1]!;
-      const bx = p.px[b * 2]!;
-      const by = p.px[b * 2 + 1]!;
-      if (!fin4(ax, ay, bx, by)) continue;
-      c.globalAlpha = baseAlpha * al;
-      c.lineWidth = lw * (Canvas2DRenderer.EDGE_W[i] ?? 1) + extra;
-      c.beginPath();
-      c.moveTo(ax, ay);
-      c.lineTo(bx, by);
+      c.strokeStyle = C.accent;
+      c.lineWidth = ringW;
       c.stroke();
     }
-    c.globalAlpha = baseAlpha;
-    c.lineWidth = lw;
-  }
 
-  /** A neck line plus a head ring. POSE_EDGES has no head (no face dots, by
-   *  design), and a skeleton without one reads as a decapitated puppet. */
-  private strokeHead(
-    p: PlayerPose,
-    jr: number,
-    lw: number,
-    dark: boolean,
-    col?: string,
-  ): void {
-    const c = this.c;
-    if (p.vis[L.NOSE]! < MIN_VIS) return;
-    if (p.vis[L.LEFT_SHOULDER]! < MIN_VIS || p.vis[L.RIGHT_SHOULDER]! < MIN_VIS) return;
-    const nx = p.px[L.NOSE * 2]!;
-    const ny = p.px[L.NOSE * 2 + 1]!;
-    const sx = (p.px[L.LEFT_SHOULDER * 2]! + p.px[L.RIGHT_SHOULDER * 2]!) / 2;
-    const sy = (p.px[L.LEFT_SHOULDER * 2 + 1]! + p.px[L.RIGHT_SHOULDER * 2 + 1]!) / 2;
-    if (!fin4(nx, ny, sx, sy)) return;
-    const scale = fin(p.scalePx) && p.scalePx > 0 ? p.scalePx : jr * 8;
-    const hr = scale * 0.34;
-    // Stop the neck at the head ring so the line does not cross the face.
-    const dx = nx - sx;
-    const dy = ny - sy;
-    const d = Math.hypot(dx, dy) || 1;
-    const tx = nx - (dx / d) * hr;
-    const ty = ny - (dy / d) * hr;
-    c.beginPath();
-    c.moveTo(sx, sy);
-    c.lineTo(tx, ty);
-    c.lineWidth = lw;
-    c.strokeStyle = dark ? C.ink : col ?? C.white;
-    c.stroke();
-    c.beginPath();
-    c.arc(nx, ny, hr, 0, TAU);
-    c.stroke();
+    this.closeBody(c, al);
   }
 
   /**
-   * Soft filled silhouette: torso quad + limb capsules + head.
+   * Soft coloured silhouette: the avatar's own shape, grown, in one flat
+   * light tint of the player's colour.
    *
-   * Used by the silhouette games and by the attract screen, where its real job
-   * is showing a parent exactly what the camera sees — a filled blob with no
-   * face, which is the privacy story made visible.
-   *
-   * Two passes (wide and faint, then narrow and solid) fake a soft edge for the
-   * price of two more strokes. `ctx.filter = 'blur()'` would look better and
-   * costs an offscreen surface per frame.
+   * Drawn under the skeleton it is a faint aura; on its own it shows a parent
+   * exactly what the camera sees — a filled shape with no face, which is the
+   * privacy story made visible. Same layer as the skeleton, so overlapping
+   * limbs do not darken where they cross.
    */
   ghostBody(p: PlayerPose, alpha: number): void {
     if (!p || !p.px || !p.vis) return;
     const a = clamp01(fin(alpha) ? alpha : 0.5);
     if (a <= 0) return;
     const col = C.slot[p.slot] ?? C.slot[0];
-    const scale = fin(p.scalePx) && p.scalePx > 0 ? p.scalePx : 120;
+    const u = bodyUnit(p.scalePx, this._s);
+    const g = u * BODY.ghostGrow;
+    if (!this.prepBody(p, Math.max(u * BODY.head, u * BODY.leg) + g + 2)) return;
+
+    const c = this.openBody(a);
+    const layered = c !== this.c;
+    const ba = layered ? 1 : this.a * a;
+    // On the layer: a white silhouette, then the colour laid over it
+    // `source-atop` — one rect, tinting only where the silhouette is.
+    const base = layered ? C.white : col;
+    c.strokeStyle = base;
+    c.fillStyle = base;
+    this.strokeLimbs(c, p, LEG_EDGES, u * BODY.leg + 2 * g, ba);
+    this.strokeLimbs(c, p, ARM_EDGES, u * BODY.arm + 2 * g, ba);
+    if (this.shoesPath(c, u * BODY.shoe + g) > 0) c.fill();
+    this.paintTorso(c, p, (u * BODY.torso) / 2 + g, base);
+    if (this.headOk) this.headPass(c, base, u * BODY.neck + 2 * g, u * BODY.head + g);
+    if (this.dotsPath(c, p, HAND_JOINTS, -1, u, g) > 0) {
+      c.fillStyle = base;
+      c.fill();
+    }
+    if (layered) {
+      c.globalCompositeOperation = 'source-atop';
+      c.globalAlpha = BODY.ghostTint;
+      c.fillStyle = col;
+      c.fillRect(this.bx0, this.by0, this.bx1 - this.bx0, this.by1 - this.by0);
+      c.globalCompositeOperation = 'source-over';
+      c.globalAlpha = 1;
+    }
+    this.closeBody(c, a);
+  }
+
+  /** Free the body layer's backing store now rather than at some later GC:
+   *  the attract reel builds a renderer for every game it shows. */
+  dispose(): void {
+    if (this.layerCanvas) {
+      this.layerCanvas.width = 0;
+      this.layerCanvas.height = 0;
+    }
+    this.layerCanvas = null;
+    this.layerCtx = null;
+    this.layerTried = true;
+  }
+
+  // Scratch for one body draw. Fields, so a frame allocates nothing.
+  private layerCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
+  private layerCtx: CanvasRenderingContext2D | null = null;
+  private layerTried = false;
+  /** Body bounds, logical px. */
+  private bx0 = 0;
+  private by0 = 0;
+  private bx1 = 0;
+  private by1 = 0;
+  /** The layer region in use, device px. */
+  private lx = 0;
+  private ly = 0;
+  private lw = 0;
+  private lh = 0;
+  private readonly palmL: Pt = { x: 0, y: 0 };
+  private readonly palmR: Pt = { x: 0, y: 0 };
+  private palmOkL = false;
+  private palmOkR = false;
+  private readonly shoeL: Pt = { x: 0, y: 0 };
+  private readonly shoeR: Pt = { x: 0, y: 0 };
+  private shoeOkL = false;
+  private shoeOkR = false;
+  private headOk = false;
+  /** Head centre and shoulder centre. */
+  private hx = 0;
+  private hy = 0;
+  private sx = 0;
+  private sy = 0;
+  /** Out-params of `dotAt`. */
+  private tx = 0;
+  private ty = 0;
+  /** Torso corners: left shoulder, right shoulder, right hip, left hip. */
+  private readonly quad = new Float64Array(8);
+
+  /** The offscreen body layer, created on first use and kept at the
+   *  canvas's backing size. Null where there is no way to make one (the unit
+   *  tests' fake context), in which case the body draws straight onto the
+   *  canvas. */
+  private bodyLayer(): CanvasRenderingContext2D | null {
+    if (!this.layerTried) {
+      this.layerTried = true;
+      try {
+        const doc = (this.canvas as { ownerDocument?: Document | null }).ownerDocument;
+        const OC = (globalThis as { OffscreenCanvas?: typeof OffscreenCanvas }).OffscreenCanvas;
+        const cv = doc ? doc.createElement('canvas') : OC ? new OC(1, 1) : null;
+        const lc = cv ? ((cv as HTMLCanvasElement).getContext('2d') as CanvasRenderingContext2D | null) : null;
+        if (cv && lc) {
+          this.layerCanvas = cv;
+          this.layerCtx = lc;
+        }
+      } catch {
+        // No layer: draw straight onto the canvas.
+      }
+    }
+    const cv = this.layerCanvas;
+    if (!cv || !this.layerCtx) return null;
+    if (cv.width !== this.canvas.width) cv.width = this.canvas.width;
+    if (cv.height !== this.canvas.height) cv.height = this.canvas.height;
+    return this.layerCtx;
+  }
+
+  /**
+   * Work out where this body is: its padded bounds, its palms and its head.
+   * False when not one joint is trustworthy, so the caller draws nothing.
+   */
+  private prepBody(p: PlayerPose, pad: number): boolean {
+    const px = p.px;
+    const vis = p.vis;
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (let i = 0; i < BODY_JOINTS.length; i++) {
+      const j = BODY_JOINTS[i]!;
+      if (!(vis[j]! >= MIN_VIS)) continue;
+      const x = px[j * 2]!;
+      const y = px[j * 2 + 1]!;
+      if (!fin2(x, y)) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+    // Mitts sit on the palm, past the wrist, where the games hit-test.
+    this.palmOkL = mittAt(p, 'L', this.palmL);
+    this.palmOkR = mittAt(p, 'R', this.palmR);
+    this.shoeOkL = shoeAt(p, 'L', this.shoeL);
+    this.shoeOkR = shoeAt(p, 'R', this.shoeR);
+    if (this.palmOkL) {
+      const q = this.palmL;
+      if (q.x < x0) x0 = q.x;
+      if (q.x > x1) x1 = q.x;
+      if (q.y < y0) y0 = q.y;
+      if (q.y > y1) y1 = q.y;
+    }
+    if (this.palmOkR) {
+      const q = this.palmR;
+      if (q.x < x0) x0 = q.x;
+      if (q.x > x1) x1 = q.x;
+      if (q.y < y0) y0 = q.y;
+      if (q.y > y1) y1 = q.y;
+    }
+    // A head needs a nose and both shoulders: without the shoulders there is
+    // nothing to hang it from.
+    this.headOk = false;
+    if (
+      vis[L.NOSE]! >= MIN_VIS && vis[L.LEFT_SHOULDER]! >= MIN_VIS &&
+      vis[L.RIGHT_SHOULDER]! >= MIN_VIS
+    ) {
+      this.hx = px[L.NOSE * 2]!;
+      this.hy = px[L.NOSE * 2 + 1]!;
+      this.sx = (px[L.LEFT_SHOULDER * 2]! + px[L.RIGHT_SHOULDER * 2]!) / 2;
+      this.sy = (px[L.LEFT_SHOULDER * 2 + 1]! + px[L.RIGHT_SHOULDER * 2 + 1]!) / 2;
+      this.headOk = fin4(this.hx, this.hy, this.sx, this.sy);
+    }
+    if (!(x0 <= x1)) return false;
+    this.bx0 = x0 - pad;
+    this.by0 = y0 - pad;
+    this.bx1 = x1 + pad;
+    this.by1 = y1 + pad;
+    return true;
+  }
+
+  /** A cleared, dpr-scaled layer to draw the body into — or, with no layer,
+   *  the canvas itself at the body's alpha. */
+  private openBody(al: number): CanvasRenderingContext2D {
+    const lc = this.bodyLayer();
+    if (lc) {
+      const d = this._dpr;
+      const x0 = Math.max(0, Math.floor(this.bx0 * d));
+      const y0 = Math.max(0, Math.floor(this.by0 * d));
+      const x1 = Math.min(this.canvas.width, Math.ceil(this.bx1 * d));
+      const y1 = Math.min(this.canvas.height, Math.ceil(this.by1 * d));
+      this.lx = x0;
+      this.ly = y0;
+      this.lw = x1 - x0;
+      this.lh = y1 - y0;
+      lc.setTransform(1, 0, 0, 1, 0, 0);
+      lc.globalAlpha = 1;
+      lc.globalCompositeOperation = 'source-over';
+      // Only this box is cleared and only this box is copied out, so nothing
+      // a previous frame left elsewhere in the layer can ever show.
+      if (this.lw > 0 && this.lh > 0) lc.clearRect(x0, y0, this.lw, this.lh);
+      lc.setTransform(d, 0, 0, d, 0, 0);
+      lc.lineCap = 'round';
+      lc.lineJoin = 'round';
+      return lc;
+    }
     const c = this.c;
     c.save();
+    c.globalAlpha = this.a * al;
     c.lineCap = 'round';
     c.lineJoin = 'round';
-    this.ghostPass(p, col, a * 0.3, scale * 0.12, scale);
-    this.ghostPass(p, col, a * 0.92, 0, scale);
-    c.restore();
+    return c;
   }
 
-  private ghostPass(
+  /** Composite the layer onto the canvas once, at the body's alpha, under the
+   *  canvas's current transform (so camera shake moves the body too). */
+  private closeBody(c: CanvasRenderingContext2D, al: number): void {
+    if (c === this.c) {
+      c.restore();
+      return;
+    }
+    if (this.lw <= 0 || this.lh <= 0 || !this.layerCanvas) return;
+    const m = this.c;
+    const d = this._dpr;
+    m.save();
+    m.globalAlpha = this.a * al;
+    m.drawImage(
+      this.layerCanvas, this.lx, this.ly, this.lw, this.lh,
+      this.lx / d, this.ly / d, this.lw / d, this.lh / d,
+    );
+    m.restore();
+  }
+
+  /**
+   * Stroke a set of limbs (flat joint pairs) at one width and style.
+   *
+   * Fully trusted limbs share ONE path, so their round joins merge into one
+   * shape. Limbs in the confidence band fade instead of blinking: a hard
+   * MIN_VIS switch makes an arm vanish and reappear between frames, which
+   * reads as the camera having lost the player.
+   */
+  private strokeLimbs(
+    c: CanvasRenderingContext2D,
     p: PlayerPose,
-    col: string,
-    a: number,
-    grow: number,
-    scale: number,
+    edges: readonly number[],
+    width: number,
+    ba: number,
   ): void {
-    const c = this.c;
-    const paint = fade(col, a);
-    c.globalAlpha = this.a;
-    c.fillStyle = paint;
-    c.strokeStyle = paint;
-
-    // Torso quad — the body's mass.
-    if (
-      p.vis[L.LEFT_SHOULDER]! >= MIN_VIS && p.vis[L.RIGHT_SHOULDER]! >= MIN_VIS &&
-      p.vis[L.LEFT_HIP]! >= MIN_VIS && p.vis[L.RIGHT_HIP]! >= MIN_VIS
-    ) {
-      const quad = [L.LEFT_SHOULDER, L.RIGHT_SHOULDER, L.RIGHT_HIP, L.LEFT_HIP];
-      let ok = true;
-      for (const j of quad) if (!fin2(p.px[j * 2]!, p.px[j * 2 + 1]!)) ok = false;
-      if (ok) {
-        c.beginPath();
-        c.moveTo(p.px[quad[0]! * 2]!, p.px[quad[0]! * 2 + 1]!);
-        for (let i = 1; i < 4; i++) {
-          c.lineTo(p.px[quad[i]! * 2]!, p.px[quad[i]! * 2 + 1]!);
-        }
-        c.closePath();
-        c.fill();
-        // Widen the silhouette so the quad edges are not razor straight.
-        c.lineWidth = scale * 0.22 + grow;
-        c.stroke();
-      }
+    const px = p.px;
+    c.lineWidth = width;
+    c.beginPath();
+    let n = 0;
+    for (let i = 0; i < edges.length; i += 2) {
+      const a = edges[i]!;
+      const b = edges[i + 1]!;
+      if (limbFade(p.vis[a]!, p.vis[b]!) < 1) continue;
+      const ax = px[a * 2]!;
+      const ay = px[a * 2 + 1]!;
+      const bx = px[b * 2]!;
+      const by = px[b * 2 + 1]!;
+      if (!fin4(ax, ay, bx, by)) continue;
+      c.moveTo(ax, ay);
+      c.lineTo(bx, by);
+      n++;
     }
-
-    // Limb capsules.
-    c.lineWidth = scale * 0.3 + grow;
-    this.ghostLimb(p, L.LEFT_SHOULDER, L.LEFT_ELBOW);
-    this.ghostLimb(p, L.LEFT_ELBOW, L.LEFT_WRIST);
-    this.ghostLimb(p, L.RIGHT_SHOULDER, L.RIGHT_ELBOW);
-    this.ghostLimb(p, L.RIGHT_ELBOW, L.RIGHT_WRIST);
-    c.lineWidth = scale * 0.36 + grow;
-    this.ghostLimb(p, L.LEFT_HIP, L.LEFT_KNEE);
-    this.ghostLimb(p, L.LEFT_KNEE, L.LEFT_ANKLE);
-    this.ghostLimb(p, L.RIGHT_HIP, L.RIGHT_KNEE);
-    this.ghostLimb(p, L.RIGHT_KNEE, L.RIGHT_ANKLE);
-
-    // Head: a blank oval. No eyes, no mouth — this is a shadow, not a portrait.
-    if (p.vis[L.NOSE]! >= MIN_VIS) {
-      const nx = p.px[L.NOSE * 2]!;
-      const ny = p.px[L.NOSE * 2 + 1]!;
-      if (fin2(nx, ny)) {
-        c.beginPath();
-        c.arc(nx, ny, scale * 0.4 + grow * 0.5, 0, TAU);
-        c.fill();
-      }
-      if (p.vis[L.LEFT_SHOULDER]! >= MIN_VIS && p.vis[L.RIGHT_SHOULDER]! >= MIN_VIS) {
-        const sx = (p.px[L.LEFT_SHOULDER * 2]! + p.px[L.RIGHT_SHOULDER * 2]!) / 2;
-        const sy = (p.px[L.LEFT_SHOULDER * 2 + 1]! + p.px[L.RIGHT_SHOULDER * 2 + 1]!) / 2;
-        if (fin2(sx, sy)) {
-          c.lineWidth = scale * 0.34 + grow;
-          c.beginPath();
-          c.moveTo(sx, sy);
-          c.lineTo(nx, ny);
-          c.stroke();
-        }
-      }
+    if (n > 0) c.stroke();
+    for (let i = 0; i < edges.length; i += 2) {
+      const a = edges[i]!;
+      const b = edges[i + 1]!;
+      const k = limbFade(p.vis[a]!, p.vis[b]!);
+      if (k <= 0 || k >= 1) continue;
+      const ax = px[a * 2]!;
+      const ay = px[a * 2 + 1]!;
+      const bx = px[b * 2]!;
+      const by = px[b * 2 + 1]!;
+      if (!fin4(ax, ay, bx, by)) continue;
+      c.globalAlpha = ba * k;
+      c.beginPath();
+      c.moveTo(ax, ay);
+      c.lineTo(bx, by);
+      c.stroke();
     }
+    c.globalAlpha = ba;
   }
 
-  private ghostLimb(p: PlayerPose, a: number, b: number): void {
-    if (p.vis[a]! < MIN_VIS || p.vis[b]! < MIN_VIS) return;
-    const ax = p.px[a * 2]!;
-    const ay = p.px[a * 2 + 1]!;
-    const bx = p.px[b * 2]!;
-    const by = p.px[b * 2 + 1]!;
-    if (!fin4(ax, ay, bx, by)) return;
-    const c = this.c;
-    c.beginPath();
-    c.moveTo(ax, ay);
-    c.lineTo(bx, by);
+  /** Stroke the current gloss path: white, top-left, no keyline (ART.md §2.7). */
+  private strokeGloss(c: CanvasRenderingContext2D, u: number, ba: number): void {
+    c.globalAlpha = ba * BODY.gloss;
+    c.strokeStyle = C.white;
+    c.lineWidth = u * BODY.glossW;
     c.stroke();
+    c.globalAlpha = ba;
+  }
+
+  /**
+   * Neck plus head disc as ONE fill, so a translucent pass (the head tint)
+   * covers the overlap once instead of showing the neck through the head.
+   * The neck is a quad wound the same way as the arc, so nonzero fill unions
+   * them; its flat bottom end sits inside the torso and is punched away.
+   */
+  private headPass(c: CanvasRenderingContext2D, style: string, neckW: number, r: number): void {
+    const dx = this.hx - this.sx;
+    const dy = this.hy - this.sy;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / len) * (neckW / 2);
+    const ny = (dx / len) * (neckW / 2);
+    c.beginPath();
+    c.moveTo(this.sx - nx, this.sy - ny);
+    c.lineTo(this.hx - nx, this.hy - ny);
+    c.lineTo(this.hx + nx, this.hy + ny);
+    c.lineTo(this.sx + nx, this.sy + ny);
+    c.closePath();
+    c.moveTo(this.hx + r, this.hy);
+    c.arc(this.hx, this.hy, r, 0, TAU);
+    c.fillStyle = style;
+    c.fill();
+  }
+
+  /**
+   * Paint the torso grown by `r`, in one call: the quad (shoulders + hips)
+   * with round corners, or just the shoulder bar when the hips are out of
+   * frame.
+   *
+   * The rounded quad is built as ONE closed outline — an arc on each corner
+   * joined by the offset edges — and filled once. fill() then a round-joined
+   * stroke() would paint the inner half of the stroke twice, and at partial
+   * alpha that shows as a lighter rim inside the belly.
+   */
+  private paintTorso(c: CanvasRenderingContext2D, p: PlayerPose, r: number, style: string): void {
+    const v = p.vis;
+    const px = p.px;
+    if (!(v[L.LEFT_SHOULDER]! >= MIN_VIS && v[L.RIGHT_SHOULDER]! >= MIN_VIS)) return;
+    const q = this.quad;
+    q[0] = px[L.LEFT_SHOULDER * 2]!;
+    q[1] = px[L.LEFT_SHOULDER * 2 + 1]!;
+    q[2] = px[L.RIGHT_SHOULDER * 2]!;
+    q[3] = px[L.RIGHT_SHOULDER * 2 + 1]!;
+    if (!fin4(q[0], q[1], q[2], q[3])) return;
+    q[4] = px[L.RIGHT_HIP * 2]!;
+    q[5] = px[L.RIGHT_HIP * 2 + 1]!;
+    q[6] = px[L.LEFT_HIP * 2]!;
+    q[7] = px[L.LEFT_HIP * 2 + 1]!;
+    c.beginPath();
+    if (!(v[L.LEFT_HIP]! >= MIN_VIS && v[L.RIGHT_HIP]! >= MIN_VIS) || !fin4(q[4], q[5], q[6], q[7])) {
+      c.moveTo(q[0], q[1]);
+      c.lineTo(q[2], q[3]);
+      c.lineWidth = 2 * r;
+      c.strokeStyle = style;
+      c.stroke();
+      return;
+    }
+    // Walk the corners clockwise on screen (positive shoelace area), so each
+    // corner's arc runs from the previous edge's outward normal to the next's.
+    let area = 0;
+    for (let i = 0; i < 4; i++) {
+      const k = ((i + 1) & 3) * 2;
+      area += q[i * 2]! * q[k + 1]! - q[k]! * q[i * 2 + 1]!;
+    }
+    const step = area >= 0 ? 1 : 3;
+    let i = 0;
+    for (let n = 0; n < 4; n++) {
+      const pi = ((i + 4 - step) & 3) * 2;
+      const ni = ((i + step) & 3) * 2;
+      const x = q[i * 2]!;
+      const y = q[i * 2 + 1]!;
+      // Outward normal of edge a->b on a clockwise outline is (dy, -dx).
+      const a0 = Math.atan2(-(x - q[pi]!), y - q[pi + 1]!);
+      const a1 = Math.atan2(-(q[ni]! - x), q[ni + 1]! - y);
+      c.arc(x, y, r, a0, a1, false);
+      i = (i + step) & 3;
+    }
+    c.closePath();
+    c.fillStyle = style;
+    c.fill();
+  }
+
+  /** Where joint `j`'s dot goes (wrists: the palm; ankles: the shoe). Writes
+   *  `tx`/`ty`. */
+  private dotAt(p: PlayerPose, j: number): boolean {
+    if (j < 0 || j * 2 + 1 >= p.px.length || !(p.vis[j]! >= MIN_VIS)) return false;
+    const q = j === L.LEFT_WRIST ? (this.palmOkL ? this.palmL : null)
+      : j === L.RIGHT_WRIST ? (this.palmOkR ? this.palmR : null)
+        : j === L.LEFT_ANKLE ? (this.shoeOkL ? this.shoeL : null)
+          : j === L.RIGHT_ANKLE ? (this.shoeOkR ? this.shoeR : null)
+            : null;
+    this.tx = q ? q.x : p.px[j * 2]!;
+    this.ty = q ? q.y : p.px[j * 2 + 1]!;
+    return fin2(this.tx, this.ty);
+  }
+
+  /** Path of both shoes at radius `r`. Returns how many. */
+  private shoesPath(c: CanvasRenderingContext2D, r: number): number {
+    c.beginPath();
+    let n = 0;
+    if (this.shoeOkL) {
+      c.moveTo(this.shoeL.x + r, this.shoeL.y);
+      c.arc(this.shoeL.x, this.shoeL.y, r, 0, TAU);
+      n++;
+    }
+    if (this.shoeOkR) {
+      c.moveTo(this.shoeR.x + r, this.shoeR.y);
+      c.arc(this.shoeR.x, this.shoeR.y, r, 0, TAU);
+      n++;
+    }
+    return n;
+  }
+
+  /** Path of every dot in `set` except the ankles (those are shoes, drawn
+   *  with the legs), each grown by `grow`. Returns how many. */
+  private dotsPath(
+    c: CanvasRenderingContext2D,
+    p: PlayerPose,
+    set: readonly number[],
+    jr: number,
+    u: number,
+    grow: number,
+  ): number {
+    c.beginPath();
+    let n = 0;
+    for (let i = 0; i < set.length; i++) {
+      const j = set[i]!;
+      if (j === L.LEFT_ANKLE || j === L.RIGHT_ANKLE || !this.dotAt(p, j)) continue;
+      const r = dotRadius(j, u, jr) + grow;
+      c.moveTo(this.tx + r, this.ty);
+      c.arc(this.tx, this.ty, r, 0, TAU);
+      n++;
+    }
+    return n;
+  }
+
+  /** Path of an emphasis ring around every joint in `set`. Returns how many. */
+  private ringsPath(
+    c: CanvasRenderingContext2D,
+    p: PlayerPose,
+    set: readonly number[],
+    jr: number,
+    u: number,
+  ): number {
+    c.beginPath();
+    let n = 0;
+    for (let i = 0; i < set.length; i++) {
+      const j = set[i]!;
+      if (!this.dotAt(p, j)) continue;
+      const r = BODY.ring * dotRadius(j, u, jr);
+      c.moveTo(this.tx + r, this.ty);
+      c.arc(this.tx, this.ty, r, 0, TAU);
+      n++;
+    }
+    return n;
   }
 }
 

@@ -17,12 +17,17 @@
 // Fidelity is deliberately approximate: glow becomes a soft blur, `measure`
 // estimates advance widths. This answers "is the game drawing the right
 // things in the right places", not "is the anti-aliasing correct".
-import { POSE_EDGES } from '../pose/landmarks';
+import { L, MIN_VIS, POSE_EDGES } from '../pose/landmarks';
 import type { RenderAudit } from './nullRenderer';
-import { C, fade, hueLight, KEYLINE } from '../render/palette';
+import {
+  ARM_EDGES, BODY, bodyInk, bodyUnit, dotRadius, GLOSS_A0, GLOSS_A1, GLOSS_K, LEG_EDGES,
+  limbFade, mittAt, shoeAt,
+} from '../render/canvas2d';
+import { C, KEYLINE } from '../render/palette';
+import { SKY_DOT_FILL, SKY_DOTS, skyStops } from '../render/sky';
 import type { Paint, Renderer, SkeletonOpts, TextOpts } from '../render/renderer';
 import { getSprite, resolveRole, type SpriteId, type SpriteOpts } from '../render/sprite';
-import type { PlayerPose } from '../types';
+import type { PlayerPose, Pt } from '../types';
 
 const n = (v: number): string =>
   Number.isFinite(v) ? String(Math.round(v * 100) / 100) : '0';
@@ -81,6 +86,8 @@ export class SvgRenderer implements Renderer {
   /** Groups opened since each save(), so restore() closes exactly those. */
   private readonly stack: number[] = [];
   private open = 0;
+  /** Unique ids for the skeleton's belly masks within one frame's document. */
+  private maskN = 0;
   private readonly backdrop: string;
 
   constructor(w: number, h: number, o: SvgShotOpts = {}) {
@@ -101,6 +108,7 @@ export class SvgRenderer implements Renderer {
     this.glowIds.clear();
     this.stack.length = 0;
     this.open = 0;
+    this.maskN = 0;
   }
 
   /** Call after each render(). Captures a frame once the round passes the next
@@ -206,11 +214,25 @@ export class SvgRenderer implements Renderer {
 
   clear(h?: number): void {
     this.op();
-    const sky = h === undefined ? C.bg : hueLight(h);
-    this.push(`<rect width="${this.w}" height="${this.h}" fill="${sky}"/>`);
+    // Same stops as the canvas renderer (render/sky.ts), so a shot shows what
+    // a child sees rather than a more saturated sky nobody plays on.
+    const hd = h !== undefined && Number.isFinite(h) ? Math.round(((h % 360) + 360) % 360) : -1;
+    const id = `sky${hd < 0 ? 'n' : hd}`;
+    const stops = skyStops(hd)
+      .map(([at, color]) => `<stop offset="${at}" stop-color="${color}"/>`)
+      .join('');
+    let dots = '';
+    if (hd >= 0) {
+      const m = Math.min(this.w, this.h);
+      for (let i = 0; i < SKY_DOTS.length; i += 3) {
+        dots += `<circle cx="${n((SKY_DOTS[i] as number) * this.w)}" ` +
+          `cy="${n((SKY_DOTS[i + 1] as number) * this.h)}" r="${n((SKY_DOTS[i + 2] as number) * m)}"/>`;
+      }
+      dots = `<g fill="${SKY_DOT_FILL}">${dots}</g>`;
+    }
     this.push(
-      `<rect y="${n(this.h * 0.82)}" width="${this.w}" height="${n(this.h * 0.18)}" ` +
-      `fill="${C.bgDeep}"/>`,
+      `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1">${stops}</linearGradient></defs>` +
+      `<rect width="${this.w}" height="${this.h}" fill="url(#${id})"/>` + dots,
     );
   }
 
@@ -384,60 +406,238 @@ export class SvgRenderer implements Renderer {
   }
 
   // ─── pose ──────────────────────────────────────────────────────────────────
+  //
+  // The same sticker avatar as Canvas2DRenderer.skeleton(), from the same
+  // proportions (BODY). There the body is drawn opaque into a layer and
+  // composited once; here a group's `opacity` composites it once, which is
+  // the same thing. The see-through belly is a mask instead of a punch.
 
   skeleton(p: PlayerPose, o: SkeletonOpts = {}): void {
     this.op();
+    const al = Math.max(0, Math.min(1, o.alpha ?? 0.92));
+    if (al <= 0) return;
     const col = o.color ?? C.slot[p.slot] ?? C.slot[0];
-    const lw = o.lineWidth ?? Math.max(4, this.s * 14);
-    const vis = o.alpha ?? 1;
-    const parts: string[] = [];
-    for (const [a, b] of POSE_EDGES) {
-      if ((p.vis[a] ?? 0) < 0.5 || (p.vis[b] ?? 0) < 0.5) continue;
-      const x0 = p.px[a * 2] as number;
-      const y0 = p.px[a * 2 + 1] as number;
-      const x1 = p.px[b * 2] as number;
-      const y1 = p.px[b * 2 + 1] as number;
-      if (![x0, y0, x1, y1].every(Number.isFinite)) continue;
-      if (o.outline !== false) {
-        parts.push(
-          `<line x1="${n(x0)}" y1="${n(y0)}" x2="${n(x1)}" y2="${n(y1)}" ` +
-          `stroke="${KEYLINE}" stroke-width="${n(lw + 6)}" stroke-linecap="round"/>`,
-        );
-      }
-      parts.push(
-        `<line x1="${n(x0)}" y1="${n(y0)}" x2="${n(x1)}" y2="${n(y1)}" ` +
-        `stroke="${col}" stroke-width="${n(lw)}" stroke-linecap="round"/>`,
-      );
+    const u = bodyUnit(p.scalePx, this.s);
+    const ink = o.outline === false ? 0 : bodyInk(this.s);
+    const armW = o.lineWidth !== undefined && o.lineWidth > 0 ? o.lineWidth : u * BODY.arm;
+    const legW = armW * (BODY.leg / BODY.arm);
+    const jr = o.jointR !== undefined && Number.isFinite(o.jointR) ? Math.max(0, o.jointR) : -1;
+    const dots = jr === 0 || o.jointSet === 'none'
+      ? []
+      : o.jointSet === 'all' ? ALL_DOTS : o.jointSet === 'hands' ? HANDS : ENDS;
+    const shoes = dots === ENDS || dots === ALL_DOTS;
+    const shoeR = jr > 0 ? jr : u * BODY.shoe;
+    const tw = u * BODY.torso;
+    const hr = u * BODY.head;
+    const nw = u * BODY.neck;
+    const head = headAt(p);
+    const torso = torsoD(p);
+
+    // Everything the belly punch removes: legs, head and neck, torso rim.
+    let under = '';
+    if (ink > 0) {
+      under += limbsSvg(p, LEG_EDGES, legW + 2 * ink, KEYLINE);
+      if (shoes) under += shoesSvg(p, shoeR + ink, KEYLINE);
     }
-    const jr = o.jointR ?? lw * 0.8;
-    if (jr > 0 && o.jointSet !== 'none') {
-      const all: number[] = [];
-      for (let j = 0; j < 33; j++) all.push(j);
-      const set = o.jointSet === 'all'
-        ? all
-        : o.jointSet === 'hands' ? [15, 16] : [15, 16, 27, 28];
-      for (const j of set) {
-        if ((p.vis[j] ?? 0) < 0.5) continue;
-        const x = p.px[j * 2] as number;
-        const y = p.px[j * 2 + 1] as number;
-        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-        const big = o.emphasize?.includes(j) ? 2 : 1;
-        parts.push(
-          `<circle cx="${n(x)}" cy="${n(y)}" r="${n(jr * big)}" fill="${col}" ` +
-          `stroke="${KEYLINE}" stroke-width="3"/>`,
-        );
+    under += limbsSvg(p, LEG_EDGES, legW, col);
+    if (shoes) under += shoesSvg(p, shoeR, col);
+    if (head) {
+      if (ink > 0) under += headSvg(head, KEYLINE, nw + 2 * ink, hr + ink);
+      under += headSvg(head, C.white, nw, hr);
+      under += `<g opacity="${BODY.headTint}">${headSvg(head, col, nw, hr)}</g>`;
+      under += glossSvg(glossD(head.hx, head.hy, hr), u);
+    }
+    let out = '';
+    if (torso) {
+      if (ink > 0) under += shapeSvg(torso, KEYLINE, tw + 2 * ink);
+      const id = `belly${this.maskN++}`;
+      const W = this.w;
+      const H = this.h;
+      // An element's `opacity` composites its fill and stroke together, so
+      // here (unlike the canvas) fill + stroke paints the belly exactly once.
+      out +=
+        `<defs><mask id="${id}" maskUnits="userSpaceOnUse" x="${-W}" y="${-H}" ` +
+        `width="${3 * W}" height="${3 * H}"><rect x="${-W}" y="${-H}" width="${3 * W}" ` +
+        `height="${3 * H}" fill="white"/>${shapeSvg(torso, 'black', tw)}</mask></defs>` +
+        `<g mask="url(#${id})">${under}</g>` +
+        `<g opacity="${BODY.bellyWhite}">${shapeSvg(torso, C.white, tw)}</g>` +
+        `<g opacity="${BODY.bellyTint}">${shapeSvg(torso, col, tw)}</g>`;
+    } else {
+      out += under;
+    }
+    if (ink > 0) out += limbsSvg(p, ARM_EDGES, armW + 2 * ink, KEYLINE);
+    out += limbsSvg(p, ARM_EDGES, armW, col);
+    const hands = dots.filter((j) => j !== L.LEFT_ANKLE && j !== L.RIGHT_ANKLE);
+    if (ink > 0) out += dotsSvg(p, hands, jr, u, ink, KEYLINE);
+    out += dotsSvg(p, hands, jr, u, 0, col);
+    const at = { x: 0, y: 0 };
+    let shine = '';
+    for (const j of hands) {
+      if ((j === L.LEFT_WRIST || j === L.RIGHT_WRIST) && dotXY(p, j, at)) {
+        shine += glossD(at.x, at.y, dotRadius(j, u, jr));
       }
     }
-    this.push(`<g opacity="${n(vis)}">${parts.join('')}</g>`);
+    if (shine) out += glossSvg(shine, u);
+    const rings = ringsD(p, o.emphasize ?? [], jr, u);
+    if (rings) {
+      const rw = u * BODY.ringW;
+      if (ink > 0) {
+        out += `<path d="${rings}" fill="none" stroke="${KEYLINE}" stroke-width="${n(rw + 2 * ink)}"/>`;
+      }
+      out += `<path d="${rings}" fill="none" stroke="${C.accent}" stroke-width="${n(rw)}"/>`;
+    }
+    this.push(`<g opacity="${n(al)}">${out}</g>`);
   }
 
   ghostBody(p: PlayerPose, alpha: number): void {
     this.op();
-    const b = p.box;
+    const a = Number.isFinite(alpha) ? Math.max(0, Math.min(1, alpha)) : 0.5;
+    if (a <= 0) return;
+    const col = C.slot[p.slot] ?? C.slot[0];
+    const u = bodyUnit(p.scalePx, this.s);
+    const g = u * BODY.ghostGrow;
+    // One silhouette, painted white and then again in the body colour at
+    // ghostTint: the same light tint the canvas gets from `source-atop`.
+    const shape = (c: string): string => {
+      let s = limbsSvg(p, LEG_EDGES, u * BODY.leg + 2 * g, c);
+      s += limbsSvg(p, ARM_EDGES, u * BODY.arm + 2 * g, c);
+      s += shoesSvg(p, u * BODY.shoe + g, c);
+      const torso = torsoD(p);
+      if (torso) s += shapeSvg(torso, c, u * BODY.torso + 2 * g);
+      const head = headAt(p);
+      if (head) s += headSvg(head, c, u * BODY.neck + 2 * g, u * BODY.head + g);
+      return s + dotsSvg(p, HANDS, -1, u, g, c);
+    };
     this.push(
-      `<rect x="${n(b.x * this.w)}" y="${n(b.y * this.h)}" width="${n(b.w * this.w)}" ` +
-      `height="${n(b.h * this.h)}" rx="${n(Math.min(b.w * this.w, b.h * this.h) * 0.3)}" ` +
-      `fill="${fade(C.ink, alpha * 0.55)}"/>`,
+      `<g opacity="${n(a)}">${shape(C.white)}` +
+      `<g opacity="${BODY.ghostTint}">${shape(col)}</g></g>`,
     );
   }
+}
+
+const HANDS = [L.LEFT_WRIST, L.RIGHT_WRIST];
+const ENDS = [L.LEFT_WRIST, L.RIGHT_WRIST, L.LEFT_ANKLE, L.RIGHT_ANKLE];
+const ALL_DOTS = [...new Set(POSE_EDGES.flat())];
+
+const okXY = (x: number, y: number): boolean => Number.isFinite(x) && Number.isFinite(y);
+
+/** Limbs at one width and colour; fully trusted ones share one path, faded
+ *  ones are drawn at their own opacity (same rule as the canvas). */
+function limbsSvg(p: PlayerPose, edges: readonly number[], width: number, stroke: string): string {
+  let d = '';
+  let faded = '';
+  const attrs = ` fill="none" stroke="${stroke}" stroke-width="${n(width)}"` +
+    ' stroke-linecap="round" stroke-linejoin="round"';
+  for (let i = 0; i < edges.length; i += 2) {
+    const a = edges[i] as number;
+    const b = edges[i + 1] as number;
+    const k = limbFade(p.vis[a] ?? 0, p.vis[b] ?? 0);
+    if (k <= 0) continue;
+    const x0 = p.px[a * 2] as number;
+    const y0 = p.px[a * 2 + 1] as number;
+    const x1 = p.px[b * 2] as number;
+    const y1 = p.px[b * 2 + 1] as number;
+    if (!okXY(x0, y0) || !okXY(x1, y1)) continue;
+    const seg = `M${n(x0)} ${n(y0)}L${n(x1)} ${n(y1)}`;
+    if (k >= 1) d += seg;
+    else faded += `<path d="${seg}"${attrs} opacity="${n(k)}"/>`;
+  }
+  return (d ? `<path d="${d}"${attrs}/>` : '') + faded;
+}
+
+/** Torso quad, or the shoulder bar when the hips are out of frame. */
+function torsoD(p: PlayerPose): string {
+  const v = (j: number): boolean => (p.vis[j] ?? 0) >= MIN_VIS;
+  const x = (j: number): number => p.px[j * 2] as number;
+  const y = (j: number): number => p.px[j * 2 + 1] as number;
+  const ls = L.LEFT_SHOULDER;
+  const rs = L.RIGHT_SHOULDER;
+  const lh = L.LEFT_HIP;
+  const rh = L.RIGHT_HIP;
+  if (!v(ls) || !v(rs) || !okXY(x(ls), y(ls)) || !okXY(x(rs), y(rs))) return '';
+  let d = `M${n(x(ls))} ${n(y(ls))}L${n(x(rs))} ${n(y(rs))}`;
+  if (v(lh) && v(rh) && okXY(x(lh), y(lh)) && okXY(x(rh), y(rh))) {
+    d += `L${n(x(rh))} ${n(y(rh))}L${n(x(lh))} ${n(y(lh))}Z`;
+  }
+  return d;
+}
+
+/** A path filled and stroked in one colour (round joins round the corners). */
+const shapeSvg = (d: string, c: string, sw: number): string =>
+  `<path d="${d}" fill="${c}" stroke="${c}" stroke-width="${n(sw)}" stroke-linejoin="round" stroke-linecap="round"/>`;
+
+interface HeadAt { hx: number; hy: number; sx: number; sy: number }
+
+function headAt(p: PlayerPose): HeadAt | null {
+  const ok = (j: number): boolean => (p.vis[j] ?? 0) >= MIN_VIS;
+  if (!ok(L.NOSE) || !ok(L.LEFT_SHOULDER) || !ok(L.RIGHT_SHOULDER)) return null;
+  const h = {
+    hx: p.px[L.NOSE * 2] as number,
+    hy: p.px[L.NOSE * 2 + 1] as number,
+    sx: ((p.px[L.LEFT_SHOULDER * 2] as number) + (p.px[L.RIGHT_SHOULDER * 2] as number)) / 2,
+    sy: ((p.px[L.LEFT_SHOULDER * 2 + 1] as number) + (p.px[L.RIGHT_SHOULDER * 2 + 1] as number)) / 2,
+  };
+  return okXY(h.hx, h.hy) && okXY(h.sx, h.sy) ? h : null;
+}
+
+const headSvg = (h: HeadAt, c: string, neckW: number, r: number): string =>
+  `<line x1="${n(h.sx)}" y1="${n(h.sy)}" x2="${n(h.hx)}" y2="${n(h.hy)}" stroke="${c}" ` +
+  `stroke-width="${n(neckW)}" stroke-linecap="round"/>` +
+  `<circle cx="${n(h.hx)}" cy="${n(h.hy)}" r="${n(r)}" fill="${c}"/>`;
+
+/** The canvas's shine arc (GLOSS_*) as path data. */
+function glossD(x: number, y: number, r: number): string {
+  const k = r * GLOSS_K;
+  return `M${n(x + Math.cos(GLOSS_A0) * k)} ${n(y + Math.sin(GLOSS_A0) * k)}` +
+    `A${n(k)} ${n(k)} 0 0 1 ${n(x + Math.cos(GLOSS_A1) * k)} ${n(y + Math.sin(GLOSS_A1) * k)}`;
+}
+
+const glossSvg = (d: string, u: number): string =>
+  `<path d="${d}" fill="none" stroke="${C.white}" stroke-width="${n(u * BODY.glossW)}" ` +
+  `stroke-linecap="round" opacity="${BODY.gloss}"/>`;
+
+function shoesSvg(p: PlayerPose, r: number, fill: string): string {
+  const at = { x: 0, y: 0 };
+  let s = '';
+  for (const side of ['L', 'R'] as const) {
+    if (shoeAt(p, side, at)) s += `<circle cx="${n(at.x)}" cy="${n(at.y)}" r="${n(r)}"/>`;
+  }
+  return s ? `<g fill="${fill}">${s}</g>` : '';
+}
+
+/** Where joint `j`'s dot goes: wrists get the palm and ankles the shoe, like
+ *  the canvas. */
+function dotXY(p: PlayerPose, j: number, out: Pt): boolean {
+  if (j < 0 || j * 2 + 1 >= p.px.length || (p.vis[j] ?? 0) < MIN_VIS) return false;
+  if (j === L.LEFT_WRIST) return mittAt(p, 'L', out);
+  if (j === L.RIGHT_WRIST) return mittAt(p, 'R', out);
+  if (j === L.LEFT_ANKLE) return shoeAt(p, 'L', out);
+  if (j === L.RIGHT_ANKLE) return shoeAt(p, 'R', out);
+  out.x = p.px[j * 2] as number;
+  out.y = p.px[j * 2 + 1] as number;
+  return okXY(out.x, out.y);
+}
+
+function dotsSvg(
+  p: PlayerPose, set: readonly number[], jr: number, u: number, grow: number, fill: string,
+): string {
+  const at = { x: 0, y: 0 };
+  let s = '';
+  for (const j of set) {
+    if (!dotXY(p, j, at)) continue;
+    s += `<circle cx="${n(at.x)}" cy="${n(at.y)}" r="${n(dotRadius(j, u, jr) + grow)}"/>`;
+  }
+  return s ? `<g fill="${fill}">${s}</g>` : '';
+}
+
+function ringsD(p: PlayerPose, set: readonly number[], jr: number, u: number): string {
+  const at = { x: 0, y: 0 };
+  let d = '';
+  for (const j of set) {
+    if (!dotXY(p, j, at)) continue;
+    const r = BODY.ring * dotRadius(j, u, jr);
+    d += `M${n(at.x + r)} ${n(at.y)}A${n(r)} ${n(r)} 0 1 0 ${n(at.x - r)} ${n(at.y)}` +
+      `A${n(r)} ${n(r)} 0 1 0 ${n(at.x + r)} ${n(at.y)}Z`;
+  }
+  return d;
 }

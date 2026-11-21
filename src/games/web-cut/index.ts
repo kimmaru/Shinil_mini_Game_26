@@ -29,8 +29,9 @@ const SILK_CUT = 2;
 const GOLD_CUT = 3;
 
 /** A stroke must cross a thread at least this far off parallel to cut it.
- *  Below it the thread only wobbles — this is the whole mechanic. */
-const CUT_DEG = 60;
+ *  Below it the thread only wobbles — this is the whole mechanic. 45 rather
+ *  than 60: a child sweeping an arm cannot hold a 30-degree window. */
+const CUT_DEG = 45;
 /** Seconds of whip-back after a cut. */
 const RECOIL_SEC = 0.34;
 /** Seconds a hand is dead after touching the spider. Quiet by design. */
@@ -69,6 +70,9 @@ class WebCut implements MiniGame {
   /** Seconds of stun left per hand. */
   private readonly stun = new Float32Array(2);
   private readonly labels: string[] = [];
+  private readonly trailCol = hue(manifest.theme?.hue ?? 266, 80, 42);
+  private readonly sparkCol = hue(manifest.theme?.hue ?? 266, 80, 46);
+  private readonly silkCol = '#FFFFFF';
   private player: PlayerPose | null = null;
 
   /** The reachable rect the web is strung inside, in view px. Recomputed from
@@ -212,7 +216,7 @@ class WebCut implements MiniGame {
     const gold = folk < 0 && d > 0.35 && chance(this.ctx.rng, 0.2);
     const i = this.webs.spawn(
       cx, cy, 0, 0,
-      span * randRange(this.ctx.rng, 0.19, 0.3),
+      span * randRange(this.ctx.rng, 0.3, 0.42),
       1e5,
       gold ? GOLD : SILK,
     );
@@ -275,7 +279,7 @@ class WebCut implements MiniGame {
     dirDeg: number,
   ): void {
     this.ctx.fx.trail(x0, y0, x1, y1, {
-      color: hue(manifest.theme?.hue ?? 266, 80, 42),
+      color: this.trailCol,
       width: 11,
       life: 0.2,
     });
@@ -349,7 +353,7 @@ class WebCut implements MiniGame {
     this.score += SILK_POINTS;
 
     this.ctx.fx.impact(x, y, 'hit', {
-      color: hue(manifest.theme?.hue ?? 266, 80, 46),
+      color: this.sparkCol,
       sprite: 'sparkle',
       label: this.labels[SILK_POINTS] ?? '',
       dir: side === 0 ? Math.PI : 0,
@@ -423,8 +427,8 @@ class WebCut implements MiniGame {
 
     // The web frame, so the play area reads as a thing rather than as empty air.
     g.roundRect(this.fx0, this.fy0, this.fx1 - this.fx0, this.fy1 - this.fy0, 18 * g.s, {
-      stroke: fade(KEYLINE, 0.14),
-      sw: 3 * g.s,
+      stroke: fade(C.white, 0.35),
+      sw: 4 * g.s,
     });
 
     for (let i = 0; i < this.folks.n; i++) {
@@ -435,11 +439,11 @@ class WebCut implements MiniGame {
       // Bonds remaining as a ring of dots: a count, not a colour.
       for (let k = 0; k < BONDS; k++) {
         const a = -Math.PI / 2 + (k / BONDS) * TAU;
-        g.circle(x + Math.cos(a) * r * 1.5, y + Math.sin(a) * r * 1.5, 6 * g.s, {
+        g.circle(x + Math.cos(a) * r * 1.7, y + Math.sin(a) * r * 1.7, 9 * g.s, {
           fill: k < left ? C.warn : fade(KEYLINE, 0.18),
         });
       }
-      g.sprite('balloon', x, y, r * 2.1, { hue: 168, rot: Math.sin(g.t * 2 + x) * 0.08 });
+      g.sprite('bee', x, y, r * 2.6, { rot: Math.sin(g.t * 2 + x) * 0.08 });
     }
 
     for (let i = 0; i < this.webs.n; i++) {
@@ -454,7 +458,7 @@ class WebCut implements MiniGame {
       const bx = cx + c * r;
       const by = cy + s * r;
       const gold = kind === GOLD || kind === GOLD_CUT;
-      const col = gold ? C.accent : hue(manifest.theme?.hue ?? 266, 34, 36);
+      const col = gold ? C.accent : this.silkCol;
 
       if (kind === SILK_CUT || kind === GOLD_CUT) {
         // SNAP. Both halves whip back toward their anchors, which is the
@@ -464,10 +468,10 @@ class WebCut implements MiniGame {
         const curl = Math.sin(k * Math.PI) * r * 0.3;
         g.save();
         g.alpha(1 - k * 0.65);
-        g.line(ax, ay, ax + c * r * keep - s * curl, ay + s * r * keep + c * curl, 6 * g.s, {
+        g.line(ax, ay, ax + c * r * keep - s * curl, ay + s * r * keep + c * curl, 9 * g.s, {
           stroke: col,
         });
-        g.line(bx, by, bx - c * r * keep + s * curl, by - s * r * keep - c * curl, 6 * g.s, {
+        g.line(bx, by, bx - c * r * keep + s * curl, by - s * r * keep - c * curl, 9 * g.s, {
           stroke: col,
         });
         g.restore();
@@ -480,25 +484,29 @@ class WebCut implements MiniGame {
       const buzz = amp > 0 ? Math.sin(g.t * 40 + this.webs.id[i]!) * amp : 0;
       const mx = cx - s * buzz;
       const my = cy + c * buzz;
-      const sw = (gold ? 6 : 4) * g.s;
+      const sw = (gold ? 10 : 8) * g.s;
+      // Dark underlay, then the bright silk: a thin light line vanishes on a
+      // bright background, a keyed one does not.
+      g.line(ax, ay, mx, my, sw + 5 * g.s, { stroke: KEYLINE });
+      g.line(mx, my, bx, by, sw + 5 * g.s, { stroke: KEYLINE });
       g.line(ax, ay, mx, my, sw, { stroke: col });
       g.line(mx, my, bx, by, sw, { stroke: col });
-      g.circle(ax, ay, 5 * g.s, { fill: fade(KEYLINE, 0.4) });
-      g.circle(bx, by, 5 * g.s, { fill: fade(KEYLINE, 0.4) });
+      g.circle(ax, ay, 9 * g.s, { fill: KEYLINE });
+      g.circle(bx, by, 9 * g.s, { fill: KEYLINE });
       if (gold) {
         // Shape as well as colour: ART.md forbids leaning on gold-vs-grey
         // alone, and one child per class cannot tell them apart.
-        g.sprite('cross', cx, cy, 34 * g.s);
+        g.sprite('cross', cx, cy, 52 * g.s);
       } else {
         // Which way to swipe. A telegraph is information, not decoration.
         const perp = this.webs.rot[i]! + Math.PI / 2;
         g.save();
-        g.alpha(0.3);
-        g.chevron(cx + Math.cos(perp) * r * 0.26, cy + Math.sin(perp) * r * 0.26, 13 * g.s, -perp, {
-          fill: col,
+        g.alpha(0.75);
+        g.chevron(cx + Math.cos(perp) * r * 0.26, cy + Math.sin(perp) * r * 0.26, 16 * g.s, -perp, {
+          fill: KEYLINE,
         });
-        g.chevron(cx - Math.cos(perp) * r * 0.26, cy - Math.sin(perp) * r * 0.26, 13 * g.s, Math.PI - perp, {
-          fill: col,
+        g.chevron(cx - Math.cos(perp) * r * 0.26, cy - Math.sin(perp) * r * 0.26, 16 * g.s, Math.PI - perp, {
+          fill: KEYLINE,
         });
         g.restore();
       }
@@ -533,7 +541,7 @@ class WebCut implements MiniGame {
       const h = s === 0 ? this.handL : this.handR;
       const dead = this.stun[s]! > 0;
       g.circle(h.x, h.y, (dead ? 13 : 20) * g.s, {
-        stroke: dead ? fade(KEYLINE, 0.35) : hue(manifest.theme?.hue ?? 266, 80, 42),
+        stroke: dead ? fade(KEYLINE, 0.35) : this.trailCol,
         sw: (dead ? 3 : 4) * g.s,
         glow: dead ? 0 : 10,
       });

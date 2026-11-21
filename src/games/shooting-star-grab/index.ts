@@ -18,7 +18,7 @@ import type {
   Detector, EndReason, GameContext, GameResult, MiniGame,
   PlayerPose, PoseFrame, Pt, Renderer,
 } from '@/engine/types';
-import { L, shoulderPx, visible } from '@/engine/pose/landmarks';
+import { L, MIN_VIS, shoulderPx } from '@/engine/pose/landmarks';
 import { TAU, approach, clamp, clamp01, lerp } from '@/engine/math';
 import { chance, randRange, Spawner } from '@/engine/spawn';
 import { C, fade, hue } from '@/engine/render/palette';
@@ -27,27 +27,32 @@ import { t } from './locale';
 
 /** Seconds of continuous matching a catch costs. Doubles as the "never fire a
  *  scoring event from a single frame" guard. */
-const HOLD = 0.26;
+const HOLD = 0.12;
 /** Hand speed, in shoulder-widths/sec, below which a hand cannot hook.
  *  Measured idle peak is 1.2 and fidget peak 2.0; a real sweep runs 3-9. */
 const SPEED_GATE = 1.6;
 /** Direction agreement needed to hook (cos, so 0.5 = within 60 degrees)... */
-const ACQ_COS = 0.5;
+const ACQ_COS = -0.1;
 /** ...and the looser one needed to keep it. A sweep is an arc, not a ray. */
-const KEEP_COS = 0.25;
+const KEEP_COS = -0.35;
 /** Mean agreement across the whole hook that earns the big score. */
-const PERFECT_COS = 0.8;
+const PERFECT_COS = 0.7;
 
-const PTS = 20;
-const PTS_PERFECT = 40;
+const PTS = 10;
+const PTS_PERFECT = 30;
 /** Pre-built: the hot path never builds a string. */
-const LABEL = '+20';
-const LABEL_PERFECT = '+40';
+const LABEL = '+10';
+const LABEL_PERFECT = '+30';
 
 /** Trajectory shapes, in the order the round introduces them. */
 const STRAIGHT = 0;
 const CURVE = 1;
 const ESS = 2;
+
+/** Colours built once: render() must not build strings. */
+const INK_RING = fade(C.ink, 0.1);
+const INK_HAND = fade(C.ink, 0.22);
+const DECOR_COL = [fade(C.ink, 0.07), fade(C.ink, 0.11), fade(C.ink, 0.15)] as const;
 
 const POOL = 10;
 const DECOR = 16;
@@ -121,10 +126,13 @@ class ShootingStarGrab implements MiniGame {
   private bestCombo = 0;
   private time = 0;
   private pairTold = false;
-  /** TEMP */ private dbgAcq = 0; private dbgNear = 0; private dbgLive = 0; private dbgCos = 0; private dbgBoth = 0;
+  private theme = '';
+  private themeSoft = '';
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
+    this.theme = hue(manifest.theme!.hue);
+    this.themeSoft = hue(manifest.theme!.hue, 70, 68, 0.55);
     this.reach = ctx.gestures.use('reach', { side: 'both' });
     this.spawner = new Spawner(
       // ~30 stars. Fewer than a rain game on purpose: each one is a 0.3s
@@ -222,9 +230,8 @@ class ShootingStarGrab implements MiniGame {
         this.handDX[i] = dx / len;
         this.handDY[i] = dy / len;
       }
-      const seen = visible(p, i === 0 ? L.LEFT_WRIST : L.RIGHT_WRIST);
+      const seen = p.vis[i === 0 ? L.LEFT_WRIST : L.RIGHT_WRIST]! >= MIN_VIS;
       this.handLive[i] = r.ok && seen && spd > SPEED_GATE ? 1 : 0;
-      if (this.handLive[i] === 1) this.dbgLive++;
     }
   }
 
@@ -244,7 +251,9 @@ class ShootingStarGrab implements MiniGame {
     // shoulder, which is half a shoulder-width off the centre, so the measured
     // envelope runs 0.69-1.31. An annulus tighter than that puts every star
     // inside the player's arc, where no sweep ever reaches it.
-    const ang = this.ctx.rng() * TAU;
+    // Upper and outer arc only: the hanging-arm sector below the shoulders is
+    // where a resting hand lives, and a star there would be free.
+    const ang = randRange(this.ctx.rng, -2.9, 0.45);
     const rad = (lerp(0.68, 1.1, d) + randRange(this.ctx.rng, -0.16, 0.16)) * this.armPx;
     const margin = g * 0.14;
     const ax = clamp(this.shoulder.x + Math.cos(ang) * rad, margin, w - margin);
@@ -377,13 +386,9 @@ class ShootingStarGrab implements MiniGame {
       if (this.handLive[i] !== 1 || this.handHeld[i]! >= 0) continue;
       const near = Math.hypot(this.handX[i]! - s.x, this.handY[i]! - s.y) <= this.grabR + s.r;
       const cos0 = this.handDX[i]! * s.ivx + this.handDY[i]! * s.ivy;
-      if (near) this.dbgNear++;
-      if (cos0 >= ACQ_COS) this.dbgCos++;
-      if (near && cos0 >= ACQ_COS) this.dbgBoth++;
       if (!near) continue;
       const cos = cos0;
       if (cos < ACQ_COS) continue;
-      this.dbgAcq++;
       s.hand = i;
       this.handHeld[i] = idx;
       s.matchSum += cos;
@@ -408,12 +413,12 @@ class ShootingStarGrab implements MiniGame {
     this.caught++;
     this.combo++;
     if (this.combo > this.bestCombo) this.bestCombo = this.combo;
-    const pts = (perfect ? PTS_PERFECT : PTS) + Math.floor(this.combo / 4);
+    const pts = perfect ? PTS_PERFECT : PTS;
     this.score += pts;
     if (perfect) this.perfects++;
 
     this.ctx.fx.impact(x, y, perfect ? 'big' : 'hit', {
-      color: perfect ? C.accent : hue(manifest.theme!.hue),
+      color: perfect ? C.accent : this.theme,
       sprite: perfect ? 'star' : 'sparkle',
       label: perfect ? LABEL_PERFECT : LABEL,
     });
@@ -447,9 +452,9 @@ class ShootingStarGrab implements MiniGame {
     // Night sky. Background decoration only, so it stays in ART.md's
     // 1.2-2:1 contrast band and never competes with a real star.
     for (let i = 0; i < DECOR; i++) {
-      const tw = 0.1 + 0.06 * Math.sin(this.time * 1.3 + i);
+      const tw = Math.floor(1.5 + 1.49 * Math.sin(this.time * 1.3 + i));
       g.star(this.decor[i * 3]!, this.decor[i * 3 + 1]!, this.decor[i * 3 + 2]!, 4, {
-        fill: fade(C.ink, tw),
+        fill: DECOR_COL[tw]!,
       });
     }
 
@@ -457,11 +462,11 @@ class ShootingStarGrab implements MiniGame {
     // same arm length the spawner places them with.
     if (this.player) {
       g.circle(this.shoulder.x, this.shoulder.y, this.armPx * 0.95, {
-        stroke: fade(C.ink, 0.1), sw: 2 * g.s,
+        stroke: INK_RING, sw: 2 * g.s,
       });
     }
 
-    const theme = hue(manifest.theme!.hue);
+    const theme = this.theme;
     for (let i = 0; i < this.stars.length; i++) {
       const s = this.stars[i]!;
       if (!s.live) continue;
@@ -472,13 +477,10 @@ class ShootingStarGrab implements MiniGame {
 
       // Tail: where it came from. Together with the chevron it makes "sweep
       // THIS way" readable from 2m without reading a word.
-      const tail = s.speed * 0.16;
-      g.line(x - s.ivx * tail, y - s.ivy * tail, x, y, 5 * g.s, {
-        stroke: fade(theme, held ? 0.8 : 0.45),
-      });
-      g.chevron(x + s.ivx * s.r * 1.9, y + s.ivy * s.r * 1.9, s.r * 0.6, dir, {
-        fill: fade(theme, held ? 0.95 : 0.5),
-      });
+      const tail = s.speed * 0.2;
+      g.line(x - s.ivx * tail, y - s.ivy * tail, x, y, 22 * g.s, { stroke: this.themeSoft });
+      g.line(x - s.ivx * tail * 0.6, y - s.ivy * tail * 0.6, x, y, 8 * g.s, { stroke: theme });
+      g.chevron(x + s.ivx * s.r * 2.1, y + s.ivy * s.r * 2.1, s.r * 0.8, dir, { fill: theme });
       g.sprite('star', x, y, s.r * 2.6, {
         rot: dir + this.time * 0.6,
         glow: held ? 14 : 0,
@@ -505,7 +507,7 @@ class ShootingStarGrab implements MiniGame {
       const x = this.handX[i]!;
       const y = this.handY[i]!;
       g.circle(x, y, this.grabR * (live ? 1 : 0.72), {
-        stroke: live ? theme : fade(C.ink, 0.22),
+        stroke: live ? theme : INK_HAND,
         sw: (live ? 5 : 2) * g.s,
         glow: held ? 10 : 0,
       });
@@ -515,7 +517,7 @@ class ShootingStarGrab implements MiniGame {
           y + this.handDY[i]! * this.grabR * 1.25,
           this.grabR * 0.3,
           Math.atan2(this.handDY[i]!, this.handDX[i]!),
-          { fill: fade(theme, 0.8) },
+          { fill: theme },
         );
       }
     }
@@ -545,10 +547,6 @@ class ShootingStarGrab implements MiniGame {
         hits: this.caught, misses: this.lost, bestCombo: this.bestCombo,
       }],
       highlightsKo: highlights.length > 0 ? highlights : undefined,
-      telemetry: {
-        acq: this.dbgAcq, near: this.dbgNear, live: this.dbgLive,
-        cos: this.dbgCos, both: this.dbgBoth,
-      },
     };
   }
 

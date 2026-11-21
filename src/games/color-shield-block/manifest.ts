@@ -4,9 +4,9 @@ export const manifest: MiniGameManifest = {
   id: 'color-shield-block',
   nameKo: '색깔 방패',
   taglineKo: '색에 맞는 곳으로 막아요!',
-  howToKo: ['빨간 세모 공은 오른손으로', '파란 네모 공은 왼손으로', '노란 동그라미 공은 머리로'],
+  howToKo: ['빨간 세모 공은 오른손으로 막아요', '파란 네모 공은 왼손으로 막아요', '노란 동그라미 공은 머리로 막아요'],
   /** A sprite id from src/engine/render/sprites.ts — never an emoji. */
-  icon: 'target',
+  icon: 'gi-color-shield-block',
   theme: { hue: 212 },
 
   // A choice reaction, not a reflex: the child has to read the badge and pick
@@ -20,10 +20,11 @@ export const manifest: MiniGameManifest = {
   gestures: ['reach'],
 
   durationMs: 50_000,
-  // Measured on `swing-wide`, which sweeps both arms through the hand slots
-  // without ever moving its head, so it blocks the two hand colours and none
-  // of the head ones — about what a child gets in their first round.
-  scoring: { kind: 'count', maxScore: 420, starCuts: [0.26, 0.5, 0.74] },
+  // About 54 balls arrive in a round at 20 points each. A strong child blocks
+  // 30 of them. `swing-wide` sweeps both arms through the hand slots without
+  // ever leaning its head, so it blocks only the red and blue ones (22) and
+  // sits just under three stars.
+  scoring: { kind: 'count', maxScore: 600, starCuts: [0.26, 0.5, 0.74] },
 
   a11y: {
     // A yellow ball is blocked by moving the HEAD half a shoulder-width off
@@ -39,6 +40,6 @@ export const manifest: MiniGameManifest = {
   tags: ['순발력', '판단력', '서서'],
   version: 1,
   author: 'A3',
-  enabled: false,
+  enabled: true,
   dev: { clip: 'swing-wide' },
 };

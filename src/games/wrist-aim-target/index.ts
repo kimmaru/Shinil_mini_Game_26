@@ -1,84 +1,108 @@
 // ─── Shape A variant: dwell-to-fire aim ──────────────────────────────────────
 //
-// A laser from the fingertip; hold it on a target for a dwell window and it
-// fires. Read AGENTS.md + docs/GAME_AUTHORING.md + src/games/mosquito-clap/
-// before touching this.
+// A glowing laser dot sits on the player's hand; park it on a big target for a
+// moment and it fires. Waves of one target (either hand), then one target per
+// hand, with a bomb decoy sprinkled in after the opening.
 //
-// Precision-aim genre note (see NEEDS.md): there is no per-game hook to ask
-// the pose pipeline for the `steady` One Euro preset (low beta) that
-// src/engine/pose/oneEuro.ts documents for exactly this genre. The honest
-// substitute used here: an extra approach()-based low-pass on top of the
-// already-filtered `reach` signal, plus target radii well above the 8%
-// floor so landmark jitter cannot flicker a dwell in or out.
+// Fairness: every target is placed from a SHOULDER, at a fraction of THIS
+// player's own arm length, and pulled back inside 0.95 of it — so a short
+// child and a tall one are asked for the same effort, and nothing is ever
+// out of reach.
+//
+// See NEEDS.md: there is no per-game "steady" filter, so the aim point gets a
+// small local low-pass (SMOOTH_RATE), the dwell drains instead of resetting
+// (a jittery hand does not lose its progress) and the hit test has a dead
+// zone (enter at r, leave at 1.2r).
 import type {
   Detector, EndReason, GameContext, GameResult, MiniGame,
   PlayerPose, PoseFrame, Pt, Renderer,
 } from '@/engine/types';
-import { L, shoulderPx } from '@/engine/pose/landmarks';
+import { L, jx, jy } from '@/engine/pose/landmarks';
 import { approach, clamp, clamp01, dist, easeOutBack, TAU } from '@/engine/math';
-import { Entities } from '@/engine/entities';
-import { chance, randRange, Spawner } from '@/engine/spawn';
-import { C, fade, hue } from '@/engine/render/palette';
+import { chance, randRange } from '@/engine/spawn';
+import { C, fade, hue, KEYLINE } from '@/engine/render/palette';
 import { manifest } from './manifest';
 import { t } from './locale';
 
 const NORMAL = 0;
 const BOMB = 1;
-
-/** Which hand a target demands. -1 = either hand may aim it. */
-const HAND_EITHER = -1;
+const HAND_ANY = -1;
 const HAND_L = 0;
 const HAND_R = 1;
+const MAXT = 3;
 
-const RING_POINTS = 15;
-const BULLSEYE_POINTS = 30;
-const BOMB_PENALTY = 20;
+const RING_POINTS = 10;
+const BULL_POINTS = 20;
+const BOMB_PENALTY = 10;
+/** Inner fraction of the radius that counts as a bullseye. */
+const BULL_FRAC = 0.4;
+/** Combo count that earns a cheer. */
 const COMBO_STEP = 4;
-/** approach() rate for the extra aim smoothing. ~90ms time constant: enough
- *  to deaden resting jitter without reading as sluggish between targets. */
+/** approach() rate for the extra aim smoothing, ~90 ms time constant. */
 const SMOOTH_RATE = 10;
+/** Dwell drains this many times faster than it fills when the hand leaves. */
+const DRAIN = 1.2;
+/** Target radius as a fraction of VIEW WIDTH. 8% is the engine floor. */
+const R_FRAC = 0.09;
+const GAP_SEC = 0.55;
 
 const HANDS = [L.LEFT_WRIST, L.RIGHT_WRIST] as const;
+/** Colours built once: render() must not build strings. */
+const TRACK = fade(C.ink, 0.18);
+const GLINT = fade(C.white, 0.6);
+const LABEL_RING = '+10';
+const LABEL_BULL = '+20';
 
 class WristAimTarget implements MiniGame {
   private ctx!: GameContext;
   private reach!: Detector<'reach'>;
-  private spawner!: Spawner;
 
-  private readonly targets = new Entities(8);
-  /** Extra-smoothed aim points. See the file header. */
+  private readonly tOn = new Uint8Array(MAXT);
+  private readonly tx = new Float32Array(MAXT);
+  private readonly ty = new Float32Array(MAXT);
+  private readonly tr = new Float32Array(MAXT);
+  private readonly tLife = new Float32Array(MAXT);
+  private readonly tAge = new Float32Array(MAXT);
+  private readonly tDwell = new Float32Array(MAXT);
+  private readonly tKind = new Uint8Array(MAXT);
+  private readonly tHand = new Int8Array(MAXT);
+  private readonly tPhase = new Float32Array(MAXT);
+  private readonly tWob = new Float32Array(MAXT);
+
   private readonly smL: Pt = { x: 0, y: 0 };
   private readonly smR: Pt = { x: 0, y: 0 };
   private smPrimed = false;
 
-  private readonly shoulderC: Pt = { x: 0, y: 0 };
-  private armLenPx = 0;
+  private readonly shL: Pt = { x: 0, y: 0 };
+  private readonly shR: Pt = { x: 0, y: 0 };
+  private armPx = 0;
+  private holdSec = 0.7;
   private player: PlayerPose | null = null;
   private time = 0;
-
-  /** Scratch for the per-target wobble position. Two instances so the
-   *  update-pass and the render-pass never clobber each other mid-frame. */
-  private readonly dwellPt: Pt = { x: 0, y: 0 };
-  private readonly drawPt: Pt = { x: 0, y: 0 };
+  private beam = '';
+  private gap = 1;
+  private realLeft = 0;
+  private pairTold = false;
 
   private score = 0;
   private combo = 0;
   private bestCombo = 0;
   private hits = 0;
+  private bulls = 0;
   private misses = 0;
-  private announcedTwoHand = false;
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
+    this.beam = hue(manifest.theme?.hue ?? 238, 85, 60);
     this.reach = ctx.gestures.use('reach', { side: 'both' });
-    this.spawner = new Spawner(
-      { startInterval: 2.6, endInterval: 1.5, jitter: 0.3, burstLate: 2, rampUntil: 0.82 },
-      ctx.rng,
-      manifest.durationMs / 1000,
-    );
-    this.shoulderC.x = ctx.view.w / 2;
-    this.shoulderC.y = ctx.view.h * 0.42;
-    this.armLenPx = Math.min(ctx.view.w, ctx.view.h) * 0.3;
+    const { w, h } = ctx.view;
+    this.shL.x = w * 0.44;
+    this.shR.x = w * 0.56;
+    this.shL.y = h * 0.42;
+    this.shR.y = h * 0.42;
+    this.armPx = Math.min(w, h) * 0.3;
+    this.smL.x = w * 0.4; this.smL.y = h * 0.6;
+    this.smR.x = w * 0.6; this.smR.y = h * 0.6;
     ctx.hud.setGoal(t('goal'));
   }
 
@@ -86,23 +110,26 @@ class WristAimTarget implements MiniGame {
     this.ctx.hud.setScore(0);
   }
 
+  /** 0..1 progress through the round. */
+  private get u(): number {
+    return clamp01(this.time / (manifest.durationMs / 1000));
+  }
+
   update(dt: number, f: PoseFrame): void {
     this.time += dt;
     const p = f.p1;
     this.player = p ?? null;
     if (p) {
-      shoulderPx(p, this.shoulderC);
-      const armLen = p.calib.armLen > 0.5 ? p.calib.armLen : 1.6;
-      this.armLenPx = armLen * p.scalePx;
+      this.shL.x = jx(p, L.LEFT_SHOULDER); this.shL.y = jy(p, L.LEFT_SHOULDER);
+      this.shR.x = jx(p, L.RIGHT_SHOULDER); this.shR.y = jy(p, L.RIGHT_SHOULDER);
+      this.armPx = (p.calib.armLen > 0.5 ? p.calib.armLen : 1.6) * p.scalePx;
     }
 
     const sig = this.reach.read(f);
     if (sig.ok) {
       if (!this.smPrimed) {
-        this.smL.x = sig.leftPalm.x;
-        this.smL.y = sig.leftPalm.y;
-        this.smR.x = sig.rightPalm.x;
-        this.smR.y = sig.rightPalm.y;
+        this.smL.x = sig.leftPalm.x; this.smL.y = sig.leftPalm.y;
+        this.smR.x = sig.rightPalm.x; this.smR.y = sig.rightPalm.y;
         this.smPrimed = true;
       } else {
         this.smL.x = approach(this.smL.x, sig.leftPalm.x, SMOOTH_RATE, dt);
@@ -112,143 +139,147 @@ class WristAimTarget implements MiniGame {
       }
     }
 
-    const k = this.spawner.tick(dt);
-    if (k > 0) {
-      if (k >= 2 && !this.announcedTwoHand) {
-        this.announcedTwoHand = true;
+    this.holdSec = 0.7 - 0.15 * this.u;
+    for (let i = 0; i < MAXT; i++) {
+      if (this.tOn[i] === 0) continue;
+      this.tAge[i] = this.tAge[i]! + dt;
+      this.tLife[i] = this.tLife[i]! - dt;
+      if (this.tLife[i]! <= 0) { this.expire(i); continue; }
+      if (sig.ok) this.dwell(i, dt);
+    }
+
+    if (this.realLeft <= 0) {
+      // Wave over: clear leftover bombs, breathe, then serve the next one.
+      for (let i = 0; i < MAXT; i++) this.tOn[i] = 0;
+      this.gap -= dt;
+      if (this.gap <= 0 && p) this.spawnWave();
+    }
+  }
+
+  private spawnWave(): void {
+    const u = this.u;
+    const rng = this.ctx.rng;
+    this.gap = GAP_SEC;
+    if (u > 0.45 && chance(rng, 0.45)) {
+      this.spawnTarget(0, NORMAL, HAND_L, 6);
+      this.spawnTarget(1, NORMAL, HAND_R, 6);
+      if (!this.pairTold) {
+        this.pairTold = true;
         this.ctx.hud.toast(t('bothHands'), { color: C.info });
       }
-      for (let i = 0; i < k; i++) {
-        if (this.targets.n >= 2) break;
-        this.spawnTarget(k >= 2 ? (i === 0 ? HAND_L : HAND_R) : HAND_EITHER);
-      }
+      return;
     }
-
-    // This pool never calls Entities.step(): `vx` is repurposed to carry each
-    // target's own holdMs rather than velocity, so life is decayed by hand.
-    for (let i = this.targets.n - 1; i >= 0; i--) {
-      this.targets.life[i] = this.targets.life[i]! - dt;
-      if (this.targets.life[i]! <= 0) this.targets.kill(i);
-    }
-
-    if (sig.ok) this.updateDwell(dt);
-
-    this.targets.sweep();
+    this.spawnTarget(0, NORMAL, HAND_ANY, 5);
+    if (u > 0.25 && chance(rng, 0.4)) this.spawnTarget(1, BOMB, HAND_ANY, 5);
   }
 
-  private spawnTarget(hand: -1 | 0 | 1): void {
-    const d = this.spawner.difficulty;
-    const isBomb = d > 0.22 && chance(this.ctx.rng, Math.min(0.07 + d * 0.16, 0.22));
-    const g = Math.min(this.ctx.view.w, this.ctx.view.h);
-    // Shrinks toward, but never below, the 8%-of-view-width floor the
-    // catalogue's own threshold table demands.
-    const radiusFrac = 0.125 - 0.04 * d;
-    const r = g * radiusFrac;
+  /** Place slot `i` from a shoulder, at a fraction of this player's arm
+   *  length, in the upper-outer arc the hand actually sweeps through. */
+  private spawnTarget(i: number, kind: number, hand: number, lifeSec: number): void {
+    const { w, h } = this.ctx.view;
+    const rng = this.ctx.rng;
+    const r = w * R_FRAC;
+    // A bomb sits on the opposite side from the real target, so the choice is
+    // "go there, not there" rather than "the thing under my hand is bad".
+    let left: boolean;
+    if (hand === HAND_L) left = true;
+    else if (hand === HAND_R) left = false;
+    else if (kind === BOMB) left = this.tx[0]! > w / 2;
+    else left = chance(rng, 0.5);
 
-    // Angle from the shoulder centre, screen convention (x right, y down).
-    // A wide arc — excludes only the straight-down-into-the-lap sector, so
-    // the layout stays reachable from whichever side a player favours.
-    const angleDeg = randRange(this.ctx.rng, 160, 380);
-    const a = (angleDeg * Math.PI) / 180;
-    const distFrac = randRange(this.ctx.rng, 0.4 + d * 0.15, 0.85 + d * 0.2);
-    const reach = this.armLenPx * distFrac;
-    const margin = r * 1.3;
-    const x = clamp(this.shoulderC.x + Math.cos(a) * reach, margin, this.ctx.view.w - margin);
-    const y = clamp(this.shoulderC.y + Math.sin(a) * reach, margin, this.ctx.view.h * 0.92 - margin);
+    const sh = left ? this.shL : this.shR;
+    const out = left ? -1 : 1;
+    // phi: -70 deg = up and a little in, 0 = straight out, +40 = low.
+    const phi = (randRange(rng, -70, 40) * Math.PI) / 180;
+    const frac = randRange(rng, 0.7, 0.95);
+    let x = sh.x + out * Math.cos(phi) * this.armPx * frac;
+    let y = sh.y + Math.sin(phi) * this.armPx * frac;
+    x = clamp(x, r * 1.1, w - r * 1.1);
+    y = clamp(y, h * 0.22, h * 0.88 - r * 0.3);
+    // The view clamp must never push it out of this arm's reach.
+    const dx = x - sh.x;
+    const dy = y - sh.y;
+    const d = Math.hypot(dx, dy);
+    const cap = this.armPx * 0.95;
+    if (d > cap) { x = sh.x + (dx / d) * cap; y = sh.y + (dy / d) * cap; }
 
-    const holdMs = 1000 - 400 * d;
-    const lifeSec = Math.max(4, (holdMs / 1000) * 2.6);
-
-    const i = this.targets.spawn(x, y, 0, 0, r, lifeSec, isBomb ? BOMB : NORMAL);
-    if (i < 0) return;
-    this.targets.vx[i] = holdMs; // repurposed scratch: holdMs, not velocity
-    this.targets.vy[i] = 0;
-    this.targets.hp[i] = hand;
-    this.targets.data[i] = 0; // dwell ms accumulated
-    this.targets.spin[i] = this.ctx.rng() * TAU; // wobble phase
+    this.tOn[i] = 1;
+    this.tx[i] = x; this.ty[i] = y; this.tr[i] = r;
+    this.tLife[i] = lifeSec;
+    this.tAge[i] = 0;
+    this.tDwell[i] = 0;
+    this.tKind[i] = kind;
+    this.tHand[i] = hand;
+    this.tPhase[i] = rng() * TAU;
+    this.tWob[i] = this.u > 0.6 ? w * 0.012 : 0;
+    if (kind === NORMAL) this.realLeft++;
   }
 
-  /** Target's drawn/hit-tested centre: the stored anchor plus a slow wobble
-   *  that only appears once the round demands "이동 과녁". Shared by the
-   *  dwell check and the render pass so they can never disagree. */
-  private targetPos(i: number, out: Pt): void {
-    const amp = Math.min(this.ctx.view.w, this.ctx.view.h)
-      * 0.022 * clamp01((this.spawner.difficulty - 0.55) * 2.2);
-    const wob = amp > 0 ? Math.sin(this.time * 1.6 + this.targets.spin[i]!) * amp : 0;
-    out.x = this.targets.x[i]!;
-    out.y = this.targets.y[i]! + wob;
+  private posX(i: number): number {
+    return this.tx[i]! + Math.sin(this.time * 1.5 + this.tPhase[i]!) * this.tWob[i]!;
   }
 
-  private updateDwell(dt: number): void {
-    const dtMs = dt * 1000;
-    for (let i = 0; i < this.targets.n; i++) {
-      this.targetPos(i, this.dwellPt);
-      const hand = this.targets.hp[i]!;
-      const d = hand === HAND_EITHER
-        ? Math.min(
-          dist(this.smL.x, this.smL.y, this.dwellPt.x, this.dwellPt.y),
-          dist(this.smR.x, this.smR.y, this.dwellPt.x, this.dwellPt.y),
-        )
-        : dist(
-          (hand === HAND_L ? this.smL : this.smR).x,
-          (hand === HAND_L ? this.smL : this.smR).y,
-          this.dwellPt.x, this.dwellPt.y,
-        );
+  private posY(i: number): number {
+    return this.ty[i]! + Math.cos(this.time * 1.9 + this.tPhase[i]!) * this.tWob[i]!;
+  }
 
-      const r = this.targets.r[i]!;
-      // Shrink to get in, grow to get out: the same dead-zone-margin trick
-      // the engine's own ZoneDetector uses, so a hand parked on the rim does
-      // not strobe the dwell timer.
-      const wasEngaged = this.targets.data[i]! > 0;
-      const inside = d <= (wasEngaged ? r * 1.2 : r);
-      if (!inside) {
-        this.targets.data[i] = 0;
-        continue;
-      }
-      const dwell = this.targets.data[i]! + dtMs;
-      this.targets.data[i] = dwell;
-      const holdMs = this.targets.vx[i]!;
-      if (dwell >= holdMs) this.resolve(i, d <= r * 0.4);
+  private dwell(i: number, dt: number): void {
+    const x = this.posX(i);
+    const y = this.posY(i);
+    const hand = this.tHand[i]!;
+    let d: number;
+    if (hand === HAND_L) d = dist(this.smL.x, this.smL.y, x, y);
+    else if (hand === HAND_R) d = dist(this.smR.x, this.smR.y, x, y);
+    else d = Math.min(dist(this.smL.x, this.smL.y, x, y), dist(this.smR.x, this.smR.y, x, y));
+
+    const r = this.tr[i]!;
+    const engaged = this.tDwell[i]! > 0;
+    if (d <= (engaged ? r * 1.2 : r)) {
+      const v = this.tDwell[i]! + dt / this.holdSec;
+      this.tDwell[i] = v;
+      if (v >= 1) this.resolve(i, d <= r * BULL_FRAC);
+    } else {
+      this.tDwell[i] = Math.max(0, this.tDwell[i]! - (dt / this.holdSec) * DRAIN);
     }
   }
 
-  private resolve(i: number, bullseye: boolean): void {
-    const x = this.targets.x[i]!;
-    const y = this.targets.y[i]!;
-    const isBomb = this.targets.kind[i] === BOMB;
-    this.targets.kill(i);
+  private resolve(i: number, bull: boolean): void {
+    const x = this.posX(i);
+    const y = this.posY(i);
+    const bomb = this.tKind[i] === BOMB;
+    this.tOn[i] = 0;
 
-    if (isBomb) {
-      // A real penalty, not a whiff: a soft buzz and a quiet fx.miss — the
-      // engine refuses shake/flash/red even here. The lesson is "stop aiming
-      // at it", not "you failed".
+    if (bomb) {
+      // Quiet by design: a small, soft loss and a broken combo. The lesson is
+      // "aim at the other one", not "you failed".
       this.misses++;
       this.combo = 0;
       this.score = Math.max(0, this.score - BOMB_PENALTY);
       this.ctx.hud.setCombo(0);
       this.ctx.hud.setScore(this.score);
-      this.ctx.hud.toast(t('bombWarn'), { color: C.danger });
-      this.ctx.audio.play('buzz', { gain: 0.6 });
+      this.ctx.hud.toast(t('bombWarn'), { color: C.warn });
+      this.ctx.audio.play('miss');
       this.ctx.fx.miss(x, y);
       this.ctx.emit({ kind: 'miss' });
       return;
     }
 
+    this.realLeft--;
     this.hits++;
     this.combo++;
     if (this.combo > this.bestCombo) this.bestCombo = this.combo;
-    const points = bullseye ? BULLSEYE_POINTS : RING_POINTS;
+    if (bull) this.bulls++;
+    const points = bull ? BULL_POINTS : RING_POINTS;
     this.score += points;
 
-    this.ctx.fx.impact(x, y, bullseye ? 'big' : 'hit', {
-      color: bullseye ? C.accent : C.success,
-      sprite: 'sparkle',
-      label: `+${points}`,
+    this.ctx.fx.impact(x, y, bull ? 'big' : 'hit', {
+      color: bull ? C.accent : C.success,
+      sprite: bull ? 'star' : 'sparkle',
+      label: bull ? LABEL_BULL : LABEL_RING,
     });
-    this.ctx.audio.playLadder('pop', this.combo);
-    if (bullseye) {
+    this.ctx.audio.playLadder(bull ? 'pop.high' : 'pop', this.combo);
+    if (bull) {
       this.ctx.hud.toast(t('wow'), { color: C.accent });
-      this.ctx.audio.play('bonus');
     } else if (this.combo % COMBO_STEP === 0) {
       this.ctx.hud.toast(t('nice'), { color: C.success });
       this.ctx.audio.play('combo.up');
@@ -258,75 +289,90 @@ class WristAimTarget implements MiniGame {
     this.ctx.emit({ kind: 'scored', points });
   }
 
+  /** A target nobody got to in time just fades: no sound, no mark. */
+  private expire(i: number): void {
+    this.tOn[i] = 0;
+    if (this.tKind[i] === BOMB) return;
+    this.realLeft--;
+    this.misses++;
+    if (this.combo > 0) {
+      this.combo = 0;
+      this.ctx.hud.setCombo(0);
+    }
+    this.ctx.fx.miss(this.tx[i]!, this.ty[i]!);
+    this.ctx.emit({ kind: 'miss' });
+  }
+
   render(g: Renderer, _interp: number): void {
     g.clear(manifest.theme?.hue);
 
-    // Always draw the body: visible response reads as "it can see me", and
-    // it is the proof the camera only ever leaves this room as joints.
-    if (this.player) g.ghostBody(this.player, 0.1);
-    if (this.player) g.skeleton(this.player, { alpha: 0.4, emphasize: HANDS });
+    if (this.player) {
+      g.ghostBody(this.player, 0.12);
+      g.skeleton(this.player, { alpha: 0.55, emphasize: HANDS });
+    }
 
-    for (let i = 0; i < this.targets.n; i++) {
-      this.targetPos(i, this.drawPt);
-      const x = this.drawPt.x;
-      const y = this.drawPt.y;
-      const r = this.targets.r[i]!;
-      const isBomb = this.targets.kind[i] === BOMB;
-      const hand = this.targets.hp[i]!;
-      const holdMs = this.targets.vx[i]!;
-      const progress = clamp01(this.targets.data[i]! / holdMs);
-      const age = this.targets.age(i);
-      const grow = age < 0.12 ? easeOutBack(age / 0.12) : 1;
+    for (let i = 0; i < MAXT; i++) {
+      if (this.tOn[i] === 0) continue;
+      const x = this.posX(i);
+      const y = this.posY(i);
+      const r = this.tr[i]!;
+      const age = this.tAge[i]!;
+      const grow = age < 0.25 ? 0.86 + 0.14 * easeOutBack(age / 0.25) : 1;
+      // Last second: shrink a touch so "it is leaving" reads without a clock.
+      const leave = this.tLife[i]! < 1 ? 0.85 + 0.15 * this.tLife[i]! : 1;
+      const rr = r * grow * leave;
+      const prog = clamp01(this.tDwell[i]!);
+      const hand = this.tHand[i]!;
 
-      if (isBomb) {
-        g.sprite('rock', x, y, r * 1.7 * grow);
-        g.circle(x, y, r * grow, { stroke: C.danger, sw: 3 * g.s });
+      if (this.tKind[i] === BOMB) {
+        g.circle(x, y, rr * 0.9, { fill: KEYLINE, stroke: C.warn, sw: 5 * g.s });
+        g.circle(x - rr * 0.28, y - rr * 0.28, rr * 0.2, { fill: GLINT });
+        g.line(x + rr * 0.45, y - rr * 0.65, x + rr * 0.7, y - rr * 0.95, 6 * g.s, { stroke: C.accentHi });
+        g.star(x + rr * 0.72, y - rr * 1.0, rr * 0.2, 4, { fill: C.warn });
       } else {
-        g.sprite('target', x, y, r * 2 * grow);
-        if (hand !== HAND_EITHER) {
-          g.circle(x, y, r * 1.3 * grow, {
-            stroke: hand === HAND_L ? C.slot[0] : C.slot[1],
-            sw: 2.5 * g.s,
+        g.sprite('target', x, y, rr * 2);
+        if (hand !== HAND_ANY) {
+          g.circle(x, y, rr * 1.12, {
+            stroke: hand === HAND_L ? C.slot[0] : C.slot[1], sw: 8 * g.s,
+          });
+          g.text(hand === HAND_L ? t('left') : t('right'), x, y - rr * 1.42, {
+            size: 48 * g.s, weight: 800, align: 'center', baseline: 'middle',
+            fill: hand === HAND_L ? C.slot[0] : C.slot[1], stroke: C.white, sw: 7 * g.s,
           });
         }
       }
 
-      // The dwell gauge: the only way a player can tell a selection is in
-      // progress. A track ring plus a filling arc, always drawn once started.
-      if (progress > 0) {
-        g.circle(x, y, r * 1.22, { stroke: fade(C.white, 0.5), sw: 3 * g.s });
-        g.arc(x, y, r * 1.22, -Math.PI / 2, -Math.PI / 2 + progress * TAU, {
-          stroke: isBomb ? C.danger : C.success,
-          sw: 5 * g.s,
-          glow: 10,
+      if (prog > 0.01) {
+        g.circle(x, y, rr * 1.25, { stroke: TRACK, sw: 10 * g.s });
+        g.arc(x, y, rr * 1.25, -Math.PI / 2, -Math.PI / 2 + prog * TAU, {
+          stroke: this.tKind[i] === BOMB ? C.warn : C.success, sw: 10 * g.s,
         });
       }
     }
 
-    this.drawLaser(g, this.smL, hue(manifest.theme?.hue ?? 238, 85, 68));
-    this.drawLaser(g, this.smR, hue(manifest.theme?.hue ?? 238, 85, 68));
+    // The two laser dots. Always drawn once the hands have been seen.
+    this.drawLaser(g, this.smL, this.shL, C.slot[0]);
+    this.drawLaser(g, this.smR, this.shR, C.slot[1]);
   }
 
-  /** A short glowing beam from the palm, pointed outward from the shoulder
-   *  through the hand — a cheap "aiming" read with no raycasting needed,
-   *  since the real hit test is a plain distance check against the target. */
-  private drawLaser(g: Renderer, palmPt: Pt, strokeColor: string): void {
-    const dx = palmPt.x - this.shoulderC.x;
-    const dy = palmPt.y - this.shoulderC.y;
+  /** A hot-pink dot with a short beam pointing away from the shoulder. */
+  private drawLaser(g: Renderer, pt: Pt, sh: Pt, ring: string): void {
+    if (!this.smPrimed) return;
+    const dx = pt.x - sh.x;
+    const dy = pt.y - sh.y;
     const len = Math.hypot(dx, dy) || 1;
-    const ux = dx / len;
-    const uy = dy / len;
-    const beam = Math.min(this.ctx.view.w, this.ctx.view.h) * 0.16;
-    g.line(palmPt.x, palmPt.y, palmPt.x + ux * beam, palmPt.y + uy * beam, 3 * g.s, {
-      stroke: strokeColor,
-      glow: 12,
+    const beam = this.ctx.view.w * 0.05;
+    g.line(pt.x, pt.y, pt.x + (dx / len) * beam, pt.y + (dy / len) * beam, 8 * g.s, {
+      stroke: this.beam,
     });
-    g.circle(palmPt.x, palmPt.y, 16 * g.s, { stroke: C.white, sw: 3 * g.s, glow: 8 });
+    g.circle(pt.x, pt.y, 34 * g.s, { stroke: ring, sw: 7 * g.s });
+    g.circle(pt.x, pt.y, 16 * g.s, { fill: C.hot, stroke: C.white, sw: 3 * g.s, glow: 12 });
   }
 
   end(_reason: EndReason): GameResult {
     const highlights: string[] = [];
     if (this.bestCombo >= COMBO_STEP) highlights.push(`콤보 ${this.bestCombo}연속!`);
+    if (this.bulls >= 3) highlights.push(`정중앙 ${this.bulls}번!`);
     if (this.hits >= 10) highlights.push(`과녁 ${this.hits}개 명중!`);
     return {
       gameId: manifest.id,
@@ -342,10 +388,6 @@ class WristAimTarget implements MiniGame {
       }],
       highlightsKo: highlights.length > 0 ? highlights : undefined,
     };
-  }
-
-  dispose(): void {
-    this.targets.clear();
   }
 }
 

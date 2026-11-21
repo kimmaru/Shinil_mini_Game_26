@@ -6,11 +6,13 @@
 // with two systems is how a product starts looking like two products.
 import { useMemo } from 'react';
 import { hasSprite, spriteToSvg } from '@/engine/render/sprite';
-// BOTH sprite tables. Importing only the first made every ui-* and g-* id
+// EVERY sprite table. Importing only the first made every ui-* and g-* id
 // unknown, and SpriteIcon renders a blank placeholder for an unknown id — so
 // the icons silently vanished rather than erroring.
 import '@/engine/render/sprites';
 import '@/engine/render/sprites-ui';
+// Game icons (gi-<game-id>), drawn by the icon pass. Manifests point at them.
+import '@/engine/render/sprites-games';
 
 export interface SpriteIconProps {
   /** A sprite id, e.g. the game's `manifest.icon`. */

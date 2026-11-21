@@ -5,7 +5,7 @@
 // shared mutable module, then 58 authors are no longer independent and the
 // merge surface stops being zero.
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -59,14 +59,14 @@ for (const folder of await readdir(GAMES, { withFileTypes: true })) {
   if (id.startsWith('_') || id.startsWith('__')) continue;
 
   const files = await walk(join(GAMES, id));
-  const names = files.map((f) => f.replace(join(GAMES, id) + '/', ''));
+  const names = files.map((f) => relative(join(GAMES, id), f).replaceAll('\\', '/'));
 
   for (const extra of names.filter((n) => !/^(manifest|index|locale|NEEDS)\.(ts|md)$/.test(n))) {
     errs.push(`${id}/${extra}: a game folder holds only manifest.ts, index.ts, locale.ts (+ NEEDS.md)`);
   }
 
   for (const f of files) {
-    const rel = f.replace(ROOT + '/', '');
+    const rel = relative(ROOT, f).replaceAll('\\', '/');
     const src = await readFile(f, 'utf8');
     const isManifest = f.endsWith('manifest.ts');
 
@@ -127,7 +127,7 @@ async function checkShell() {
   let files;
   try { files = await walk(SHELL); } catch { return; }
   for (const f of files) {
-    const rel = f.replace(ROOT + '/', '');
+    const rel = relative(ROOT, f).replaceAll('\\', '/');
     if (/\.test\.tsx?$/.test(rel)) continue;
     const src = await readFile(f, 'utf8');
     const code = src

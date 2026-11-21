@@ -38,7 +38,10 @@ export interface PoseTierConfig {
 }
 
 export const TIER_CONFIG: Record<PoseTier, Omit<PoseTierConfig, 'renderer' | 'cores' | 'tier'>> = {
-  high: { model: 'lite', numPoses: 2, width: 1280, height: 720, delegate: 'GPU', targetHz: 30, slowFactor: 1 },
+  // 960x540, not 1280x720: the model sees 256x256 either way, and every extra
+  // pixel is paid again in the per-frame copy to the inference worker. Still
+  // 16:9, so a 720p laptop camera (FaceTime HD) scales rather than crops.
+  high: { model: 'lite', numPoses: 2, width: 960, height: 540, delegate: 'GPU', targetHz: 30, slowFactor: 1 },
   low: { model: 'lite', numPoses: 1, width: 640, height: 480, delegate: 'GPU', targetHz: 25, slowFactor: 1.4 },
   software: { model: 'lite', numPoses: 1, width: 480, height: 360, delegate: 'CPU', targetHz: 15, slowFactor: 2.2 },
   unsupported: { model: 'lite', numPoses: 1, width: 480, height: 360, delegate: 'CPU', targetHz: 12, slowFactor: 2.5 },

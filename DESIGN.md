@@ -16,28 +16,54 @@ authors starts looking like 58 sites.
 
 ## 1. The direction in one sentence
 
-**Neutral cool surfaces + saturated colour only on (a) the primary action and
-(b) rewards + enormous type + chunky pressable depth + feedback inside 100 ms +
-celebrate everything.**
+**A casual party game (미니게임천국, Mario Party — all art our own): a saturated
+gradient backdrop with one drifting pattern, white display type with a thick
+ink outline and a drop shadow, chunky ink-edged slabs you can press, overshoot
+springs on everything that arrives, and celebrate everything.**
+(docs/GAME-DESIGN-PLAN.md §3 is the brief.)
 
-Each game gets exactly one hue (`manifest.theme.hue`) that tints its card and
-its in-game accents. That is how 58 games feel distinct without 58 palettes, and
-it is the only colour decision a game author makes.
+One colour — the **ink** `--c-ink #1D1442` — draws every outline, slab edge,
+text stroke and drop shadow. That single shared line is what makes a dozen
+saturated hues read as one product instead of a flea market.
+
+Each game gets exactly one hue (`manifest.theme.hue`) that tints its roulette
+tile, its countdown title and its results card. That is how 58 games feel
+distinct without 58 palettes, and it is the only colour decision a game author
+makes.
 
 ### What we stole, and from whom
 
 | Source | What we took |
 |---|---|
-| **Duolingo** | One confident saturated brand colour; chunky display weights; a 4–6 px **solid-colour bottom shadow** on every interactive element so it reads as a 3D slab waiting to be pressed. Bright and confident — never pastel, never infantilizing. |
-| **Kahoot** | Colour paired with **shape**: ▲ ◆ ● ■ plus a slot number. "2번, 주황 네모!" works across a classroom, and colour-blind players get the same information. |
-| **Nintendo Switch home** | Near-neutral chrome, colour reserved for content; enormous focus states; a distinct sound for every navigation event; every state change animated, never cut. |
-| **Toss (TDS)** | Restraint. One blue, obsessive 8 pt rhythm, motion as feedback rather than decoration. This is what stops a 58-game site from looking like a flea market. |
+| **Mario Party** | The board: upright tiles in a ring, a highlight that hops tile to tile and decelerates, the winner popping and flying to the centre. Results stars on an arc, middle one raised. |
+| **미니게임천국 / WarioWare** | One command word per game, shouted ("짝!", "점프!"), white-with-black-outline lettering over a loud backdrop. |
+| **Duolingo** | Chunky display weights; a solid bottom edge on every interactive element so it reads as a 3D slab waiting to be pressed. |
+| **Kahoot** | Colour paired with **shape**: ▲ ◆ ● ■ plus a slot number. Colour-blind players get the same information. |
+| **Nintendo Switch home** | Enormous focus states; a distinct sound for every navigation event; every state change animated, never cut. |
 
 ---
 
 ## 2. Colour
 
-### Brand / semantic (hue-stable across light and dark)
+### Party (DOM chrome only — no canvas twin)
+
+| Token | Value | Use |
+|---|---|---|
+| `--c-ink` | `#1D1442` | every outline, slab edge, text stroke, drop shadow; body text |
+| `--c-sun` `--c-tangerine` `--c-bubblegum` | `#FFD23F` `#FF8A3D` `#FF5C9A` | the attract backdrop; `.btn--go` |
+| `--c-sky` `--c-grape` `--c-mint` | `#35C6FF` `#7B5CFF` `#2FD8A5` | roulette/countdown backdrops, logo ribbon, timer ring, "시작!" |
+| `--c-gold` | `#FFC21A` | the roulette highlight frame, the record banner |
+| `--bg-1/2/3` | per phase | the 3-stop backdrop gradient, set on `.app[data-phase]` |
+| `--bg-pattern` | `rgb(255 255 255 / .18)` | the drifting dots (stripes on the roulette) |
+
+Backdrops by phase: attract sun → tangerine → bubblegum; roulette sky → blue →
+grape with diagonal stripes; countdown mint → sky → blue; results yellow →
+orange → pink; setup/help blue → violet. `play` has no backdrop (the game
+canvas owns the screen). There is **no white screen anywhere**: running text
+that has to sit on a backdrop sits on a white slab (`.card`, `.panel`,
+`.slab-note`, `.screen__lead`).
+
+### Brand / semantic (hue-stable; mirrored in render/palette.ts)
 
 | Token | Light | Use |
 |---|---|---|
@@ -53,20 +79,27 @@ it is the only colour decision a game author makes.
 
 ### Surfaces
 
-|  | Light | Dark |
-|---|---|---|
-| canvas | `#F5F7FD` | `#0B0F20` |
-| surface | `#FFFFFF` | `#151B33` |
-| surface-2 / -3 | `#EDF0F9` / `#E2E7F4` | `#1E2641` / `#28314F` |
-| **game canvas** | `#101733` | `#080C1A` |
-| text / text-2 / text-3 | `#131A33` / `#4A5678` / `#7A86A8` | `#F2F5FF` / `#B7C0DC` / `#8390B2` |
+The product is played in ONE bright look. The dark blocks exist (structure
+rule 5 below) but keep the party look: they only deepen the backdrop with
+`--bg-veil` and soften `--bg-pattern`.
+
+| Token | Value |
+|---|---|
+| canvas (body fallback under the gradient) | `#FF8A3D` |
+| surface / surface-2 / surface-3 | `#FFFFFF` / `#FFF6E5` / `#FFE7BF` |
+| **game canvas** (`--c-game-bg`) | `#FFF8EC` |
+| text / text-2 / text-3 | `#1D1442` / `#4A3F72` / `#6B6390` (16.9 / 9.1 / 5.6 : 1 on white) |
 
 ### Hard colour rules
 
-1. **The in-game canvas is dark in both themes.** Particles, glows and the
-   skeleton overlay have to read consistently, and a light canvas blows out
-   next to a camera preview.
+1. **The game canvas ground is one cream in both themes** (`--c-game-bg`,
+   mirrored in render/palette.ts): the sprites' ink keyline assumes a light
+   ground. The attract reel frame and the `play` phase use the same colour so
+   the hand-off to a game never flashes the backdrop.
 2. **Amber never carries white text.** `--c-on-accent` is `#3A2600`.
+   **White text on a saturated fill always carries the ink outline**
+   (`-webkit-text-stroke` + `paint-order: stroke fill`) — that outline, not
+   the fill, is what gives it contrast.
 3. **`--c-primary-500` is a fill, not a text colour** on light surfaces (~4.0:1).
    Blue *text* uses `--c-primary-600`.
 4. **Hue is never the only cue.** Every player-coloured element carries a 3 px
@@ -80,11 +113,12 @@ it is the only colour decision a game author makes.
 ### Per-game hue
 
 ```css
-.card { --hue-tint: hsl(var(--hue, 230) 80% 60% / .10); }
+.card { --hue-tint: hsl(var(--hue, 230) 90% 60% / .12); }
+.tile { background: linear-gradient(hsl(var(--hue) 95% 72%), hsl(var(--hue) 80% 54%)); }
 ```
-Set `--hue` from `manifest.theme.hue` on the card or screen root. Games without
-a declared hue get a stable one hashed from their id, so two cards never collide
-by accident.
+Set `--hue` from `manifest.theme.hue` on the card, tile or screen root. Games
+without a declared hue get a stable one hashed from their id, so two cards never
+collide by accident.
 
 ---
 
@@ -92,18 +126,31 @@ by accident.
 
 ```css
 --font-ui:      'Pretendard Variable', Pretendard, -apple-system, …
---font-display: 'GmarketSansBold', var(--font-ui);
---font-num:     var(--font-display);
+--font-display: var(--font-ui);
+--font-num:     var(--font-ui);
 ```
 
-**Self-hosted only.** `/fonts/fonts.css` is generated by the build and already
-linked from `index.html`. **Never add a CDN `@font-face` or `<link>`** — it
-breaks the `connect-src 'self'` CSP that makes the privacy claim auditable,
-and it adds a cross-origin dependency on a school network.
+**One face, self-hosted.** Pretendard Variable (weights 45–920) from
+`/fonts/fonts.css`, generated by the build and linked from `index.html`. The
+display register is **weight 800–900 plus the outline**, not a second font.
+**Never add a CDN `@font-face` or `<link>`** — it breaks the
+`connect-src 'self'` CSP that makes the privacy claim auditable.
 
-> ⚠️ **GmarketSansBold is not self-hosted yet.** `--font-display` currently
-> falls back to Pretendard, and weight 800 carries the display register. When
-> the build copies the Gmarket woff2 into `public/fonts/`, nothing else changes.
+### The party voice: outlined display text
+
+```css
+.display-1, .display-2, .h1, .h2, .outlined {
+  color: #fff;
+  -webkit-text-stroke: var(--outline-w) var(--c-ink);   /* 0.15em */
+  paint-order: stroke fill;                              /* stroke BEHIND the fill */
+  text-shadow: var(--outline-drop);                      /* 0 .06em 0 ink + soft drop */
+}
+.ink { color: var(--c-text); -webkit-text-stroke: 0; text-shadow: none; }
+```
+`paint-order: stroke fill` is what lets the stroke be thick without eating the
+glyph: only the outer half shows, as an outline. Tile names, the command word,
+the countdown numbers, HUD goal/announce/combo and `.btn--go` labels all use
+the same recipe. Use `.ink` for a plain dark heading inside a white panel.
 
 ### Three Korean rules that matter more than the font choice
 
@@ -127,11 +174,11 @@ html[data-text-size="large"] { font-size: clamp(20px, 0.7vw + 0.6vh + 11px, 34px
 
 | Token | rem (px @16) | weight | Use |
 |---|---|---|---|
-| `--fs-display-1` | 6 (96) | 800 | 카운트다운, 게임 이름 slam-in |
-| `--fs-display-2` | 4.5 (72) | 800 | 결과 점수, 룰렛 결과 |
-| `--fs-title-1` | 3.5 (56) | 700 | 화면 제목 |
-| `--fs-title-2` | 2.75 (44) | 700 | 카드 제목 |
-| `--fs-heading` | 2.125 (34) | 700 | **the 2 m reaction floor** |
+| `--fs-display-1` | 6 (96) | 900 | 결과 점수 |
+| `--fs-display-2` | 4.5 (72) | 900 | 룰렛 제목, 기록 |
+| `--fs-title-1` | 3.5 (56) | 800 | 화면 제목, 게임 이름 slam-in |
+| `--fs-title-2` | 2.75 (44) | 800 | START 라벨 |
+| `--fs-heading` | 2.125 (34) | 800 | **the 2 m reaction floor**: tile names, command caption, HUD goal |
 | `--fs-body-lg` | 1.75 (28) | 500 | default body on game screens |
 | `--fs-body` | 1.5 (24) | 500 | **the 2 m reading floor** |
 | `--fs-label` | 1.25 (20) | 600 | buttons, chips |
@@ -144,12 +191,12 @@ instruction text is 28 px; anything they must *react* to is ≥ 34 px / weight 7
 weight (100–300) at body size — thin strokes vanish at distance.
 
 On short viewports (`@media (max-height: 52rem)`) only the DISPLAY sizes shrink.
-`--fs-heading` and below never move: they are the accessibility floor.
+`--fs-heading` and below never move: they are the accessibility floor. Anything
+a child reacts to is additionally written `max(34px, …)` so a viewport-relative
+size can never take it under the floor.
 
-**One documented exception.** Roulette slice labels run at `--fs-caption`: eight
-radial labels cannot be 24 px and stay inside their slice. The emoji carries
-identification at 2 m, and the winner's name is re-shown at `--fs-display-2` the
-instant the wheel lands.
+The old exception (roulette slice labels at 18 px) is gone with the wheel:
+roulette tile names are upright and `max(34px, …)` at every size.
 
 ---
 
@@ -161,27 +208,34 @@ instant the wheel lands.
 --bw-1 2px   --bw-2 3px   --bw-focus 4px
 --hit-min 56px   --hit-primary 72px   --hit-huge 96px
 --press-depth 6px
+--slab-bw 4px   --slab-edge 6px   --slab-hi inset 0 4px 0 rgb(255 255 255 / .55)
 ```
 
 44 px is the *adult* minimum; children need more. Nothing interactive ships
-below 56 px, the primary action is 72 px, lobby game cards are 96 px.
+below 56 px, the primary action is 72 px, START is 96 px+. Radius is never
+below 24 px on anything a child presses or reads.
 
 ### The pressable slab
 
 ```css
 .btn {
-  box-shadow: 0 var(--press-depth) 0 var(--btn-edge), var(--sh-2);
-  transition: transform var(--dur-fast) var(--ease-out-quint), …;
+  border: var(--slab-bw) solid var(--c-ink);
+  box-shadow: var(--slab-hi), 0 var(--press-depth) 0 var(--btn-edge);  /* edge = ink */
 }
-.btn:active  { transform: translateY(var(--press-depth)); box-shadow: 0 0 0 var(--btn-edge), var(--sh-1); }
-.btn:focus-visible { box-shadow: 0 var(--press-depth) 0 var(--btn-edge), var(--sh-focus); }
+.btn:active  { transform: translateY(var(--press-depth)); box-shadow: var(--slab-hi), 0 0 0 var(--btn-edge); }
+.btn:focus-visible { box-shadow: var(--slab-hi), 0 var(--press-depth) 0 var(--btn-edge), var(--sh-focus); }
 ```
-Six lines and a 40 ms `ui.click` deliver most of the "kid game UI feels good"
-sensation. `--press-depth` goes to `0px` under reduced motion.
+Ink border, ink bottom edge, a white top highlight, and a 40 ms `ui.click`.
+Cards, panels, tiles, the HUD pills and the reel bezel are the same slab.
+`--press-depth` goes to `0px` under reduced motion.
 
-Variants: `.btn--primary` (the one blue), `--accent` (rewards, dark text),
-`--success`, `--danger`, `--ghost`, `--link`. Sizes: `--sm` (56), default (72),
-`--huge` (96, display face).
+Variants: `.btn--go` (the party slab: sun → tangerine, white outlined label —
+START, 다시 하기; once per screen), `--primary` (blue, outlined label),
+`--accent` (rewards, dark text), `--success`, `--danger`, `--ghost` (white
+slab — never transparent: it sits on a backdrop), `--link` (white pill,
+underlined). Sizes: `--sm` (56), default (72), `--huge` (96, weight 900).
+The START button pulses on the `scale` property (1 → 1.08 over `--t-pulse`
+1.2 s), not `transform`, so the pulse and the `:active` press compose.
 
 Every interactive element has `:hover`, `:focus-visible`, `:active` and
 `:disabled` states. No hover-only affordances — this product is played at 2 m
@@ -198,32 +252,63 @@ with no mouse.
 --ease-out-quint cubic-bezier(.22,1,.36,1)     default exit
 --ease-out-back  cubic-bezier(.34,1.56,.64,1)  pop-in: buttons, stars, badges
 --ease-in-out    cubic-bezier(.4,0,.2,1)
---ease-wheel     cubic-bezier(.12,.76,.06,1)   the roulette
+--ease-wheel     cubic-bezier(.12,.76,.06,1)   (kept for the canvas mirror)
+
+--t-pulse 1200ms   --t-drift 14s     DOM-only ambience. NOT --dur-*: every
+                                     --dur-* token must have a canvas mirror
+                                     in engine/motion/tokens.ts (a test checks).
 ```
 
 Rules: feedback within `--dur-fast`; never animate a child's *wait* longer than
-`--dur-slower`; `--ease-out-back` only on things that should feel alive (never
-on panels); everything that enters does so with scale 0.86→1 plus opacity.
-Nothing cuts.
+`--dur-slower`; `--ease-out-back` (overshoot spring) on everything that should
+feel alive — buttons, stars, badges, tiles, the winner card; everything that
+enters does so with scale plus opacity. Nothing cuts, and no screen is ever
+completely still (the backdrop drifts, the logo breathes, START pulses).
+
+**The backdrop** is one fixed `.app::before` layer moved only by `transform`
+(composited, no repaint): a 96 px dot tile (stripes on the roulette) drifting
+exactly one tile per `--t-drift`, so the loop is seamless.
+
+**The roulette** (`components/RouletteBoard.tsx`, schedule in `shell/hops.ts`,
+tested in `roulette.test.ts`): the winner is decided first; the highlight then
+hops tile to tile, clockwise, never skipping one, for 3 full laps plus the
+offset that ends on the winner (24–31 hops on 8 tiles). Intervals grow
+geometrically ×4.5 from first to last regular hop, then the last three stretch
+×1.5, ×2.2, ×3.0; the whole run is scaled to land at exactly 4000 ms (first hop
+≈ 42–50 ms, last ≈ 680 ms). `ui.tick` on every hop. Then 380 ms of silence,
+then the pop (1.15×, an 80 ms white flash on that one tile, `fanfare`), then
+the winner card flies from its tile to the centre (ease-out-back, 560 ms) and
+holds 1.5 s. 건너뛰기 jumps straight to the pop on the same winner.
+
+**The countdown**: 2.4 s intro (icon + name slam-in, the command word, the
+demo loop, `whoosh`), then 3 · 2 · 1 at 700 ms each (1.6 → 1 scale with
+overshoot, `count.beep` rising), then 시작! + `count.go` for 600 ms.
+
+**Results**: stars 400 ms apart with overshoot and `star.1/2/3`; the score
+counts up over 1.2 s; the record banner (crown) and confetti arrive after the
+last star. Confetti is 28 CSS pieces for 3 stars or a record.
 
 **Reduced motion is honoured twice**, for the same reason as the dark palette:
 the OS preference must work before JS runs, and the in-app
-**"화면 효과 줄이기"** toggle must work when the OS preference is off — which it
-almost always is on a shared classroom Chromebook, for exactly the children who
-need it most. Reduced mode: no shake, no parallax, confetti becomes one static
-burst, score counters snap, and the roulette becomes a 450 ms crossfade that
-still parks the pointer on the real winner.
+**"화면 효과 줄이기"** toggle must work when the OS preference is off.
+Reduced mode: the backdrop stops drifting, no shake, confetti becomes one
+static burst, score counters snap, the attract reel becomes a still featured
+icon that changes on the same 3 s clock, and the roulette becomes a **450 ms
+crossfade** (`.rm-fade`, the one animation exempted from the global 1 ms
+clamp — a fade is not vestibular motion) straight to the same winner.
 
 **WCAG 2.3.1**: at most 3 full-viewport flashes per second, flashing region
-under 25 % of the viewport, never a saturated red. This is enforced by the
-engine's `fx.flash()` so 58 authors cannot each get it wrong.
+under 25 % of the viewport, never a saturated red. The engine's `fx.flash()`
+enforces it in games; the shell's only flash is the roulette pop (one tile,
+once, white). The urgent timer pulses in scale, never in colour.
 
 ---
 
 ## 6. Accessibility contract
 
-- `<html lang="ko">`, `:focus-visible` rings at 4 px (`--sh-focus`, amber —
-  it reads on both blue and white).
+- `<html lang="ko">`, `:focus-visible` rings at 4 px amber plus a 3 px ink
+  halo (`--sh-focus`): amber alone vanishes on the yellow/orange backdrop, ink
+  alone on an ink slab; together they read on everything.
 - Full keyboard navigation. `Space`/`Enter` start a round from the attract
   screen; `Esc` closes an overlay, then pauses.
 - `aria-live="assertive"` **only** for the 3·2·1 countdown and for error states
@@ -231,8 +316,12 @@ engine's `fx.flash()` so 58 authors cannot each get it wrong.
 - `prefers-contrast: more` **and** an in-app "진하게 보기": gradients off,
   borders thickened, `--c-text-3` folded into `--c-text-2`.
 - **"글자 크게"** raises the root clamp ceiling to 34 px.
-- **"자동 넘기기 끄기"** removes every auto-advance, so a child who reads slowly
-  is never rushed into a round they have not understood.
+- 설정 (the gear on attract) holds exactly: 소리, 화면 효과 줄이기, 글자 크게,
+  진하게 보기, 개인정보 안내, and 기록 지우기 (two presses). The classroom-era
+  rows (별명, 인원, 말로 읽어주기, 자동 넘기기) are gone: a kiosk guest plays
+  one round, and nothing in the kiosk flow read the last two.
+- While 설정 is open nothing behind it can start a round (Space, Enter and the
+  jump are all blocked); focus moves into the dialog; `Esc` closes it.
 - Audio is never load-bearing: every voice prompt is mirrored as on-screen
   Korean through `hud.announce()`, every beat cue has a visual pulse ring, and
   there is a master mute.
@@ -246,13 +335,15 @@ Three things on screen are load-bearing promises, not decoration:
 
 1. **`🔴 카메라 켜짐 · [끄기]`** — fixed, always visible while a track is live,
    with a one-press off switch. A camera indicator you cannot find does not count.
-2. **The live skeleton at low alpha on the attract screen** — the honest
-   "the camera sees only this" demonstration. Face-mesh points are deliberately
+2. **The live skeleton in the "나" mirror on attract** (and in the countdown) —
+   the honest "the camera sees only this" demonstration, captioned
+   "카메라는 점과 선만 봐요. 녹화하지 않아요." Face-mesh points are deliberately
    absent (`POSE_EDGES` omits them): eleven dots on a child's face looks like
-   surveillance.
-3. **개인정보 안내** — `docs/RESEARCH-ARCH.md` §7.2 close to verbatim, at a
-   초등 3–4학년 reading level, because 개인정보보호법 제22조의2 ③ requires it for
-   notices aimed at under-14s.
+   surveillance. Drawn at 1× backing store, ~30 Hz.
+3. **개인정보 안내** — inside 설정 (the separate screen is gone).
+   `docs/RESEARCH-ARCH.md` §7.2 close to verbatim, at a 초등 3–4학년 reading
+   level, because 개인정보보호법 제22조의2 ③ requires it for notices aimed at
+   under-14s.
 
 Every claim there is enforced by a build step, not by good intentions:
 `connect-src 'self'`, self-hosted fonts/wasm/model, and
@@ -260,8 +351,12 @@ Every claim there is enforced by a build step, not by good intentions:
 `MediaRecorder` and cross-origin fetch. **Do not print a claim the build does
 not enforce.**
 
-`localStorage` is namespaced `mg:` (nickname, best scores, settings — nothing
-else) with a single two-press **전체 삭제**.
+`localStorage` is namespaced `mg:` (today's best scores, settings — nothing
+else) with a single two-press **전체 삭제**, which also clears the in-memory
+records so the next round is not compared against a ghost.
+
+The attract reel runs real games on synthetic pose clips: no camera frame,
+landmark or video is involved in it at all.
 
 ---
 
@@ -286,16 +381,23 @@ anything; the whole point is that fifteen screens look like one product.
 
 | Group | Classes |
 |---|---|
-| type | `.display-1` `.display-2` `.h1` `.h2` `.h3` `.body-lg` `.body` `.label` `.caption` `.legal` `.num` `.dim` `.faint` `.center` |
+| type | `.display-1` `.display-2` `.h1` `.h2` `.h3` `.body-lg` `.body` `.label` `.caption` `.legal` `.num` `.dim` `.faint` `.center` `.outlined` `.ink` |
 | layout | `.screen` (`--read`, `--full`) `.stack` `.row` `.actions` `.grow` |
-| surface | `.card` (`--flat`, `--tinted`) `.chip` (`--live`) `.track > .fill` `.bullets` `.field` |
-| action | `.btn` + `--primary --accent --success --danger --ghost --link --sm --huge --block` |
-| motion | `.pop-in` `.slam-in` `.breathe` |
+| surface | `.card` (`--flat`, `--tinted`) `.panel` `.slab-note` `.chip` (`--live`, `--hint`, `--ok`) `.track > .fill` `.bullets` (`--legal`) `.field` `.overlay > .overlay__panel` |
+| action | `.btn` + `--go --primary --accent --success --danger --ghost --link --sm --huge --block` |
+| motion | `.pop-in` `.slam-in` `.breathe` `.rm-fade` (the reduced-motion crossfade) |
 | a11y | `.sr-only` |
 
-Components live in `src/shell/components/`: `Button`, `Screen`, `Wheel`,
-`StarRow`, `PlayerChip`, `CameraChip`, `ProgressRing`, `DwellRing`,
-`SkeletonPreview`, `Toast`.
+Components live in `src/shell/components/`: `Button`, `Screen`,
+`RouletteBoard` (replaced `Wheel`), `GameReel`, `StarRow`, `PlayerChip`,
+`CameraChip`, `ProgressRing`, `DwellRing`, `SkeletonPreview`, `Toast`.
+Screen-specific blocks in base.css: `.attract__*` `.logo__*` `.me` `.reel*`
+`.parade*`, `.board*` `.tile*`, `.cd__*` `.demo--<gesture>`, `.hud__*`,
+`.results__*` `.confetti`, `.setup__*`, `.setrow*`.
+
+A legacy block at the end of base.css (`.calib`, `.intro__*`, `.promise*`,
+`.move*`, and `.stage-wrap` / `.pause-veil` / `.summary__*` in place) is not
+rendered by any component; it is kept until someone removes it on purpose.
 
 ---
 
@@ -305,8 +407,9 @@ Components live in `src/shell/components/`: `Button`, `Screen`, `Wheel`,
    16 px. Can you read every instruction? Is the thing you must react to ≥ 34 px?
 2. Does any Korean line break mid-어절? (`word-break: keep-all` missing.)
 3. Does every counter use `.num`?
-4. Toggle `data-theme="light"` and `"dark"` on `<html>`. Any colour that only
-   exists in one of them is a bug.
+4. Toggle `data-theme="light"` and `"dark"` on `<html>`. Both must still be
+   the party look; any colour that only exists in one of them is a bug.
+   Then check it at 1440×900 (the Mac) and 1280×720.
 5. Toggle `data-motion="reduced"`. Does anything still move, spin, or count?
 6. Tab through. Is every ring visible at 4 px? Is anything hover-only?
 7. Is the smallest hit target ≥ 56 px?

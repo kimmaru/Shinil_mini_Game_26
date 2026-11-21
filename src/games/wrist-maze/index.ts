@@ -1,189 +1,127 @@
-// ─── Precision trace: stay inside a winding corridor to the goal ────────────
+// ─── Precision trace: carry the light orb along a winding track ─────────────
 //
-// The filtering litmus test for this batch: the hand's px position is tested
-// against the corridor width every frame, with no discrete gesture anywhere.
-// Read AGENTS.md + docs/GAME_AUTHORING.md + src/games/candy-rain-catch/
-// (continuous overlap, the closest existing shape) before touching this.
+// The hand's position is tested against the corridor every frame, with no
+// discrete gesture anywhere. Read AGENTS.md + docs/GAME_AUTHORING.md +
+// src/games/candy-rain-catch/ (continuous overlap) before touching this.
+//
+// Fairness: every maze is laid out in units of THIS player's own arm length
+// (S), measured out from the shoulder of the hand that must trace it, so the
+// whole track sits inside that hand's reach whatever the child's size or
+// distance. The hand alternates maze to maze (right, left, right...) which
+// also spreads the load across both arms.
+//
+// Forgiveness: stepping off the track does not wipe the run. There is a short
+// grace, then the orb drops and the child restarts from the last checkpoint.
+// No sound, no flash, no counter: the orb simply lets go.
 //
 // See NEEDS.md for why the aim smoothing below is hand-rolled rather than a
-// per-game `steady` One Euro preset — the hook does not exist yet.
+// per-game `steady` One Euro preset: the hook does not exist.
 import type {
   Detector, EndReason, GameContext, GameResult, MiniGame,
   PlayerPose, PoseFrame, Pt, Renderer,
 } from '@/engine/types';
-import { L } from '@/engine/pose/landmarks';
+import { L, jx, jy } from '@/engine/pose/landmarks';
 import { approach, clamp01, dist } from '@/engine/math';
 import { C, fade, hue, KEYLINE } from '@/engine/render/palette';
 import { manifest } from './manifest';
 import { t } from './locale';
 
-/** approach() rate for the extra aim smoothing — ~90ms time constant. See
- *  the file header and NEEDS.md. */
+/** approach() rate for the extra aim smoothing, ~90 ms time constant. */
 const SMOOTH_RATE = 10;
-/** The collision test is this many times the drawn corridor's half-width, a
- *  flat forgiving margin on top of an already-generous corridor. */
-const COLLISION_SLACK = 1.15;
-const TRAIL_LEN = 42;
+/** The collision test is this many times the drawn corridor's half-width. */
+const COLLISION_SLACK = 1.12;
+/** Seconds the hand may be off the track before the orb drops. */
+const GRACE = 0.3;
+const TRAIL_LEN = 14;
+const MAX_PTS = 5;
+const MAX_SPUR = 3;
+const MAZE_COUNT = 6;
+const CELEBRATE_SEC = 1.0;
 const HANDS = [L.LEFT_WRIST, L.RIGHT_WRIST] as const;
+/** Colours built once: render() must not build strings. */
+const WARN80 = fade(C.warn, 0.8);
 
 interface MazeDef {
-  /** Centreline, as 0..1 fractions of the view. */
-  points: readonly (readonly [number, number])[];
-  /** An optional dead-end branch off the main path — same wall rule, leads
-   *  nowhere. */
+  /** Centreline in arm-length units (S): x outward from the tracing hand's
+   *  own shoulder, y down from it. Everything is inside 0.9 S. */
+  pts: readonly (readonly [number, number])[];
+  /** Optional dead-end branch: same wall rule, leads nowhere. */
   spur?: readonly (readonly [number, number])[];
-  /** Full corridor width, as a fraction of VIEW WIDTH. Never below 0.10. */
-  widthFrac: number;
-  /** A periodic barrier partway along the path. */
-  gate?: { atFrac: number; period: number; openSec: number; closeSec: number };
-  /** This maze must be driven by whichever hand did NOT finish maze 0. */
-  forceOpposite?: boolean;
+  /** Full corridor width in S. Never below 8.5% of the view width. */
+  width: number;
+  /** A barrier that periodically closes the track partway along. */
+  gate?: { at: number; period: number; open: number; close: number };
+  /** A strong-but-not-perfect finish time, for the speed bonus. */
+  par: number;
 }
 
-const MAZE_DEFS: readonly MazeDef[] = [
-  // Maze 1: gentle single wave, generous width — also the dev-clip baseline.
+const DEFS: readonly MazeDef[] = [
+  // A gentle outward lane with one small hump: the tutorial.
+  { pts: [[0.30, 0.10], [0.55, -0.12], [0.85, 0.08]], width: 0.62, par: 6 },
+  // A real wave plus a dead end that goes nowhere.
   {
-    points: [[0.20, 0.50], [0.42, 0.42], [0.58, 0.58], [0.80, 0.50]],
-    widthFrac: 0.17,
+    pts: [[0.30, 0.38], [0.45, -0.32], [0.65, 0.25], [0.85, -0.28]],
+    spur: [[0.65, 0.25], [0.55, 0.6]],
+    width: 0.56, par: 8,
   },
-  // Maze 2: a real curve plus a dead end that goes nowhere.
+  // A C-shape with a barrier that opens and closes.
   {
-    points: [[0.18, 0.62], [0.32, 0.37], [0.48, 0.58], [0.63, 0.34], [0.80, 0.52]],
-    spur: [[0.48, 0.58], [0.46, 0.80]],
-    widthFrac: 0.14,
-  },
-  // Maze 3: narrower (still above the 10% floor), a moving gate, and the
-  // hand that sat out maze 1.
-  {
-    points: [[0.82, 0.58], [0.66, 0.34], [0.50, 0.56], [0.34, 0.32], [0.18, 0.50]],
-    widthFrac: 0.115,
-    gate: { atFrac: 0.52, period: 2.6, openSec: 1.7, closeSec: 0.6 },
-    forceOpposite: true,
+    pts: [[0.85, -0.38], [0.52, -0.3], [0.52, 0.2], [0.85, 0.34]],
+    width: 0.54, par: 9,
+    gate: { at: 0.5, period: 2.8, open: 1.9, close: 0.6 },
   },
 ];
-
-/** A strong-but-not-perfect finish time per maze, for the speed bonus. */
-const PAR_SEC = [6, 8, 10] as const;
-
-interface MazeRuntime {
-  pathPx: Float32Array;
-  segCount: number;
-  cumLen: Float32Array;
-  totalLen: number;
-  spurPx: Float32Array | null;
-  spurSegCount: number;
-  spurCumLen: Float32Array | null;
-  halfWidthPx: number;
-  gate: { x: number; y: number; period: number; openSec: number; closeSec: number } | null;
-  forceOpposite: boolean;
-  startX: number;
-  startY: number;
-  goalX: number;
-  goalY: number;
-}
-
-/** Cumulative arc length at each vertex, built once per maze in init(). */
-function buildCumLen(path: Float32Array, n: number, out: Float32Array): number {
-  out[0] = 0;
-  let acc = 0;
-  for (let i = 1; i < n; i++) {
-    acc += Math.hypot(path[i * 2]! - path[i * 2 - 2]!, path[i * 2 + 1]! - path[i * 2 - 1]!);
-    out[i] = acc;
-  }
-  return acc;
-}
-
-function buildMazeRuntime(def: MazeDef, viewW: number, viewH: number): MazeRuntime {
-  const n = def.points.length;
-  const pathPx = new Float32Array(n * 2);
-  for (let i = 0; i < n; i++) {
-    pathPx[i * 2] = def.points[i]![0] * viewW;
-    pathPx[i * 2 + 1] = def.points[i]![1] * viewH;
-  }
-  const cumLen = new Float32Array(n);
-  const totalLen = buildCumLen(pathPx, n, cumLen);
-
-  let spurPx: Float32Array | null = null;
-  let spurCumLen: Float32Array | null = null;
-  let spurSegCount = 0;
-  if (def.spur) {
-    const sn = def.spur.length;
-    spurPx = new Float32Array(sn * 2);
-    for (let i = 0; i < sn; i++) {
-      spurPx[i * 2] = def.spur[i]![0] * viewW;
-      spurPx[i * 2 + 1] = def.spur[i]![1] * viewH;
-    }
-    spurCumLen = new Float32Array(sn);
-    buildCumLen(spurPx, sn, spurCumLen);
-    spurSegCount = sn - 1;
-  }
-
-  let gate: MazeRuntime['gate'] = null;
-  if (def.gate) {
-    const target = def.gate.atFrac * totalLen;
-    let seg = 0;
-    while (seg < n - 2 && cumLen[seg + 1]! < target) seg++;
-    const segLen = cumLen[seg + 1]! - cumLen[seg]!;
-    const tt = segLen > 1e-6 ? (target - cumLen[seg]!) / segLen : 0;
-    gate = {
-      x: pathPx[seg * 2]! + (pathPx[seg * 2 + 2]! - pathPx[seg * 2]!) * tt,
-      y: pathPx[seg * 2 + 1]! + (pathPx[seg * 2 + 3]! - pathPx[seg * 2 + 1]!) * tt,
-      period: def.gate.period,
-      openSec: def.gate.openSec,
-      closeSec: def.gate.closeSec,
-    };
-  }
-
-  return {
-    pathPx, segCount: n - 1, cumLen, totalLen,
-    spurPx, spurSegCount, spurCumLen,
-    halfWidthPx: (def.widthFrac * viewW) / 2,
-    gate,
-    forceOpposite: def.forceOpposite === true,
-    startX: pathPx[0]!, startY: pathPx[1]!,
-    goalX: pathPx[(n - 1) * 2]!, goalY: pathPx[(n - 1) * 2 + 1]!,
-  };
-}
-
-/** Closest point on a polyline: both the perpendicular distance and the arc
- *  length to it. Zero allocation — writes into `out`. */
-function projectOntoPolyline(
-  px: number, py: number,
-  path: Float32Array, segCount: number, cumLen: Float32Array,
-  out: { s: number; d: number },
-): void {
-  let bestD = Infinity;
-  let bestS = 0;
-  for (let i = 0; i < segCount; i++) {
-    const x0 = path[i * 2]!;
-    const y0 = path[i * 2 + 1]!;
-    const x1 = path[i * 2 + 2]!;
-    const y1 = path[i * 2 + 3]!;
-    const dx = x1 - x0;
-    const dy = y1 - y0;
-    const len2 = dx * dx + dy * dy;
-    let tt = len2 < 1e-6 ? 0 : ((px - x0) * dx + (py - y0) * dy) / len2;
-    tt = tt < 0 ? 0 : tt > 1 ? 1 : tt;
-    const cx = x0 + dx * tt;
-    const cy = y0 + dy * tt;
-    const d = Math.hypot(px - cx, py - cy);
-    if (d < bestD) {
-      bestD = d;
-      bestS = cumLen[i]! + tt * Math.sqrt(len2);
-    }
-  }
-  out.s = bestS;
-  out.d = bestD;
-}
 
 class WristMaze implements MiniGame {
   private ctx!: GameContext;
   private reach!: Detector<'reach'>;
-  private mazes: MazeRuntime[] = [];
 
   private readonly smL: Pt = { x: 0, y: 0 };
   private readonly smR: Pt = { x: 0, y: 0 };
   private smPrimed = false;
+  private readonly shL: Pt = { x: 0, y: 0 };
+  private readonly shR: Pt = { x: 0, y: 0 };
+  private armPx = 0;
+  private player: PlayerPose | null = null;
+  private time = 0;
+  private cFloor = '';
+  private cFill = '';
+  private cTrail = '';
+  private cOrb = '';
+  private cCore = '';
+
+  // ── The current maze, rebuilt in place for each one. ──
+  private readonly path = new Float32Array(MAX_PTS * 2);
+  private readonly cum = new Float32Array(MAX_PTS);
+  private n = 0;
+  private total = 0;
+  private readonly spur = new Float32Array(MAX_SPUR * 2);
+  private readonly spurCum = new Float32Array(MAX_SPUR);
+  private sn = 0;
+  private hw = 0;
+  private startR = 0;
+  private hasGate = false;
+  private gateX = 0;
+  private gateY = 0;
+  private gatePeriod = 1;
+  private gateOpen = 1;
+  private gateClose = 1;
+  private gateFrac = 0;
+  private readonly ckX = new Float32Array(3);
+  private readonly ckY = new Float32Array(3);
+  private readonly ckS = new Float32Array(3);
+  private par = 8;
+
+  private mazeIdx = 0;
+  private ready = false;
+  private wait = 0.8;
+  private hand: 0 | 1 = 1;
+  private armed = false;
+  private ckIdx = 0;
+  private bestS = 0;
+  private outT = 0;
+  private mazeClock = 0;
+  private celebrate = 0;
   private readonly cur: Pt = { x: 0, y: 0 };
   private readonly proj = { s: 0, d: 0 };
   private readonly projSpur = { s: 0, d: 0 };
@@ -193,26 +131,25 @@ class WristMaze implements MiniGame {
   private trailHead = 0;
   private trailCount = 0;
 
-  private player: PlayerPose | null = null;
-  private time = 0;
-
-  private mazeIndex = 0;
-  private armed = false;
-  private controllingHand: 0 | 1 = 0;
-  private firstHand: 0 | 1 = 0;
-  private bestS = 0;
-  private milestones = 0;
-  private mazeStartClock = 0;
-  private gateClosedFrac = 0;
-  private celebrateT = 0;
-
   private score = 0;
   private clears = 0;
+  private falls = 0;
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
+    const th = manifest.theme?.hue ?? 168;
+    this.cFloor = hue(th, 55, 90);
+    this.cFill = hue(th, 80, 62);
+    this.cTrail = hue(th, 80, 60, 0.6);
+    this.cOrb = hue(th, 85, 45);
+    this.cCore = hue(th, 85, 55);
     this.reach = ctx.gestures.use('reach', { side: 'both' });
-    this.mazes = MAZE_DEFS.map((def) => buildMazeRuntime(def, ctx.view.w, ctx.view.h));
+    const { w, h } = ctx.view;
+    this.shL.x = w * 0.44; this.shR.x = w * 0.56;
+    this.shL.y = h * 0.42; this.shR.y = h * 0.42;
+    this.armPx = Math.min(w, h) * 0.3;
+    this.smL.x = w * 0.4; this.smL.y = h * 0.6;
+    this.smR.x = w * 0.6; this.smR.y = h * 0.6;
     ctx.hud.setGoal(t('goal'));
   }
 
@@ -222,18 +159,21 @@ class WristMaze implements MiniGame {
 
   update(dt: number, f: PoseFrame): void {
     this.time += dt;
-    if (this.celebrateT > 0) this.celebrateT = Math.max(0, this.celebrateT - dt);
+    if (this.celebrate > 0) this.celebrate = Math.max(0, this.celebrate - dt);
 
     const p = f.p1;
     this.player = p ?? null;
+    if (p) {
+      this.shL.x = jx(p, L.LEFT_SHOULDER); this.shL.y = jy(p, L.LEFT_SHOULDER);
+      this.shR.x = jx(p, L.RIGHT_SHOULDER); this.shR.y = jy(p, L.RIGHT_SHOULDER);
+      this.armPx = (p.calib.armLen > 0.5 ? p.calib.armLen : 1.6) * p.scalePx;
+    }
 
     const sig = this.reach.read(f);
     if (sig.ok) {
       if (!this.smPrimed) {
-        this.smL.x = sig.leftPalm.x;
-        this.smL.y = sig.leftPalm.y;
-        this.smR.x = sig.rightPalm.x;
-        this.smR.y = sig.rightPalm.y;
+        this.smL.x = sig.leftPalm.x; this.smL.y = sig.leftPalm.y;
+        this.smR.x = sig.rightPalm.x; this.smR.y = sig.rightPalm.y;
         this.smPrimed = true;
       } else {
         this.smL.x = approach(this.smL.x, sig.leftPalm.x, SMOOTH_RATE, dt);
@@ -243,217 +183,328 @@ class WristMaze implements MiniGame {
       }
     }
 
-    if (sig.ok && this.mazeIndex < this.mazes.length) this.stepMaze();
+    if (this.mazeIdx >= MAZE_COUNT) return;
+    if (!this.ready) {
+      this.wait -= dt;
+      if (this.wait <= 0 && p) this.build();
+      return;
+    }
+    this.mazeClock += dt;
+    if (sig.ok) this.stepMaze(dt);
   }
 
-  private stepMaze(): void {
-    const maze = this.mazes[this.mazeIndex]!;
+  /** Lay maze `mazeIdx` out around the tracing hand's own shoulder. */
+  private build(): void {
+    const def = DEFS[this.mazeIdx % DEFS.length]!;
+    const lap = Math.floor(this.mazeIdx / DEFS.length);
+    // Right hand first, then alternate. Lap 2 flips every maze's hand.
+    this.hand = this.mazeIdx % 2 === 0 ? 1 : 0;
+    const sh = this.hand === 0 ? this.shL : this.shR;
+    const out = this.hand === 0 ? -1 : 1;
+    const S = this.armPx;
+    const { w } = this.ctx.view;
 
-    if (!this.armed) {
-      const startR = maze.halfWidthPx * 1.4;
-      const candidates: readonly (0 | 1)[] = maze.forceOpposite
-        ? [this.firstHand === 0 ? 1 : 0]
-        : [0, 1];
-      for (const h of candidates) {
-        const hp = h === 0 ? this.smL : this.smR;
-        if (dist(hp.x, hp.y, maze.startX, maze.startY) <= startR) {
-          this.armed = true;
-          this.controllingHand = h;
-          this.mazeStartClock = this.time;
-          this.trailCount = 0;
-          this.trailHead = 0;
-          break;
-        }
-      }
-      if (!this.armed) return;
+    this.n = def.pts.length;
+    for (let i = 0; i < this.n; i++) {
+      this.path[i * 2] = sh.x + out * def.pts[i]![0] * S;
+      this.path[i * 2 + 1] = sh.y + def.pts[i]![1] * S;
+    }
+    this.total = this.accumulate(this.path, this.n, this.cum);
+    this.sn = def.spur ? def.spur.length : 0;
+    for (let i = 0; i < this.sn; i++) {
+      this.spur[i * 2] = sh.x + out * def.spur![i]![0] * S;
+      this.spur[i * 2 + 1] = sh.y + def.spur![i]![1] * S;
+    }
+    if (this.sn > 0) this.accumulate(this.spur, this.sn, this.spurCum);
+
+    // Corridor: arm-length based, never under 8.5% of the view width; each
+    // lap trims 10%, but the floor still holds.
+    this.hw = Math.max(w * 0.085, def.width * S * (1 - 0.1 * lap)) / 2;
+    this.startR = this.hw * 1.5;
+    this.par = def.par;
+
+    this.hasGate = def.gate !== undefined;
+    if (def.gate) {
+      this.pointAt(def.gate.at * this.total, this.cur);
+      this.gateX = this.cur.x;
+      this.gateY = this.cur.y;
+      this.gatePeriod = def.gate.period;
+      this.gateOpen = def.gate.open;
+      this.gateClose = def.gate.close;
+    }
+    for (let k = 0; k < 3; k++) {
+      this.ckS[k] = (this.total * k) / 3;
+      this.pointAt(this.ckS[k]!, this.cur);
+      this.ckX[k] = this.cur.x;
+      this.ckY[k] = this.cur.y;
     }
 
-    const hp = this.controllingHand === 0 ? this.smL : this.smR;
+    this.ready = true;
+    this.armed = false;
+    this.ckIdx = 0;
+    this.bestS = 0;
+    this.outT = 0;
+    this.mazeClock = 0;
+    this.gateFrac = 0;
+    this.trailCount = 0;
+    this.trailHead = 0;
+    this.ctx.hud.toast(this.hand === 0 ? t('useLeft') : t('useRight'), { color: C.info });
+  }
+
+  private accumulate(pts: Float32Array, n: number, out: Float32Array): number {
+    out[0] = 0;
+    let acc = 0;
+    for (let i = 1; i < n; i++) {
+      acc += Math.hypot(pts[i * 2]! - pts[i * 2 - 2]!, pts[i * 2 + 1]! - pts[i * 2 - 1]!);
+      out[i] = acc;
+    }
+    return acc;
+  }
+
+  /** Point on the main centreline at arc length `s`. */
+  private pointAt(s: number, out: Pt): void {
+    let i = 0;
+    while (i < this.n - 2 && this.cum[i + 1]! < s) i++;
+    const len = this.cum[i + 1]! - this.cum[i]!;
+    const k = len > 1e-6 ? clamp01((s - this.cum[i]!) / len) : 0;
+    out.x = this.path[i * 2]! + (this.path[i * 2 + 2]! - this.path[i * 2]!) * k;
+    out.y = this.path[i * 2 + 1]! + (this.path[i * 2 + 3]! - this.path[i * 2 + 1]!) * k;
+  }
+
+  /** Closest point on a polyline: perpendicular distance and arc length. */
+  private project(
+    px: number, py: number, pts: Float32Array, n: number, cum: Float32Array,
+    out: { s: number; d: number },
+  ): void {
+    let bestD = Infinity;
+    let bestS = 0;
+    for (let i = 0; i < n - 1; i++) {
+      const x0 = pts[i * 2]!;
+      const y0 = pts[i * 2 + 1]!;
+      const dx = pts[i * 2 + 2]! - x0;
+      const dy = pts[i * 2 + 3]! - y0;
+      const len2 = dx * dx + dy * dy;
+      let k = len2 < 1e-6 ? 0 : ((px - x0) * dx + (py - y0) * dy) / len2;
+      k = k < 0 ? 0 : k > 1 ? 1 : k;
+      const d = Math.hypot(px - (x0 + dx * k), py - (y0 + dy * k));
+      if (d < bestD) {
+        bestD = d;
+        bestS = cum[i]! + k * Math.sqrt(len2);
+      }
+    }
+    out.s = bestS;
+    out.d = bestD;
+  }
+
+  private stepMaze(dt: number): void {
+    const hp = this.hand === 0 ? this.smL : this.smR;
+
+    if (!this.armed) {
+      // Pick the orb up at the start, or at the last checkpoint after a drop.
+      if (dist(hp.x, hp.y, this.ckX[this.ckIdx]!, this.ckY[this.ckIdx]!) > this.startR) return;
+      this.armed = true;
+      this.outT = 0;
+      this.trailCount = 0;
+      this.trailHead = 0;
+      this.ctx.audio.play('sparkle', { gain: 0.3 });
+    }
+
     this.cur.x = hp.x;
     this.cur.y = hp.y;
-
-    this.trailX[this.trailHead] = this.cur.x;
-    this.trailY[this.trailHead] = this.cur.y;
+    this.trailX[this.trailHead] = hp.x;
+    this.trailY[this.trailHead] = hp.y;
     this.trailHead = (this.trailHead + 1) % TRAIL_LEN;
     if (this.trailCount < TRAIL_LEN) this.trailCount++;
 
-    projectOntoPolyline(this.cur.x, this.cur.y, maze.pathPx, maze.segCount, maze.cumLen, this.proj);
-    const effHalf = maze.halfWidthPx * COLLISION_SLACK;
-    const insideMain = this.proj.d <= effHalf;
-    let insideSpur = false;
-    if (maze.spurPx && maze.spurCumLen) {
-      projectOntoPolyline(this.cur.x, this.cur.y, maze.spurPx, maze.spurSegCount, maze.spurCumLen, this.projSpur);
-      insideSpur = this.projSpur.d <= effHalf;
+    const eff = this.hw * COLLISION_SLACK;
+    this.project(hp.x, hp.y, this.path, this.n, this.cum, this.proj);
+    let inside = this.proj.d <= eff;
+    if (!inside && this.sn > 0) {
+      this.project(hp.x, hp.y, this.spur, this.sn, this.spurCum, this.projSpur);
+      inside = this.projSpur.d <= eff;
     }
 
-    let gateBlocked = false;
-    if (maze.gate) {
-      const ph = this.time % maze.gate.period;
-      if (ph >= maze.gate.openSec) {
-        const closT = ph - maze.gate.openSec;
-        const telegraphSec = maze.gate.closeSec * 0.4;
-        const span = Math.max(1e-3, maze.gate.closeSec - telegraphSec);
-        this.gateClosedFrac = clamp01((closT - telegraphSec) / span);
-        const gateR = maze.halfWidthPx * this.gateClosedFrac * 0.92;
-        if (gateR > 1 && dist(this.cur.x, this.cur.y, maze.gate.x, maze.gate.y) <= gateR) gateBlocked = true;
+    let blocked = false;
+    if (this.hasGate) {
+      const ph = this.mazeClock % this.gatePeriod;
+      if (ph >= this.gateOpen) {
+        const ct = ph - this.gateOpen;
+        const tele = this.gateClose * 0.4;
+        this.gateFrac = clamp01((ct - tele) / Math.max(1e-3, this.gateClose - tele));
+        const gr = this.hw * this.gateFrac * 0.95;
+        blocked = gr > 1 && dist(hp.x, hp.y, this.gateX, this.gateY) <= gr;
       } else {
-        this.gateClosedFrac = 0;
+        this.gateFrac = 0;
       }
     }
 
-    if (!((insideMain || insideSpur) && !gateBlocked)) {
-      // Quiet, instant retry — no shake, no flash, no penalty beyond losing
-      // the run back to the start marker.
-      this.ctx.fx.miss(this.cur.x, this.cur.y);
-      this.armed = false;
+    if (!inside || blocked) {
+      this.outT += dt;
+      if (blocked || this.outT > GRACE) this.drop();
       return;
     }
+    this.outT = 0;
 
-    if (insideMain && this.proj.s > this.bestS) {
+    // Progress only counts when the hand is on the main track and not jumping
+    // far ahead (two arms of a bend can sit close together).
+    if (this.proj.d <= eff && this.proj.s > this.bestS && this.proj.s < this.bestS + this.total * 0.45) {
       this.bestS = this.proj.s;
-      this.creditMilestones(maze);
-    }
-
-    if (dist(this.cur.x, this.cur.y, maze.goalX, maze.goalY) <= maze.halfWidthPx * 1.3) {
-      this.completeMaze();
-    }
-  }
-
-  private creditMilestones(maze: MazeRuntime): void {
-    const frac = maze.totalLen > 0 ? this.bestS / maze.totalLen : 0;
-    const steps: readonly [number, number][] = [[0.25, 1], [0.5, 2], [0.75, 4]];
-    for (const [f, bit] of steps) {
-      if (frac >= f && !(this.milestones & bit)) {
-        this.milestones |= bit;
-        this.score += 3;
+      while (this.ckIdx < 2 && this.bestS >= this.ckS[this.ckIdx + 1]!) {
+        this.ckIdx++;
+        this.score += 4;
         this.ctx.hud.setScore(this.score);
-        this.ctx.audio.play('score.tick', { gain: 0.5 });
+        this.ctx.audio.playLadder('pop', this.ckIdx * 2);
+        this.ctx.fx.pop(this.ckX[this.ckIdx]!, this.ckY[this.ckIdx]!, this.hw, C.success);
       }
     }
+
+    const gx = this.path[(this.n - 1) * 2]!;
+    const gy = this.path[(this.n - 1) * 2 + 1]!;
+    if (this.bestS >= this.total * 0.85 && dist(hp.x, hp.y, gx, gy) <= this.hw * 1.2) this.complete(gx, gy);
   }
 
-  private completeMaze(): void {
-    const usedSec = this.time - this.mazeStartClock;
-    const parSec = PAR_SEC[this.mazeIndex] ?? 8;
-    const speedBonus = Math.round(Math.min(Math.max(parSec - usedSec, 0), parSec) * 2);
-    const points = 25 + speedBonus;
+  /** The orb lets go. Deliberately silent: no sound, no shake, no flash. */
+  private drop(): void {
+    this.armed = false;
+    this.falls++;
+    this.outT = 0;
+    this.ctx.fx.miss(this.cur.x, this.cur.y);
+  }
+
+  private complete(gx: number, gy: number): void {
+    const used = this.mazeClock;
+    // Three speed tiers, so the floating label is always exactly the score.
+    const fast = used <= this.par * 0.7;
+    const points = fast ? 35 : used <= this.par ? 28 : 20;
     this.score += points;
     this.clears++;
-    this.celebrateT = 0.9;
-
-    const maze = this.mazes[this.mazeIndex]!;
-    this.ctx.fx.impact(maze.goalX, maze.goalY, 'big', {
-      color: C.success, sprite: 'star', label: `+${points}`,
-    });
+    this.celebrate = CELEBRATE_SEC;
+    this.ctx.fx.impact(gx, gy, 'big', { color: C.accent, sprite: 'star', label: fast ? LABEL_FAST : points === 28 ? LABEL_MID : LABEL_OK });
     this.ctx.audio.play('chime');
     this.ctx.hud.toast(t('clear'), { color: C.success });
     this.ctx.hud.setScore(this.score);
     this.ctx.emit({ kind: 'scored', points });
 
-    if (this.mazeIndex === 0) this.firstHand = this.controllingHand;
-    this.mazeIndex++;
+    this.mazeIdx++;
+    this.ready = false;
     this.armed = false;
-    this.bestS = 0;
-    this.milestones = 0;
-    this.gateClosedFrac = 0;
-
-    if (this.mazeIndex < this.mazes.length && this.mazes[this.mazeIndex]!.forceOpposite) {
-      this.ctx.hud.toast(t('oppositeHand'), { color: C.info });
+    this.wait = CELEBRATE_SEC;
+    if (this.mazeIdx >= MAZE_COUNT) {
+      this.ctx.hud.toast(t('all'), { color: C.accent, big: true });
+      this.ctx.emit({ kind: 'clearEarly' });
     }
   }
 
   render(g: Renderer, _interp: number): void {
     g.clear(manifest.theme?.hue);
+    if (this.player) {
+      g.ghostBody(this.player, 0.1);
+      g.skeleton(this.player, { alpha: 0.5, emphasize: HANDS });
+    }
+    if (this.ready) this.drawMaze(g);
 
-    if (this.mazeIndex < this.mazes.length) this.drawMaze(g, this.mazes[this.mazeIndex]!);
-
-    // The trail: faint normally, and set alight on the frame a maze clears.
-    const lit = this.celebrateT > 0;
+    // Trail behind the orb: lit gold for a moment after a clear.
+    const lit = this.celebrate > 0;
     for (let k = 0; k < this.trailCount; k++) {
       const idx = (this.trailHead - 1 - k + TRAIL_LEN * 2) % TRAIL_LEN;
       const age = k / TRAIL_LEN;
-      g.circle(this.trailX[idx]!, this.trailY[idx]!, (7 - age * 5) * g.s, {
-        fill: lit ? hue(manifest.theme?.hue ?? 168, 85, 72) : fade(C.white, (1 - age) * 0.5),
-        glow: lit ? 10 : 0,
+      g.circle(this.trailX[idx]!, this.trailY[idx]!, (16 - age * 11) * g.s, {
+        fill: lit ? C.accentHi : this.cTrail,
       });
     }
 
-    if (this.player) g.ghostBody(this.player, 0.08);
-    if (this.player) g.skeleton(this.player, { alpha: 0.35, emphasize: HANDS });
+    const hp = this.hand === 0 ? this.smL : this.smR;
+    if (this.ready && this.armed) {
+      g.circle(hp.x, hp.y, 30 * g.s, { fill: C.white, stroke: this.cOrb, sw: 7 * g.s, glow: 16 });
+      g.circle(hp.x, hp.y, 12 * g.s, { fill: this.cCore });
+    } else if (this.ready) {
+      // "Put THIS hand on the start": a pulsing ring on the right palm.
+      const pulse = 1 + 0.12 * Math.sin(this.time * 7);
+      g.circle(hp.x, hp.y, 34 * g.s * pulse, {
+        stroke: this.hand === 0 ? C.slot[0] : C.slot[1], sw: 7 * g.s, glow: 8,
+      });
+    }
+  }
 
-    if (this.mazeIndex < this.mazes.length) {
-      const maze = this.mazes[this.mazeIndex]!;
-      if (this.armed) {
-        const hp = this.controllingHand === 0 ? this.smL : this.smR;
-        g.circle(hp.x, hp.y, 15 * g.s, {
-          fill: hue(manifest.theme?.hue ?? 168, 80, 72), stroke: C.white, sw: 3 * g.s, glow: 16,
-        });
-      } else {
-        const onlyHand = maze.forceOpposite ? (this.firstHand === 0 ? 1 : 0) : -1;
-        this.drawHandHint(g, this.smL, onlyHand === -1 || onlyHand === 0);
-        this.drawHandHint(g, this.smR, onlyHand === -1 || onlyHand === 1);
+  private drawMaze(g: Renderer): void {
+    const w2 = this.hw * 2;
+    const floor = this.cFloor;
+    // Outline first (one fat dark line per segment), then the pale floor.
+    for (let i = 0; i < this.n - 1; i++) {
+      g.line(this.path[i * 2]!, this.path[i * 2 + 1]!, this.path[i * 2 + 2]!, this.path[i * 2 + 3]!,
+        w2 + 14 * g.s, { stroke: KEYLINE });
+    }
+    for (let i = 0; i < this.sn - 1; i++) {
+      g.line(this.spur[i * 2]!, this.spur[i * 2 + 1]!, this.spur[i * 2 + 2]!, this.spur[i * 2 + 3]!,
+        w2 + 14 * g.s, { stroke: KEYLINE });
+    }
+    for (let i = 0; i < this.n - 1; i++) {
+      g.line(this.path[i * 2]!, this.path[i * 2 + 1]!, this.path[i * 2 + 2]!, this.path[i * 2 + 3]!,
+        w2, { stroke: floor });
+    }
+    for (let i = 0; i < this.sn - 1; i++) {
+      g.line(this.spur[i * 2]!, this.spur[i * 2 + 1]!, this.spur[i * 2 + 2]!, this.spur[i * 2 + 3]!,
+        w2, { stroke: floor });
+    }
+
+    // Progress: the part already travelled fills with colour.
+    const fill = this.cFill;
+    for (let i = 0; i < this.n - 1; i++) {
+      if (this.cum[i]! >= this.bestS) break;
+      const segEnd = this.cum[i + 1]!;
+      const k = segEnd <= this.bestS ? 1 : (this.bestS - this.cum[i]!) / (segEnd - this.cum[i]!);
+      const x0 = this.path[i * 2]!;
+      const y0 = this.path[i * 2 + 1]!;
+      g.line(x0, y0, x0 + (this.path[i * 2 + 2]! - x0) * k, y0 + (this.path[i * 2 + 3]! - y0) * k,
+        w2 * 0.5, { stroke: fill });
+    }
+
+    // Checkpoints (flags as dots) and the finish.
+    for (let k = 1; k < 3; k++) {
+      g.circle(this.ckX[k]!, this.ckY[k]!, this.hw * 0.3, {
+        fill: this.ckIdx >= k ? C.success : C.white, stroke: KEYLINE, sw: 4 * g.s,
+      });
+    }
+    const gx = this.path[(this.n - 1) * 2]!;
+    const gy = this.path[(this.n - 1) * 2 + 1]!;
+    g.sprite('star', gx, gy, this.hw * 2.1, { glow: 10 });
+
+    // The start: a pulsing ring with its label, until the orb is picked up.
+    const sx = this.ckX[this.ckIdx]!;
+    const sy = this.ckY[this.ckIdx]!;
+    if (!this.armed) {
+      const pulse = 1 + 0.08 * Math.sin(this.time * 6);
+      g.circle(sx, sy, this.startR * 0.8 * pulse, {
+        stroke: this.hand === 0 ? C.slot[0] : C.slot[1], sw: 8 * g.s,
+      });
+      g.text(this.hand === 0 ? t('startLeft') : t('startRight'), sx, sy - this.startR - 30 * g.s, {
+        size: 48 * g.s, weight: 800, align: 'center', baseline: 'middle',
+        fill: this.hand === 0 ? C.slot[0] : C.slot[1], stroke: C.white, sw: 8 * g.s,
+      });
+    } else {
+      g.circle(this.path[0]!, this.path[1]!, this.hw * 0.4, { fill: C.info, stroke: KEYLINE, sw: 4 * g.s });
+    }
+
+    if (this.hasGate && this.gateFrac > 0.02) {
+      const r = this.hw * this.gateFrac * 0.95;
+      g.circle(this.gateX, this.gateY, r, {
+        fill: this.gateFrac > 0.75 ? C.danger : C.warn, stroke: KEYLINE, sw: 5 * g.s,
+      });
+    } else if (this.hasGate) {
+      g.circle(this.gateX, this.gateY, this.hw * 0.35, { stroke: C.warn, sw: 6 * g.s });
+    }
+    // One thin pulse so the gate's next close is never a surprise.
+    if (this.hasGate && this.gateFrac === 0) {
+      const ph = this.mazeClock % this.gatePeriod;
+      if (ph > this.gateOpen - 0.5) {
+        g.circle(this.gateX, this.gateY, this.hw * 0.7, { stroke: WARN80, sw: 5 * g.s });
       }
     }
-  }
-
-  private drawMaze(g: Renderer, maze: MazeRuntime): void {
-    const hw = maze.halfWidthPx;
-    this.drawFloor(g, maze.pathPx, maze.segCount, hw, 0.35);
-    if (maze.spurPx) this.drawFloor(g, maze.spurPx, maze.spurSegCount, hw, 0.22);
-    this.drawRails(g, maze.pathPx, maze.segCount, hw);
-    if (maze.spurPx) this.drawRails(g, maze.spurPx, maze.spurSegCount, hw);
-
-    g.circle(maze.startX, maze.startY, hw * 1.25, { stroke: C.info, sw: 3 * g.s });
-    g.sprite('star', maze.goalX, maze.goalY, hw * 1.6);
-
-    if (maze.gate) {
-      const r = hw * this.gateClosedFrac * 0.92;
-      if (r > 1) {
-        g.circle(maze.gate.x, maze.gate.y, r, {
-          fill: hue(this.gateClosedFrac > 0.75 ? 8 : 42, 80, 55), stroke: KEYLINE, sw: 3 * g.s,
-        });
-      } else {
-        g.circle(maze.gate.x, maze.gate.y, hw * 0.3, { stroke: fade(C.warn, 0.6), sw: 2 * g.s });
-      }
-    }
-  }
-
-  private drawFloor(g: Renderer, path: Float32Array, segCount: number, hw: number, alpha: number): void {
-    for (let i = 0; i < segCount; i++) {
-      g.line(
-        path[i * 2]!, path[i * 2 + 1]!, path[i * 2 + 2]!, path[i * 2 + 3]!,
-        hw * 2, { stroke: fade(hue(manifest.theme?.hue ?? 168, 55, 85), alpha) },
-      );
-    }
-  }
-
-  private drawRails(g: Renderer, path: Float32Array, segCount: number, hw: number): void {
-    for (let i = 0; i < segCount; i++) {
-      const x0 = path[i * 2]!;
-      const y0 = path[i * 2 + 1]!;
-      const x1 = path[i * 2 + 2]!;
-      const y1 = path[i * 2 + 3]!;
-      const dx = x1 - x0;
-      const dy = y1 - y0;
-      const len = Math.hypot(dx, dy) || 1;
-      const nx = -dy / len;
-      const ny = dx / len;
-      g.line(x0 + nx * hw, y0 + ny * hw, x1 + nx * hw, y1 + ny * hw, 4 * g.s, { stroke: KEYLINE });
-      g.line(x0 - nx * hw, y0 - ny * hw, x1 - nx * hw, y1 - ny * hw, 4 * g.s, { stroke: KEYLINE });
-    }
-  }
-
-  private drawHandHint(g: Renderer, p: Pt, allowed: boolean): void {
-    g.circle(p.x, p.y, 13 * g.s, {
-      stroke: allowed ? fade(C.white, 0.7) : fade(C.white, 0.2),
-      sw: (allowed ? 3 : 2) * g.s,
-      glow: allowed ? 8 : 0,
-    });
   }
 
   end(_reason: EndReason): GameResult {
     const highlights: string[] = [];
-    if (this.clears >= this.mazes.length) highlights.push('미로 3개 전부 통과!');
+    if (this.clears >= MAZE_COUNT) highlights.push(`미로 ${MAZE_COUNT}개 전부 통과!`);
     else if (this.clears > 0) highlights.push(`미로 ${this.clears}개 통과`);
     return {
       gameId: manifest.id,
@@ -465,11 +516,17 @@ class WristMaze implements MiniGame {
       durationMs: manifest.durationMs,
       perPlayer: [{
         playerId: 0, slot: 0, score: this.score,
-        hits: this.clears, misses: 0, bestCombo: 0,
+        hits: this.clears, misses: this.falls, bestCombo: 0,
       }],
       highlightsKo: highlights.length > 0 ? highlights : undefined,
     };
   }
 }
 
+/** Pre-built so the clear path builds no string. */
+const LABEL_FAST = '+35';
+const LABEL_MID = '+28';
+const LABEL_OK = '+20';
+
 export default (): MiniGame => new WristMaze();
+

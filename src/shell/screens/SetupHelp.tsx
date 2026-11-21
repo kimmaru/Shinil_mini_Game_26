@@ -105,7 +105,7 @@ export function SetupHelp({
       live="assertive"
       actions={
         <>
-          <Button variant="primary" size="huge" icon="ui-keyboard" sfx="ui.confirm" onClick={onKeyboard}>
+          <Button variant="go" size="huge" icon="ui-keyboard" sfx="ui.confirm" onClick={onKeyboard}>
             키보드로 놀기
           </Button>
           {c.retry ? (
@@ -134,7 +134,7 @@ export function SetupHelp({
         </ol>
       ) : null}
       {detailKo ? (
-        <p className="legal dim center" style={{ marginTop: 'var(--sp-5)', opacity: 0.55 }}>
+        <p className="legal center slab-note setuphelp__detail">
           {detailKo}
         </p>
       ) : null}

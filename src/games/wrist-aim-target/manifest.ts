@@ -4,9 +4,9 @@ export const manifest: MiniGameManifest = {
   id: 'wrist-aim-target',
   nameKo: '레이저 과녁',
   taglineKo: '손끝으로 과녁을 맞혀요!',
-  howToKo: ['손끝 레이저를 과녁에 겨눠요', '1초 가만히 있으면 명중!', '폭탄 과녁은 피해요'],
+  howToKo: ['손끝 불빛을 과녁에 올려요', '잠깐 멈추면 명중!', '검은 폭탄은 피해요'],
   /** A sprite id from src/engine/render/sprites.ts — never an emoji. */
-  icon: 'target',
+  icon: 'gi-wrist-aim-target',
   theme: { hue: 238 },
 
   // Needs real stillness-over-a-point, not reflex timing.
@@ -20,9 +20,10 @@ export const manifest: MiniGameManifest = {
   gestures: ['reach'],
 
   durationMs: 45_000,
-  // ~18-22 targets resolve in a strong round at 15-30pts each, minus the
-  // occasional deliberate bomb dwell. Checked with the replay harness.
-  scoring: { kind: 'count', maxScore: 260, starCuts: [0.26, 0.5, 0.74] },
+  // ~20 targets in a strong round at 10 (ring) / 20 (bullseye) => ~240 for a
+  // strong 9-year-old; maxScore sits below that so 3 stars is reachable. The
+  // blind-sweep dev clip lands ~1 star (it parks on ~7 targets by luck).
+  scoring: { kind: 'count', maxScore: 200, starCuts: [0.22, 0.48, 0.72] },
 
   a11y: {
     // Mouse = dominant hand under VirtualPoseSource, which is exactly an aim
@@ -35,7 +36,7 @@ export const manifest: MiniGameManifest = {
   tags: ['집중력', '조준', '파티'],
   version: 1,
   author: 'A4',
-  enabled: false,
+  enabled: true,
   // reach-grid sweeps both hands across the whole frame — the engine's own
   // "can the player actually reach my targets" clip, which is exactly what a
   // random reach-anchored target layout needs to be checked against.

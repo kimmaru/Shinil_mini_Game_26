@@ -6,7 +6,7 @@ export const manifest: MiniGameManifest = {
   taglineKo: '파도를 뛰어넘어요!',
   howToKo: ['파도가 발밑으로 와요', '두 발로 콩! 뛰어넘으세요', '거품은 뛰면 안 돼요'],
   /** A sprite id from src/engine/render/sprites.ts — never an emoji. */
-  icon: 'wave',
+  icon: 'gi-wave-jump',
   theme: { hue: 200 },
 
   difficulty: 2,

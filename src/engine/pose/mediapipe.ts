@@ -8,19 +8,24 @@
 //
 // The decisions that matter, each one paid for by a documented failure:
 //
-//  * ONE landmarker, reused, close() on every teardown path. Browsers cap live
+//  * Inference runs in a module WORKER (pose.worker.ts), one ImageBitmap in
+//    flight at a time. detectForVideo is synchronous; on the main thread it
+//    blocks a rendered frame 20-30 times a second, which on a 2015 MacBook is
+//    the difference between 60fps and a stutter. If the worker cannot start,
+//    we fall back to the main thread at a lower rate rather than fail.
+//  * The wasm LOADER must match the thread: classic on the main thread, module
+//    in the worker. See visionWasmPaths() — getting this wrong was the
+//    "카메라는 켜졌는데 준비에 실패했어요" start failure.
+//  * ONE landmarker, reused, closed on every teardown path. Browsers cap live
 //    WebGL contexts at ~16 per domain; a landmarker per mini-game loses the
 //    context somewhere around game nine.
 //  * rVFC drives detection, with the `video.currentTime` dedupe, so a camera
 //    frame is never inferred twice. rAF drives the render loop elsewhere.
 //  * Timestamps STRICTLY monotonically increase. A repeated or decreasing
 //    timestamp makes detectForVideo throw or silently return garbage.
-//  * Inference is throttled to the tier's target rate. The model downsamples to
-//    256x256 internally, so running faster than the camera buys nothing.
 //  * sample() EXTRAPOLATES from the last inference using filtered velocity and
 //    reports inferenceAgeMs. Decoupling 25Hz inference from the 60Hz game loop
-//    is the highest-value decision in the engine: 12fps inference still feels
-//    fine when the game itself is smooth.
+//    is the highest-value decision in the engine.
 //  * Every failure says something a person can act on. "The game stopped
 //    responding" is the worst possible failure mode in a room full of children.
 //
@@ -30,13 +35,16 @@ import type { PoseLandmarker, PoseLandmarkerResult } from '@mediapipe/tasks-visi
 import type { CalibrationProfile, PoseFrame } from '../types';
 import type { PersonFrame } from '../testing/synth';
 import { LANDMARK_COUNT } from './landmarks';
-import { CalibrationCapture } from './calibration';
+import { AutoCalibrator, CalibrationCapture } from './calibration';
 import { FpsMeter, MAX_EXTRAPOLATE_SEC } from './frame';
 import { PoseIdentity } from './identity';
 import { detectCapability, diagnoseGpuFailure, type PoseTierConfig } from './capability';
 import { warmupLandmarker, type WarmupResult } from './warmup';
 import type { OneEuroConfig } from './oneEuro';
 import { defaultCalibration, type PoseSource, type PoseSourceInfo } from './source';
+import {
+  flattenPoses, LM_STRIDE, nextTimestamp, visionWasmPaths, type FromWorker, type ToWorker,
+} from './poseWorkerProtocol';
 
 export interface MediaPipeOpts {
   /** The <video> the camera stream is attached to. Owned by the shell: this
@@ -53,6 +61,9 @@ export interface MediaPipeOpts {
   calib?: CalibrationProfile;
   /** Run the shader-compile warmup before the first real frame. */
   warmup?: boolean;
+  /** Infer in a Web Worker (default true). `false` forces the main thread —
+   *  the `?worker=off` escape hatch. */
+  worker?: boolean;
   /** Acquire (or re-acquire) the camera stream. Defaults to getUserMedia with
    *  the constraints from the tier. */
   getStream?: (cfg: PoseTierConfig) => Promise<MediaStream>;
@@ -66,7 +77,26 @@ const MODEL_PATHS: Record<'lite' | 'full', string> = {
   full: '/models/pose_landmarker_full.task',
 };
 
+/** wasm compile + model parse + GPU context. Seconds on a 2015 laptop, never
+ *  this long unless the worker is broken — then the main thread takes over. */
+const WORKER_INIT_TIMEOUT_MS = 20_000;
+/** The landmark-subgraph shader compile has been measured at ~20s cold. Past
+ *  this we stop waiting; the compile finishes in the worker on its own. */
+const WORKER_WARMUP_TIMEOUT_MS = 25_000;
+/** Main-thread fallback rate. Every inference there blocks a rendered frame,
+ *  so trade a little tracking rate for a game that still animates. */
+const MAIN_THREAD_MAX_HZ = 20;
+/** play() can stay pending forever on a stream that delivers no frames. */
+const PLAY_TIMEOUT_MS = 3000;
+/** A worker reply never takes this long (~50–100 ms normally). Past it the
+ *  worker is wedged — e.g. its GPU context was lost across a laptop sleep —
+ *  and the main thread takes over rather than leave the body frozen. */
+const WORKER_STALL_MS = 3000;
+/** Likewise for a worker that answers, but only with errors. */
+const WORKER_MAX_ERRORS = 10;
+
 const clock = (): number => (typeof performance !== 'undefined' ? performance.now() : 0);
+const errText = (e: unknown): string => String((e as Error | undefined)?.message ?? e);
 
 /** getUserMedia constraints. Every value is `ideal`: `exact` throws
  *  OverconstrainedError on Chromebook webcams that only offer odd modes, and
@@ -86,9 +116,23 @@ export function cameraConstraints(cfg: PoseTierConfig): MediaStreamConstraints {
   };
 }
 
+/** Can this browser run the worker path at all? Checked up front so the
+ *  common "no" costs nothing. */
+export function workerSupported(): boolean {
+  return (
+    typeof Worker !== 'undefined' &&
+    typeof OffscreenCanvas !== 'undefined' &&
+    typeof createImageBitmap === 'function'
+  );
+}
+
 export class MediaPipePoseSource implements PoseSource {
   readonly info: PoseSourceInfo;
   readonly config: PoseTierConfig;
+  /** Continuous, screenless calibration, fed at inference rate. Nothing here
+   *  applies it: the shell freezes it into `setCalibration()` at round start
+   *  (see calibration.ts "FREEZE IS THE CALLER'S CALL"). */
+  readonly autoCalibration: AutoCalibrator;
   /** Set once warmup has run, so the shell can decide whether to absorb the
    *  shader compile behind the calibration screen instead. */
   warmupResult: WarmupResult | undefined;
@@ -97,15 +141,19 @@ export class MediaPipePoseSource implements PoseSource {
   private identity: PoseIdentity;
   private calib: CalibrationProfile;
   private landmarker: PoseLandmarker | undefined;
+  private worker: Worker | undefined;
+  private delegate: 'GPU' | 'CPU';
   private stream: MediaStream | undefined;
   private fpsMeter = new FpsMeter();
   private now: () => number;
 
   private lastVideoTime = -1;
   private lastTimestampMs = 0;
+  /** Wall-clock ms of the last frame SENT to inference, for the rate throttle. */
+  private lastSubmitMs = 0;
   /** Wall-clock seconds of the last inference, for the fps meter only. */
   private lastInferT = -1;
-  /** Wall-clock ms of the last inference, for `inferenceAgeMs`. */
+  /** Wall-clock ms the last inferred frame was captured, for `inferenceAgeMs`. */
   private lastInferMs = 0;
   private running = false;
   private paused = false;
@@ -118,15 +166,29 @@ export class MediaPipePoseSource implements PoseSource {
   private reacquiring = false;
   private stalled = false;
 
-  // One reusable detection buffer per pose slot: the MediaPipe result is an
-  // array of objects, and this is the only place it gets flattened.
+  // Worker bookkeeping: one frame in flight, and at most one pending request.
+  private inFlight = false;
+  private inFlightAt = 0;
+  /** Watchdog clock for the frame in flight. Separate from inFlightAt (the
+   *  capture time results are stamped with) so a pause can restart it. */
+  private watchSince = 0;
+  private workerErrs = 0;
+  private submitTs = 0;
+  private reply:
+    | { type: FromWorker['type']; resolve: (m: FromWorker) => void; reject: (e: Error) => void }
+    | undefined;
+
+  // One reusable detection buffer per pose slot, filled from the flattened
+  // result — the only place a MediaPipe result is read.
   private people: PersonFrame[] = [];
   private detsOut: PersonFrame[] = [];
+  private flat = new Float32Array(LANDMARK_COUNT * LM_STRIDE * 4);
 
   constructor(opts: MediaPipeOpts) {
     this.o = opts;
     this.now = opts.now ?? clock;
     this.config = opts.config ?? detectCapability({ maxPlayers: opts.maxPlayers ?? 1 });
+    this.delegate = this.config.delegate;
     const view = opts.view();
     this.calib = opts.calib ?? defaultCalibration(view.w, view.h);
     this.identity = new PoseIdentity({
@@ -134,6 +196,11 @@ export class MediaPipePoseSource implements PoseSource {
       calib: this.calib,
       filter: opts.filter,
       slowFactor: this.config.slowFactor,
+    });
+    this.autoCalibration = new AutoCalibrator({
+      view,
+      fps: this.config.targetHz,
+      mirrored: this.calib.mirrored,
     });
     for (let i = 0; i < 4; i++) {
       this.people.push({
@@ -164,48 +231,42 @@ export class MediaPipePoseSource implements PoseSource {
 
     video.muted = true;
     video.playsInline = true;
-    await video.play().catch(() => {
-      // Autoplay can still be blocked; the shell shows a tap-to-start button.
-      this.warn('카메라를 시작하려면 화면을 한 번 눌러 주세요.');
-    });
+    // Bounded: on a stream that never produces a frame play() never settles,
+    // and an unbounded await here is a setup screen that hangs forever.
+    await Promise.race([
+      video.play().catch(() => {
+        // Autoplay can still be blocked; the shell shows a tap-to-start button.
+        this.warn('카메라를 시작하려면 화면을 한 번 눌러 주세요.');
+      }),
+      new Promise<void>((r) => setTimeout(r, PLAY_TIMEOUT_MS)),
+    ]);
     // A slow first frame is not a reason to refuse to start. The pump below
     // waits for real frames anyway, and a camera that is merely slow to warm
     // up must not look to the player like a camera that failed.
     try {
       await waitForVideo(video);
     } catch (e) {
-      this.o.onWarning?.(
-        `[pose] 카메라 영상이 늦게 와요 (${e instanceof Error ? e.message : String(e)})`,
-      );
+      this.o.onWarning?.(`[pose] 카메라 영상이 늦게 와요 (${errText(e)})`);
     }
 
-    this.landmarker = await this.createLandmarker();
-
-    if (this.o.warmup !== false) {
-      // Shader compile: the landmark subgraph only compiles when a body first
-      // appears, and that pass has been measured at ~20s on a cold cache.
-      //
-      // NON-FATAL, deliberately. Warmup is an optimisation — it pre-pays a
-      // stall that would otherwise land mid-round. If it throws (no
-      // OffscreenCanvas, a GPU that rejects the synthetic frame, a timeout),
-      // the game still works; the stall simply gets paid later, behind the
-      // calibration screen where a real body is in frame. Letting it fail the
-      // whole start told a player who had just granted camera permission that
-      // their camera did not work, which is both wrong and unactionable.
+    if (this.o.worker !== false && workerSupported()) {
       try {
-        this.warmupResult = await warmupLandmarker(this.landmarker as unknown as {
-          detectForVideo: (i: unknown, t: number) => PoseLandmarkerResult;
-        }, { startTimestampMs: this.lastTimestampMs + 1 });
-        this.lastTimestampMs = Math.max(this.lastTimestampMs, this.warmupResult.lastTimestampMs);
-        if (!this.warmupResult.poseFound) {
-          this.o.onWarning?.(`[pose] ${this.warmupResult.message}`);
-        }
+        await this.startWorker();
       } catch (e) {
-        this.o.onWarning?.(
-          `[pose] 미리 준비를 건너뛰었어요 (${e instanceof Error ? e.message : String(e)})`,
-        );
+        this.killWorker();
+        this.o.onWarning?.(`[pose] worker unavailable, inferring on the main thread (${errText(e)})`);
       }
     }
+    if (!this.worker && !this.disposed) await this.startMainThread();
+    if (this.disposed) {
+      // stop() ran while we were starting: release what start() just built
+      // instead of resurrecting a source the shell has already closed.
+      this.killWorker();
+      this.landmarker?.close();
+      this.landmarker = undefined;
+      return;
+    }
+    this.info.tier = `${this.config.tier} · ${this.delegate} · ${this.worker ? 'worker' : 'main'}`;
 
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this.onVisibility);
@@ -235,6 +296,7 @@ export class MediaPipePoseSource implements PoseSource {
     for (const t of this.stream?.getTracks() ?? []) t.stop();
     this.stream = undefined;
     if (this.o.video.srcObject) this.o.video.srcObject = null;
+    this.killWorker();
     this.landmarker?.close();
     this.landmarker = undefined;
     this.identity.reset();
@@ -252,10 +314,7 @@ export class MediaPipePoseSource implements PoseSource {
     this.paused = false;
     // Reset the dedupe and the time base: the camera kept running while we
     // were not looking, so the next frame is "new" and dt is meaningless.
-    this.lastVideoTime = -1;
-    this.lastInferT = -1;
-    this.lastInferMs = 0;
-    this.fpsMeter.reset();
+    this.resetTimeBase();
     this.identity.teleport();
     this.pump();
   }
@@ -322,14 +381,76 @@ export class MediaPipePoseSource implements PoseSource {
     return this.identity.trackStates;
   }
 
-  // ── internals ────────────────────────────────────────────────────────────
+  // ── backends ─────────────────────────────────────────────────────────────
+
+  private async startWorker(): Promise<void> {
+    // The literal `new Worker(new URL(...), {type:'module'})` shape is what
+    // Vite looks for to bundle the worker; do not factor it out.
+    const w = new Worker(new URL('./pose.worker.ts', import.meta.url), { type: 'module' });
+    this.worker = w;
+    w.onmessage = this.onWorkerMessage;
+    w.onerror = this.onWorkerError;
+
+    const ready = (await this.request(
+      {
+        type: 'init',
+        wasmBase: this.o.wasmPath ?? '/wasm',
+        modelPath: this.o.modelPath ?? MODEL_PATHS[this.config.model],
+        delegate: this.config.delegate,
+        numPoses: this.config.numPoses,
+      },
+      'ready',
+      WORKER_INIT_TIMEOUT_MS,
+    )) as Extract<FromWorker, { type: 'ready' }>;
+    this.delegate = ready.delegate;
+    if (ready.gpuError !== undefined) {
+      this.warn(`그래픽 가속을 쓸 수 없어 느릴 수 있어요. (${diagnoseGpuFailure(new Error(ready.gpuError))})`);
+    }
+
+    if (this.o.warmup === false) return;
+    // NON-FATAL: see startMainThread(). In the worker a timeout costs nothing
+    // either — the compile finishes there and the first frames queue behind it.
+    try {
+      const m = (await this.request({ type: 'warmup' }, 'warmed', WORKER_WARMUP_TIMEOUT_MS)) as
+        Extract<FromWorker, { type: 'warmed' }>;
+      this.warmupResult = m.result;
+      if (!m.result.poseFound) this.o.onWarning?.(`[pose] ${m.result.message}`);
+    } catch (e) {
+      this.o.onWarning?.(`[pose] 미리 준비를 건너뛰었어요 (${errText(e)})`);
+    }
+  }
+
+  private async startMainThread(): Promise<void> {
+    this.landmarker = await this.createLandmarker();
+    if (this.o.warmup === false) return;
+    // Shader compile: the landmark subgraph only compiles when a body first
+    // appears, and that pass has been measured at ~20s on a cold cache.
+    //
+    // NON-FATAL, deliberately. Warmup is an optimisation — it pre-pays a
+    // stall that would otherwise land mid-round. If it throws (no
+    // OffscreenCanvas, a GPU that rejects the synthetic frame, a timeout),
+    // the game still works; the stall simply gets paid later, behind the
+    // calibration screen where a real body is in frame. Letting it fail the
+    // whole start told a player who had just granted camera permission that
+    // their camera did not work, which is both wrong and unactionable.
+    try {
+      this.warmupResult = await warmupLandmarker(this.landmarker as unknown as {
+        detectForVideo: (i: unknown, t: number) => PoseLandmarkerResult;
+      }, { startTimestampMs: this.lastTimestampMs + 1 });
+      this.lastTimestampMs = Math.max(this.lastTimestampMs, this.warmupResult.lastTimestampMs);
+      if (!this.warmupResult.poseFound) {
+        this.o.onWarning?.(`[pose] ${this.warmupResult.message}`);
+      }
+    } catch (e) {
+      this.o.onWarning?.(`[pose] 미리 준비를 건너뛰었어요 (${errText(e)})`);
+    }
+  }
 
   private async createLandmarker(): Promise<PoseLandmarker> {
     const vision = await import('@mediapipe/tasks-vision');
-    const fileset = await vision.FilesetResolver.forVisionTasks(
-      this.o.wasmPath ?? '/wasm',
-      true, // ES-module loader; required inside a module worker and harmless here
-    );
+    // CLASSIC loader: on the main thread tasks-vision injects it as a plain
+    // <script>. See visionWasmPaths().
+    const fileset = visionWasmPaths(this.o.wasmPath ?? '/wasm', false);
     const modelAssetPath = this.o.modelPath ?? MODEL_PATHS[this.config.model];
     const base = {
       runningMode: 'VIDEO' as const,
@@ -340,22 +461,131 @@ export class MediaPipePoseSource implements PoseSource {
       outputSegmentationMasks: false,
     };
     try {
-      return await vision.PoseLandmarker.createFromOptions(fileset, {
+      const lm = await vision.PoseLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath, delegate: this.config.delegate },
         ...base,
       });
+      this.delegate = this.config.delegate;
+      return lm;
     } catch (err) {
+      if (this.config.delegate === 'CPU') throw err;
       // GPU -> CPU, with a diagnosis. delegate:"CPU" is NOT a universal escape
       // hatch (the wasm module still wants an offscreen WebGL2 context), so say
       // what went wrong either way.
       const why = diagnoseGpuFailure(err);
       this.warn(`그래픽 가속을 쓸 수 없어 느릴 수 있어요. (${why})`);
-      return await vision.PoseLandmarker.createFromOptions(fileset, {
+      const lm = await vision.PoseLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath, delegate: 'CPU' },
         ...base,
       });
+      this.delegate = 'CPU';
+      return lm;
     }
   }
+
+  /** One request to the worker, answered by a reply of type `expect`. */
+  private request(msg: ToWorker, expect: FromWorker['type'], timeoutMs: number): Promise<FromWorker> {
+    return new Promise<FromWorker>((resolve, reject) => {
+      const to = setTimeout(() => {
+        this.reply = undefined;
+        reject(new Error(`${msg.type} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      this.reply = {
+        type: expect,
+        resolve: (m) => { clearTimeout(to); resolve(m); },
+        reject: (e) => { clearTimeout(to); reject(e); },
+      };
+      this.worker!.postMessage(msg);
+    });
+  }
+
+  private onWorkerMessage = (e: MessageEvent<FromWorker>): void => {
+    const m = e.data;
+    if (m.type === 'result') {
+      this.inFlight = false;
+      this.workerErrs = 0;
+      if (this.disposed) return;
+      this.ingest(m.data, m.n, this.inFlightAt);
+      return;
+    }
+    if (m.type === 'detectError') {
+      this.inFlight = false;
+      if (++this.workerErrs >= WORKER_MAX_ERRORS) {
+        this.failOver(`${WORKER_MAX_ERRORS} detect errors in a row: ${m.message}`);
+      } else {
+        this.warn(`카메라 인식에 문제가 있어요. (${m.message})`);
+      }
+      return;
+    }
+    const r = this.reply;
+    if (!r) return; // a late reply to a request we already gave up on
+    if (m.type === 'initError') {
+      this.reply = undefined;
+      r.reject(new Error(m.message));
+    } else if (m.type === r.type) {
+      this.reply = undefined;
+      r.resolve(m);
+    }
+  };
+
+  private onWorkerError = (e: ErrorEvent): void => {
+    e.preventDefault();
+    const why = e.message || 'worker failed to load';
+    const r = this.reply;
+    if (r) {
+      this.reply = undefined;
+      r.reject(new Error(why));
+      return;
+    }
+    this.failOver(`worker crashed (${why})`);
+  };
+
+  /** The worker died or wedged mid-session. A frozen body is the worst
+   *  outcome, so take over on the main thread rather than leave the round
+   *  without a camera. */
+  private failOver(why: string): void {
+    if (!this.worker) return;
+    this.killWorker();
+    this.workerErrs = 0;
+    if (this.disposed) return;
+    this.o.onWarning?.(`[pose] ${why}; inferring on the main thread`);
+    this.createLandmarker().then(
+      (lm) => {
+        if (this.disposed) lm.close();
+        else {
+          this.landmarker = lm;
+          this.info.tier = `${this.config.tier} · ${this.delegate} · main`;
+        }
+      },
+      (err) => this.warn(`카메라 인식을 다시 시작할 수 없어요. (${errText(err)})`),
+    );
+  }
+
+  private killWorker(): void {
+    const r = this.reply;
+    this.reply = undefined;
+    r?.reject(new Error('[pose] stopped'));
+    this.worker?.terminate();
+    this.worker = undefined;
+    this.inFlight = false;
+  }
+
+  private sendBitmap = (bmp: ImageBitmap): void => {
+    const w = this.worker;
+    if (!w || this.disposed) {
+      bmp.close();
+      this.inFlight = false;
+      return;
+    }
+    const msg: ToWorker = { type: 'detect', bitmap: bmp, ts: this.submitTs };
+    w.postMessage(msg, [bmp]);
+  };
+
+  private dropBitmap = (): void => {
+    this.inFlight = false;
+  };
+
+  // ── frames, internals ────────────────────────────────────────────────────
 
   private pump = (): void => {
     if (!this.running || this.paused || this.disposed) return;
@@ -384,30 +614,51 @@ export class MediaPipePoseSource implements PoseSource {
     this.rafHandle = 0;
     if (!this.running || this.paused || this.disposed) return;
     const video = this.o.video;
-    const lm = this.landmarker;
     const nowMs = this.now();
+    const onWorker = this.worker !== undefined;
+    const lm = this.landmarker;
 
     // Throttle to the tier's rate, and never infer the same camera frame twice.
-    const minGap = 1000 / Math.max(1, this.config.targetHz);
+    const hz = onWorker ? this.config.targetHz : Math.min(this.config.targetHz, MAIN_THREAD_MAX_HZ);
+    const minGap = 1000 / Math.max(1, hz);
     const fresh = video.currentTime !== this.lastVideoTime;
-    if (lm && fresh && nowMs - this.lastInferMs >= minGap - 2 && video.videoWidth > 0) {
+    if (onWorker && this.inFlight && nowMs - this.watchSince > WORKER_STALL_MS) {
+      this.failOver(`no reply from the worker for ${WORKER_STALL_MS} ms`);
+      this.pump();
+      return;
+    }
+    const ready = onWorker ? !this.inFlight : lm !== undefined;
+    if (ready && fresh && nowMs - this.lastSubmitMs >= minGap - 2 && video.videoWidth > 0) {
       this.lastVideoTime = video.currentTime;
+      this.lastSubmitMs = nowMs;
       // Strictly increasing, always. mediaTime is the honest frame clock, but
       // it repeats if the camera stalls, so clamp upward.
-      const raw = meta ? meta.mediaTime * 1000 : nowMs;
-      const ts = raw > this.lastTimestampMs ? raw : this.lastTimestampMs + 1;
+      const ts = nextTimestamp(meta ? meta.mediaTime * 1000 : nowMs, this.lastTimestampMs);
       this.lastTimestampMs = ts;
-      try {
-        const res = lm.detectForVideo(video, ts);
-        this.consume(res, nowMs);
-      } catch (e) {
-        this.warn(`카메라 인식에 문제가 있어요. (${String((e as Error).message ?? e)})`);
+      if (onWorker) {
+        // Off the main thread: a copy of the frame goes over, the result
+        // comes back as a message. Nothing here waits for it.
+        this.inFlight = true;
+        this.inFlightAt = nowMs;
+        this.watchSince = nowMs;
+        this.submitTs = ts;
+        createImageBitmap(video).then(this.sendBitmap, this.dropBitmap);
+      } else if (lm) {
+        try {
+          const res = lm.detectForVideo(video, ts);
+          this.ingest(this.flat, flattenPoses(res?.landmarks, this.flat, LANDMARK_COUNT), nowMs);
+        } catch (e) {
+          this.warn(`카메라 인식에 문제가 있어요. (${errText(e)})`);
+        }
       }
     }
     this.pump();
   };
 
-  private consume(res: PoseLandmarkerResult | undefined, nowMs: number): void {
+  /** One inference's worth of poses, flattened as [pose][joint][x, y, vis],
+   *  stamped with the wall-clock ms the frame was CAPTURED — so the latency of
+   *  the inference itself shows up in inferenceAgeMs and gets extrapolated. */
+  private ingest(data: Float32Array, n: number, nowMs: number): void {
     const view = this.o.view();
     const tSec = nowMs / 1000;
     if (this.lastInferT >= 0) this.fpsMeter.sample(tSec - this.lastInferT);
@@ -416,25 +667,33 @@ export class MediaPipePoseSource implements PoseSource {
 
     const out = this.detsOut;
     out.length = 0;
-    const poses = res?.landmarks ?? [];
-    for (let i = 0; i < poses.length && i < this.people.length; i++) {
-      const src = poses[i]!;
+    const per = LANDMARK_COUNT * LM_STRIDE;
+    for (let i = 0; i < n && i < this.people.length; i++) {
       const dst = this.people[i]!;
+      const base = i * per;
       for (let j = 0; j < LANDMARK_COUNT; j++) {
-        const p = src[j];
-        if (!p) continue;
-        dst.lm[j * 2] = p.x;
-        dst.lm[j * 2 + 1] = p.y;
-        // visibility is undefined on tasks-vision <= 0.10.10; present now.
-        dst.vis[j] = p.visibility ?? 1;
+        const k = base + j * LM_STRIDE;
+        dst.lm[j * 2] = data[k]!;
+        dst.lm[j * 2 + 1] = data[k + 1]!;
+        dst.vis[j] = data[k + 2]!;
       }
       out.push(dst);
     }
     this.identity.update(out, tSec, view.w, view.h);
 
+    // Calibrators see the un-extrapolated pose at inference rate. project()
+    // writes into the shared frame, so put back the clock fields sample() owns:
+    // a game holding the frame between steps must not see wall-clock seconds.
+    const f = this.identity.frame;
+    const keepT = f.t;
+    const keepAge = f.inferenceAgeMs;
+    this.identity.project(tSec, 0, this.fpsMeter.fps, view.w, view.h);
+    f.t = keepT;
+    f.inferenceAgeMs = keepAge;
+    const p = f.p1;
+    this.autoCalibration.setView(view.w, view.h);
+    this.autoCalibration.feed(p, tSec);
     if (this.capture) {
-      const f = this.identity.project(tSec, 0, this.fpsMeter.fps, view.w, view.h);
-      const p = f.p1;
       if (p?.present) this.capture.feed(p, tSec, view.h);
       if (this.capture.done) this.finishCapture(false);
     }
@@ -450,7 +709,7 @@ export class MediaPipePoseSource implements PoseSource {
     } catch (e) {
       const why = timedOut
         ? '카메라에 몸이 충분히 보이지 않았어요. 한 걸음 뒤로 가 볼까요?'
-        : String((e as Error).message ?? e);
+        : errText(e);
       this.captureReject?.(new Error(why));
     }
     this.clearCapture();
@@ -462,15 +721,22 @@ export class MediaPipePoseSource implements PoseSource {
     this.captureReject = undefined;
   }
 
+  private resetTimeBase(): void {
+    // Time spent paused or hidden is not the worker stalling.
+    this.watchSince = this.now();
+    this.lastVideoTime = -1;
+    this.lastInferT = -1;
+    this.lastInferMs = 0;
+    this.lastSubmitMs = 0;
+    this.fpsMeter.reset();
+  }
+
   private onVisibility = (): void => {
     if (typeof document === 'undefined') return;
     if (document.hidden) {
       this.cancelPump();
     } else if (this.running && !this.paused) {
-      this.lastVideoTime = -1;
-      this.lastInferT = -1;
-      this.lastInferMs = 0;
-      this.fpsMeter.reset();
+      this.resetTimeBase();
       this.pump();
     }
   };
@@ -499,13 +765,11 @@ export class MediaPipePoseSource implements PoseSource {
       this.o.video.srcObject = this.stream;
       this.watchTracks();
       await this.o.video.play().catch(() => {});
-      this.lastVideoTime = -1;
-      this.lastInferT = -1;
-      this.lastInferMs = 0;
+      this.resetTimeBase();
       this.identity.teleport();
       this.info.warning = undefined;
     } catch (e) {
-      this.warn(`카메라를 다시 켤 수 없어요. (${String((e as Error).message ?? e)})`);
+      this.warn(`카메라를 다시 켤 수 없어요. (${errText(e)})`);
     } finally {
       this.reacquiring = false;
     }

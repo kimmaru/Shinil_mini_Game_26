@@ -24,7 +24,6 @@ const CANDY = 0;
 const GOLD = 1;
 const ROCK = 2;
 
-const LIVES = 5;
 /**
  * Falling columns. EVEN on purpose: an odd lane count puts a column dead
  * centre, so a child who never moves still collects a fifth of the sweets in
@@ -52,7 +51,6 @@ class CandyRainCatch implements MiniGame {
   private score = 0;
   private caught = 0;
   private dropped = 0;
-  private lives = LIVES;
   private combo = 0;
   private bestCombo = 0;
   private time = 0;
@@ -64,7 +62,7 @@ class CandyRainCatch implements MiniGame {
   init(ctx: GameContext): void {
     this.ctx = ctx;
     const g = Math.min(ctx.view.w, ctx.view.h);
-    this.basketR = g * 0.068;
+    this.basketR = g * 0.08;
     this.handR_ = g * 0.055;
     this.spawner = new Spawner(
       // ~55 sweets in a round, not 85: a child who misses two thirds of
@@ -84,7 +82,6 @@ class CandyRainCatch implements MiniGame {
 
   start(): void {
     this.ctx.hud.setScore(0);
-    this.ctx.hud.setLives(this.lives, LIVES);
     this.ctx.audio.music({ bpm: 120 });
   }
 
@@ -133,7 +130,7 @@ class CandyRainCatch implements MiniGame {
     const spread = lerp(0.72, 1.0, d);
     const lane = Math.floor(this.ctx.rng() * LANES) / (LANES - 1);
     const x = w * (0.5 + (lane - 0.5) * spread);
-    const r = Math.min(w, h) * (kind === ROCK ? 0.045 : 0.038);
+    const r = Math.min(w, h) * 0.06;
     const i = this.drops.spawn(
       x, -r * 2,
       randRange(this.ctx.rng, -20, 20), randRange(this.ctx.rng, 0, 40),
@@ -157,18 +154,12 @@ class CandyRainCatch implements MiniGame {
       this.drops.kill(i);
 
       if (kind === ROCK) {
-        // A caught rock costs a life, but the feedback is a soft "앗" rather
-        // than a punishment: this age group quits on repeated failure cues.
-        this.lives--;
+        // Quiet: a broken combo and a soft puff. No lives, no shake.
         this.combo = 0;
-        this.ctx.hud.setLives(this.lives, LIVES);
         this.ctx.hud.setCombo(0);
-        this.ctx.hud.toast(t('oops'), { color: C.warn });
-        this.ctx.audio.play('thud', { gain: 0.6 });
-        this.ctx.fx.burst(x, y, { count: 10, color: C.warn, sprite: 'cross', speed: 260 });
-        this.ctx.fx.shake(0.12);
+        this.ctx.fx.miss(x, y);
+        this.ctx.audio.play('thud', { gain: 0.25 });
         this.ctx.emit({ kind: 'miss' });
-        if (this.lives <= 0) this.ctx.emit({ kind: 'clearEarly' });
         continue;
       }
 
@@ -186,7 +177,7 @@ class CandyRainCatch implements MiniGame {
         speed: 320,
         gravity: 400,
       });
-      this.ctx.fx.popText(x, y, `+${VALUE[kind]!}`, gold ? C.accent : C.white);
+      this.ctx.fx.popText(x, y, gold ? '+10' : '+3', gold ? C.accent : C.white);
       if (gold) {
         this.ctx.hud.toast(t('golden'), { color: C.accent, big: true });
         this.ctx.audio.play('bonus');
@@ -269,7 +260,7 @@ class CandyRainCatch implements MiniGame {
     if (this.dropped === 0 && this.caught > 0) highlights.push('하나도 안 흘렸어요!');
     return {
       gameId: manifest.id,
-      cleared: this.lives > 0,
+      cleared: this.caught > 0,
       rawScore: this.score,
       maxScore: manifest.scoring.maxScore,
       normalized: 0,

@@ -21,7 +21,8 @@ export const ManifestSchema = z
     nameKo: z.string().min(1).max(20),
     taglineKo: z.string().min(1).max(24),
     howToKo: z.array(z.string().min(1).max(40)).min(1).max(3),
-    icon: z.string().min(1).max(8),
+    // A sprite id (e.g. 'gi-wrist-aim-target'), not an emoji — hence the length.
+    icon: z.string().regex(/^[a-z0-9:-]+$/, 'icon must be a sprite id').max(40),
     theme: z.object({ hue: z.number().min(0).max(360) }).optional(),
 
     difficulty: z.union([z.literal(1), z.literal(2), z.literal(3)]),

@@ -5,11 +5,12 @@
 // differ only in their services — the harness uses NullRenderer and stubs, this
 // uses a real canvas, real audio and the DOM HUD. Keeping the lifecycle
 // identical in both is what makes a headless pass meaningful.
-import type { GameContext, GameEvent, GameId, GameResult, HudService } from './types';
+import type { GameContext, GameEvent, GameId, GameResult, HudService, MiniGame } from './types';
 import type { PoseSource } from './pose/source';
 import { ALL, load } from './registry';
 import { createLoop, type Loop } from './loop';
 import { Canvas2DRenderer } from './render/canvas2d';
+import { DPR_START, DprGovernor } from './render/dpr';
 import { createGestureService } from './gestures/service';
 import { createFxService, type FxRuntime } from './fx/service';
 import type { AudioRuntime } from './audio/service';
@@ -34,7 +35,14 @@ export interface HostDeps {
   reducedMotion?: boolean;
   /** Called every frame with diagnostics, for the ?debug=1 overlay. */
   onStats?: (s: { fps: number; steps: number; updateMs: number; renderMs: number }) => void;
+  /** Cap the render rate (the simulation still steps at 60). The attract
+   *  reel is a backdrop and gets 30; a played round leaves this unset. */
+  maxFps?: number;
 }
+
+/** One for the page, so every round (the attract reel's included) starts at
+ *  the pixel ratio this machine has already proven it can hold. */
+let dprGovernor: DprGovernor | undefined;
 
 /**
  * Run one round. Resolves when the clock runs out, the game clears early, or
@@ -61,7 +69,10 @@ export async function runRound(req: RoundRequest, deps: HostDeps): Promise<GameR
   };
   let view = measure();
 
-  const g = new Canvas2DRenderer(canvas, { dpr: window.devicePixelRatio || 1 });
+  const deviceDpr = window.devicePixelRatio || 1;
+  dprGovernor ??= new DprGovernor(Math.min(DPR_START, deviceDpr));
+  const governor = dprGovernor;
+  const g = new Canvas2DRenderer(canvas, { dpr: deviceDpr, maxDpr: governor.cap });
   g.resize(view.w, view.h);
 
   const fx = deps.fx ?? createFxService({ reducedMotion: deps.reducedMotion ?? null });
@@ -91,7 +102,8 @@ export async function runRound(req: RoundRequest, deps: HostDeps): Promise<GameR
 
   const ctx: GameContext = {
     manifest,
-    view: { w: view.w, h: view.h, dpr: window.devicePixelRatio || 1 },
+    // w/h are logical CSS px as always; dpr is what the backing store really uses.
+    view: { w: view.w, h: view.h, dpr: g.dpr },
     rng: mulberry32(req.seed),
     audio: deps.audio,
     gestures,
@@ -105,8 +117,16 @@ export async function runRound(req: RoundRequest, deps: HostDeps): Promise<GameR
     },
   };
 
-  const factory = await load(req.gameId);
-  const game = factory();
+  let game: MiniGame;
+  try {
+    game = (await load(req.gameId))();
+  } catch (e) {
+    // Nothing else exists yet; the canvas must not outlive a failed load.
+    canvas.remove();
+    canvas.width = 0;
+    canvas.height = 0;
+    throw e;
+  }
 
   let resolveRound!: (r: GameResult) => void;
   let rejectRound!: (e: unknown) => void;
@@ -134,7 +154,12 @@ export async function runRound(req: RoundRequest, deps: HostDeps): Promise<GameR
     try { game.dispose?.(); } catch { /* a failed teardown must not mask the result */ }
     fx.resetAll();
     deps.audio.stopMusic();
+    g.dispose();
     canvas.remove();
+    // Free the backing store now rather than at some later GC: the attract
+    // reel starts a full-screen round every few seconds.
+    canvas.width = 0;
+    canvas.height = 0;
   };
 
   function settle(reason: 'timeUp' | 'cleared' | 'failed' | 'aborted'): void {
@@ -159,12 +184,16 @@ export async function runRound(req: RoundRequest, deps: HostDeps): Promise<GameR
     teardown();
     throw e;
   }
+  // Aborted while an async init was pending: settle() already tore down.
+  // Starting the loop now would render into a detached canvas forever.
+  if (finished) return done;
 
   let elapsedMs = 0;
   let lastShownSec = -1;
 
   loop = createLoop(game, deps.pose, g, {
     fx,
+    maxFps: deps.maxFps,
     onStep: (dt, f) => {
       frame = f;
       elapsedMs += dt * 1000;
@@ -176,7 +205,13 @@ export async function runRound(req: RoundRequest, deps: HostDeps): Promise<GameR
       }
       if (left <= 0) settle('timeUp');
     },
-    onFrameStats: deps.onStats,
+    onFrameStats: (s) => {
+      deps.onStats?.(s);
+      // A frame-capped round (the attract reel) must not teach the page-wide
+      // governor: it never steps back up, so a slow reel would blur every
+      // real round for the rest of the day.
+      if (deps.maxFps === undefined && governor.sample(s.fps)) g.setMaxDpr(governor.cap);
+    },
   });
 
   window.addEventListener('resize', onResize);

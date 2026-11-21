@@ -141,6 +141,16 @@ describe('resetting for the next stranger', () => {
     expect(s.phase).toBe('attract');
     expect(s.calib).toBe(calib);
   });
+
+  it('drops the in-memory records on 전체 삭제, without leaving the phase', () => {
+    const s = sessionReducer(
+      S({ phase: 'attract', records: { 'mosquito-clap': { score: 9, stars: 2, atMs: 1 } }, beatRecord: true }),
+      { type: 'clearRecords' },
+    );
+    expect(s.records).toEqual({});
+    expect(s.beatRecord).toBe(false);
+    expect(s.phase).toBe('attract');
+  });
 });
 
 describe('overlays and pausing', () => {

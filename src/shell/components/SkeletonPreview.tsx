@@ -33,7 +33,15 @@ export interface SkeletonPreviewProps {
   anchorY?: number;
 }
 
-const SMOOTH = 0.14;
+/** Box smoothing per DRAW. 0.26 at 30 Hz is the same time constant 0.14 was
+ *  at 60 Hz. */
+const SMOOTH = 0.26;
+/** Backing-store cap. This is a thick-lined overlay: at 2x on a Retina Mac
+ *  it cost four times the fill for nothing anyone can see from 2 m. */
+const MAX_DPR = 1;
+/** ~30 Hz. Pose arrives at ~25 Hz; drawing it at 60 only repaints the same
+ *  skeleton twice. */
+const FRAME_MS = 32;
 
 export function SkeletonPreview({
   pose,
@@ -55,17 +63,21 @@ export function SkeletonPreview({
     const stroke = getComputedStyle(canvas).getPropertyValue('color').trim() || '#6b8aff';
     let raf = 0;
     let t0 = performance.now();
+    let lastDraw = -Infinity;
     // Smoothed source bounding box, so the body does not jitter in scale.
     const box = { x: 0, y: 0, w: 0, h: 0, init: false };
 
     const draw = () => {
       raf = requestAnimationFrame(draw);
-      const tSec = (performance.now() - t0) / 1000;
+      const now = performance.now();
+      if (now - lastDraw < FRAME_MS) return;
+      lastDraw = now;
+      const tSec = (now - t0) / 1000;
       const p: PlayerPose | undefined = fake
         ? fakePose(tSec)
         : pose?.sample(tSec).p1;
 
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const dpr = Math.min(MAX_DPR, window.devicePixelRatio || 1);
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
       if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {

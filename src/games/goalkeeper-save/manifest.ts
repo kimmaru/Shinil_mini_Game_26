@@ -6,10 +6,10 @@ export const manifest: MiniGameManifest = {
   taglineKo: '온몸으로 공을 막아요!',
   howToKo: [
     '표시된 자리로 미리 움직여요',
-    '위쪽 공은 손, 아래쪽 공은 발로',
+    '위쪽 공은 손, 아래쪽 공은 발로 막아요',
     '공이 올 때 팔다리를 내밀어요',
   ],
-  icon: 'circle',
+  icon: 'gi-goalkeeper-save',
   theme: { hue: 140 },
 
   difficulty: 3,
@@ -26,11 +26,11 @@ export const manifest: MiniGameManifest = {
   gestures: ['reach'],
 
   durationMs: 50_000,
-  // ~26 shots arrive in a round at 20 a save. A strong keeper saves about 19
-  // of them and keeps a couple of their five goals in hand. Calibrated
-  // against swing-wide, which covers the upper six zones and none of the low
-  // ones, and lands around two stars.
-  scoring: { kind: 'count', maxScore: 380, starCuts: [0.3, 0.55, 0.78] },
+  // ~28 shots arrive in a round at 20-25 a save and the round always runs its
+  // full 50 s (a goal is quiet and costs only the combo). A strong keeper saves
+  // about 20 of them; 3 stars is 16 saves, a bit over half. swing-wide flails
+  // at everything and lands above maxScore, which is what a flail should do.
+  scoring: { kind: 'count', maxScore: 450, starCuts: [0.3, 0.55, 0.78] },
 
   a11y: {
     keyboardFallback: true,
@@ -41,6 +41,6 @@ export const manifest: MiniGameManifest = {
   tags: ['순발력', '전신', '집중'],
   version: 1,
   author: 'A2',
-  enabled: false,
+  enabled: true,
   dev: { clip: 'swing-wide' },
 };

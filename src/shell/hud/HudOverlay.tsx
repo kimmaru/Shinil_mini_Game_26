@@ -14,7 +14,7 @@
 // same tick eases the score count-up. A game calling setScore() 60 times a
 // second therefore costs one render per frame, not sixty.
 // ════════════════════════════════════════════════════════════════════════════
-import { useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { HudService, Slot } from '@/engine/types';
 import { Button } from '../components/Button';
 import { SpriteIcon } from '../components/SpriteIcon';
@@ -202,6 +202,9 @@ export function createHudService(o?: {
   return {
     service,
     subscribe(cb) {
+      // StrictMode (dev) runs App's dispose cleanup once and then keeps the
+      // same memoized instance; without re-arming, the HUD never updates again.
+      disposed = false;
       listeners.add(cb);
       return () => listeners.delete(cb);
     },
@@ -224,12 +227,41 @@ export function createHudService(o?: {
 
 const SLOT_COLORS = ['var(--c-p1)', 'var(--c-p2)', 'var(--c-p3)', 'var(--c-p4)'] as const;
 
+/** Time ring geometry, in SVG user units. */
+const RING_R = 42;
+const RING_C = 2 * Math.PI * RING_R;
+/** A pop restarts at most this often, so a fast count-up reads as one
+ *  celebration rather than a vibrating number. */
+const POP_GAP_MS = 220;
+
 export interface HudOverlayProps {
   handle: HudHandle;
   /** The engine's round timer, in seconds. A game may override it via setTime. */
   roundSecondsLeft: number | null;
   players: number;
   onPause: () => void;
+}
+
+/** The score pill. Pops whenever its integer changes (rate-limited). */
+function ScorePill({ value, slot }: { value: number; slot: number }): React.ReactElement {
+  const n = Math.round(value);
+  const [pop, setPop] = useState(0);
+  const last = useRef({ n, at: 0 });
+  useEffect(() => {
+    if (n === last.current.n) return;
+    const now = performance.now();
+    last.current.n = n;
+    if (n > 0 && now - last.current.at >= POP_GAP_MS) {
+      last.current.at = now;
+      setPop((p) => p + 1);
+    }
+  }, [n]);
+  return (
+    <div className="hud__score" style={{ ['--slot' as string]: SLOT_COLORS[slot as Slot] }}>
+      <SpriteIcon id="star" size={44} className="hud__scoreIcon" />
+      <span key={pop} className={`hud__scoreNum num${pop ? ' is-pop' : ''}`}>{n}</span>
+    </div>
+  );
 }
 
 export function HudOverlay({
@@ -241,20 +273,21 @@ export function HudOverlay({
   const s = useSyncExternalStore(handle.subscribe, handle.getSnapshot, handle.getSnapshot);
   const seconds = s.timeLeft ?? roundSecondsLeft;
   const urgent = seconds !== null && seconds <= 5;
+  // The ring needs a total; the first value the round reports IS the total.
+  // HudOverlay mounts once per round, so this resets with it.
+  const total = useRef(0);
+  if (seconds !== null && seconds > total.current) total.current = seconds;
+  const frac = seconds !== null && total.current > 0 ? seconds / total.current : 0;
 
   return (
     <div className="hud">
       <div className="hud__top">
         <div className="hud__scores">
           {Array.from({ length: Math.max(1, players) }, (_, i) => (
-            <div
-              key={i}
-              className="hud__score"
-              style={{ ['--slot' as string]: SLOT_COLORS[i as Slot] }}
-            >
-              <span className="hud__scoreNum num">{Math.round(s.scores[i] ?? 0)}</span>
+            <div key={i} className="hud__scoreCol">
+              <ScorePill value={s.scores[i] ?? 0} slot={i} />
               {(s.combos[i] ?? 0) > 1 ? (
-                <span className="hud__combo num pop-in" key={s.combos[i]}>
+                <span className="hud__combo num" key={s.combos[i]}>
                   {s.combos[i]}연속!
                 </span>
               ) : null}
@@ -262,22 +295,43 @@ export function HudOverlay({
           ))}
         </div>
 
-        {s.goalKo ? <p className="hud__goal">{s.goalKo}</p> : null}
+        {s.goalKo ? <p className="hud__goal">{s.goalKo}</p> : <span className="grow" />}
 
         <div className="hud__right">
           {seconds !== null ? (
-            <span className={`hud__timer num${urgent ? ' is-urgent' : ''}`}>{seconds}</span>
+            <div
+              className={`hud__timer${urgent ? ' is-urgent' : ''}`}
+              role="timer"
+              aria-label={`남은 시간 ${seconds}초`}
+            >
+              <svg viewBox="0 0 100 100" className="hud__timerRing" aria-hidden="true">
+                <circle cx="50" cy="50" r={RING_R} className="hud__timerTrack" />
+                <circle
+                  cx="50"
+                  cy="50"
+                  r={RING_R}
+                  className="hud__timerFill"
+                  strokeDasharray={RING_C}
+                  strokeDashoffset={RING_C * (1 - frac)}
+                  transform="rotate(-90 50 50)"
+                />
+              </svg>
+              <span className="hud__timerNum num" key={urgent ? seconds : 'n'} aria-hidden="true">
+                {seconds}
+              </span>
+            </div>
           ) : null}
           <Button
             variant="ghost"
             size="sm"
+            // Ends the round (App aborts it on 'pause'), so it says so: a
+            // pause icon that jumps to results is a broken promise.
+            icon="ui-close"
             className="hud__pause"
             sfx="ui.back"
-            aria-label="잠깐 멈추기"
+            aria-label="그만하기"
             onClick={onPause}
-          >
-            ⏸
-          </Button>
+          />
         </div>
       </div>
 
@@ -285,7 +339,7 @@ export function HudOverlay({
         <div className="hud__lives" aria-label={`남은 기회 ${s.lives}개`}>
           {Array.from({ length: Math.max(s.livesMax, s.lives) }, (_, i) => (
             <span key={i} aria-hidden="true">
-              <SpriteIcon id={i < s.lives ? 'heart' : 'ui-heart-empty'} size={26} />
+              <SpriteIcon id={i < s.lives ? 'heart' : 'ui-heart-empty'} size={40} />
             </span>
           ))}
         </div>
@@ -316,8 +370,8 @@ export function HudOverlay({
       {s.toastKo ? (
         <div
           key={s.toastSeq}
-          className={`hud__toast pop-in${s.toastBig ? ' is-big' : ''}`}
-          style={s.toastColor ? { color: s.toastColor } : undefined}
+          className={`hud__toast${s.toastBig ? ' is-big' : ''}`}
+          style={s.toastColor ? { ['--toast-c' as string]: s.toastColor } : undefined}
           aria-hidden="true"
         >
           {s.toastKo}
@@ -330,7 +384,7 @@ export function HudOverlay({
         aria-live={s.announceAssertive ? 'assertive' : 'polite'}
         aria-atomic="true"
       >
-        {s.announceKo}
+        {s.announceKo ? <span key={s.announceSeq} className="hud__announceText">{s.announceKo}</span> : null}
       </div>
     </div>
   );

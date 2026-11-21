@@ -17,16 +17,16 @@ import { C, fade } from '@/engine/render/palette';
 import { manifest } from './manifest';
 import { QUIZ_BANK, t } from './locale';
 
-const ROUND_N = 9;
+const ROUND_N = 8;
 const COMPARE_CHANCE = 0.22;
 const COMPARE_MIN = 2;
 const COMPARE_MAX = 6;
 
-const THINK_SEC = 4.0;
+const THINK_SEC = 4.5;
 /** Last second of thinking time: the zone borders blink fast. */
 const BLINK_SEC = 1.0;
-const REVEAL_SEC = 1.3;
-const GAP_SEC = 0.4;
+const REVEAL_SEC = 1.2;
+const GAP_SEC = 0.3;
 
 const PHASE_THINK = 0;
 const PHASE_REVEAL = 1;
@@ -46,7 +46,7 @@ class OxQuizZone implements MiniGame {
   private player: PlayerPose | null = null;
   private readonly hip = { x: 0, y: 0 };
 
-  // This round's 9 questions, decided once from the seeded rng so a replay
+  // This round's questions, decided once from the seeded rng so a replay
   // reproduces the same quiz. Fixed-size typed arrays: no per-frame growth.
   private readonly slotCompare = new Uint8Array(ROUND_N);
   private readonly slotFact = new Int32Array(ROUND_N);
@@ -66,6 +66,10 @@ class OxQuizZone implements MiniGame {
   private phaseTotal = THINK_SEC;
   private correctSide = SIDE_O;
   private chosenSide = SIDE_NONE;
+  /** Which half the hips are in right now, for the "you are here" glow. */
+  private inO = false;
+  private inX = false;
+  private readonly plus: string[] = [];
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
@@ -100,6 +104,7 @@ class OxQuizZone implements MiniGame {
         fi++;
       }
     }
+    for (let i = 0; i <= POINTS; i++) this.plus.push('+' + String(i));
     this.startQuestion(0);
     ctx.hud.setGoal(t('goal'));
   }
@@ -116,6 +121,8 @@ class OxQuizZone implements MiniGame {
 
     const zo = this.zoneO.read(f);
     const zx = this.zoneX.read(f);
+    this.inO = zo.inside && !zx.inside;
+    this.inX = zx.inside && !zo.inside;
 
     if (this.phase === PHASE_THINK) {
       this.phaseT -= dt;
@@ -145,7 +152,7 @@ class OxQuizZone implements MiniGame {
       if (this.combo > this.bestCombo) this.bestCombo = this.combo;
       this.score += POINTS;
       this.ctx.fx.impact(this.hip.x, this.hip.y, this.combo >= 3 ? 'big' : 'hit', {
-        color: C.success, sprite: 'sparkle', label: `+${POINTS}`,
+        color: C.success, sprite: 'sparkle', label: this.plus[POINTS] ?? '',
       });
       this.ctx.audio.playLadder('pop', this.combo);
       this.ctx.hud.setScore(this.score);
@@ -202,78 +209,87 @@ class OxQuizZone implements MiniGame {
 
   private drawZones(g: Renderer): void {
     const halfW = g.w / 2;
-    g.rect(0, 0, halfW, g.h, { fill: fade(C.success, 0.09) });
-    g.rect(halfW, 0, halfW, g.h, { fill: fade(C.hot, 0.09) });
-    g.line(halfW, 0, halfW, g.h, 2 * g.s, { stroke: fade(C.ink, 0.15) });
+    // The half the child is standing in lights up: "that is where I am".
+    g.rect(0, 0, halfW, g.h, { fill: fade(C.success, this.inO ? 0.34 : 0.15) });
+    g.rect(halfW, 0, halfW, g.h, { fill: fade(C.hot, this.inX ? 0.34 : 0.15) });
+    g.line(halfW, 0, halfW, g.h, 4 * g.s, { stroke: fade(C.ink, 0.25) });
 
-    const ringR = Math.min(g.w, g.h) * 0.24;
-    const oy = g.h * 0.46;
-    g.circle(halfW * 0.5, oy, ringR, { stroke: C.success, sw: 10 * g.s });
-    const xr = ringR * 0.86;
+    const compare = this.slotCompare[this.qIndex] === 1;
+    const ringR = Math.min(g.w, g.h) * 0.2;
+    const oy = g.h * 0.56;
+    const ox = halfW * 0.5;
     const xcx = halfW * 1.5;
-    g.line(xcx - xr, oy - xr, xcx + xr, oy + xr, 10 * g.s, { stroke: C.hot });
-    g.line(xcx + xr, oy - xr, xcx - xr, oy + xr, 10 * g.s, { stroke: C.hot });
+    g.circle(ox, oy, ringR, { fill: fade(C.white, 0.6), stroke: C.success, sw: 12 * g.s });
+    g.circle(xcx, oy, ringR, { fill: fade(C.white, 0.6), stroke: C.hot, sw: 12 * g.s });
+    if (!compare) {
+      g.circle(ox, oy, ringR * 0.58, { stroke: C.success, sw: 22 * g.s });
+      const xr = ringR * 0.46;
+      g.line(xcx - xr, oy - xr, xcx + xr, oy + xr, 22 * g.s, { stroke: C.hot });
+      g.line(xcx + xr, oy - xr, xcx - xr, oy + xr, 22 * g.s, { stroke: C.hot });
+      const ly = oy + ringR + 44 * g.s;
+      g.text(t('yes'), ox, ly, { size: 46 * g.s, weight: 800, display: true, align: 'center', baseline: 'middle', fill: C.text });
+      g.text(t('no'), xcx, ly, { size: 46 * g.s, weight: 800, display: true, align: 'center', baseline: 'middle', fill: C.text });
+    } else {
+      this.drawCompareShapes(g, this.slotCmpLeft[this.qIndex]!, ox, oy);
+      this.drawCompareShapes(g, this.slotCmpRight[this.qIndex]!, xcx, oy);
+    }
 
     // Last second: both borders blink fast — the universal "deciding now".
     if (this.phase === PHASE_THINK && this.phaseT < BLINK_SEC) {
       const blink = 0.4 + 0.5 * Math.abs(Math.sin(this.time * 16));
       g.save();
       g.alpha(blink);
-      g.rect(2 * g.s, 2 * g.s, halfW - 4 * g.s, g.h - 4 * g.s, { stroke: C.warn, sw: 8 * g.s });
-      g.rect(halfW + 2 * g.s, 2 * g.s, halfW - 4 * g.s, g.h - 4 * g.s, { stroke: C.warn, sw: 8 * g.s });
+      g.rect(4 * g.s, 4 * g.s, halfW - 8 * g.s, g.h - 8 * g.s, { stroke: C.warn, sw: 10 * g.s });
+      g.rect(halfW + 4 * g.s, 4 * g.s, halfW - 8 * g.s, g.h - 8 * g.s, { stroke: C.warn, sw: 10 * g.s });
       g.restore();
     }
 
     // Reveal: the correct zone brightens as if it just lit up.
     if (this.phase === PHASE_REVEAL) {
       const k = easeOutBack(1 - this.phaseT / this.phaseTotal);
-      const cx = this.correctSide === SIDE_O ? halfW * 0.5 : halfW * 1.5;
+      const cx = this.correctSide === SIDE_O ? ox : xcx;
       const col = this.correctSide === SIDE_O ? C.success : C.hot;
       g.save();
       g.alpha(clamp01(0.5 * k));
       g.circle(cx, oy, ringR * (0.8 + 0.4 * k), { fill: col });
       g.restore();
     }
-
-    if (this.slotCompare[this.qIndex]) {
-      this.drawCompareShapes(g, this.slotCmpLeft[this.qIndex]!, halfW * 0.5, g.h * 0.8);
-      this.drawCompareShapes(g, this.slotCmpRight[this.qIndex]!, halfW * 1.5, g.h * 0.8);
-    }
   }
 
+  /** Up to 6 chunky dots in a 3-wide grid, centred on (cx, cy). */
   private drawCompareShapes(g: Renderer, count: number, cx: number, cy: number): void {
-    const cols = 3;
-    const r = 15 * g.s;
-    const gap = r * 2.5;
+    const r = 26 * g.s;
+    const gap = r * 2.4;
+    const rows = Math.ceil(count / 3);
     for (let i = 0; i < count; i++) {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const x = cx + (col - 1) * gap;
-      const y = cy + row * gap * 0.9;
-      g.circle(x, y, r, { fill: C.accent, stroke: C.ink, sw: 2 * g.s });
+      const row = Math.floor(i / 3);
+      const inRow = Math.min(3, count - row * 3);
+      const x = cx + (i - row * 3 - (inRow - 1) / 2) * gap;
+      const y = cy + (row - (rows - 1) / 2) * gap;
+      g.circle(x, y, r, { fill: C.accent, stroke: C.ink, sw: 4 * g.s });
     }
   }
 
   private drawBanner(g: Renderer): void {
     if (this.phase === PHASE_GAP) return;
-    const bw = Math.min(g.w * 0.86, 680 * g.s);
-    const bh = 96 * g.s;
+    const bw = Math.min(g.w * 0.9, 900 * g.s);
+    const bh = 120 * g.s;
     const bx = g.w / 2 - bw / 2;
-    const by = g.h * 0.04;
-    g.roundRect(bx, by, bw, bh, 18 * g.s, { fill: fade(C.bg, 0.94), stroke: C.textFaint, sw: 3 * g.s });
+    const by = g.h * 0.03;
+    g.roundRect(bx, by, bw, bh, 22 * g.s, { fill: fade(C.white, 0.96), stroke: C.ink, sw: 4 * g.s });
     g.text(this.questionText(), g.w / 2, by + bh / 2, {
-      size: 30 * g.s, weight: 800, display: true, align: 'center', baseline: 'middle',
-      fill: C.text, maxWidth: bw * 0.92,
+      size: 48 * g.s, weight: 800, display: true, align: 'center', baseline: 'middle',
+      fill: C.text, maxWidth: bw * 0.94,
     });
 
     if (this.phase === PHASE_THINK) {
       const ratio = clamp01(this.phaseT / this.phaseTotal);
       const barW = bw * 0.9;
       const barX = g.w / 2 - barW / 2;
-      const barY = by + bh + 10 * g.s;
-      const barCol = ratio > 0.4 ? C.success : ratio > 0.2 ? C.warn : C.danger;
-      g.roundRect(barX, barY, barW, 10 * g.s, 5 * g.s, { fill: fade(C.ink, 0.1) });
-      g.roundRect(barX, barY, barW * ratio, 10 * g.s, 5 * g.s, { fill: barCol });
+      const barY = by + bh + 12 * g.s;
+      const barCol = ratio > 0.4 ? C.success : C.warn;
+      g.roundRect(barX, barY, barW, 14 * g.s, 7 * g.s, { fill: fade(C.ink, 0.15) });
+      g.roundRect(barX, barY, Math.max(1, barW * ratio), 14 * g.s, 7 * g.s, { fill: barCol });
     }
   }
 

@@ -4,24 +4,26 @@
 
    Mirrors src/engine/render/palette.ts (canvas side). If you change a colour
    here that also appears there, change both or the canvas and the DOM drift.
+   The brand/semantic block (1) is the mirrored part; the party block (1b) is
+   DOM-only chrome and has no canvas twin.
 
    Structure, and why:
      1. brand/semantic   hue-stable across modes
-     2. :root            the COMPLETE light palette — no colour's only
-                         definition may live inside a media query
+     1b. party           ink, backdrop gradients, slab metrics
+     2. :root            the COMPLETE palette — no colour's only definition
+                         may live inside a media query
      3. dark             applied twice, deliberately:
-                             :root:not([data-theme="light"])   → system dark
-                         so an in-app toggle wins in BOTH directions. The two
-                         blocks MUST stay in sync.
+                             @media (prefers-color-scheme: dark)
+                               :root:not([data-theme="light"])
+                             :root[data-theme="dark"]
+                         The two blocks MUST stay in sync. Both keep the SAME
+                         bright party look: this is played in one look, so
+                         "dark" only deepens the backdrop a little.
      4. metrics          spacing / radius / shadow / hit targets / motion
      5. a11y switches    reduced motion, prefers-contrast, 글자 크게
    ════════════════════════════════════════════════════════════════════════════ */
 
 /* ─── 1. brand / semantic ─────────────────────────────────────────────────── */
-/* LIGHT ONLY. A dark mode was removed deliberately: this runs on one machine
-   in a lit room for children, and the dark palette read as drab. The sprite
-   keyline is near-black ink on warm cream, which is what flat-cartoon art
-   assumes in the first place. */
 :root {
   /* primary — electric blue: actions, focus, progress */
   --c-primary-50: #eef2ff;
@@ -40,7 +42,7 @@
   --c-secondary-500: #a259ff;
   --c-secondary-600: #8433e6;
 
-  /* accent — amber: stars, rewards. SPARINGLY (<5% of pixels), never white text */
+  /* accent — amber: stars, rewards. Never white text */
   --c-accent-100: #fff3d6;
   --c-accent-400: #ffc53d;
   --c-accent-500: #ffb300;
@@ -72,13 +74,13 @@
   --c-p-outline: #0b0f20;
 
   /* ─── typography faces ─────────────────────────────────────────────────── */
+  /* Self-hosted Pretendard Variable (weights 45–920) is the only face. The
+     display register is weight 800–900 plus the outline below, not a second
+     font. Never add a CDN @font-face — it breaks connect-src 'self'. */
   --font-ui: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
     system-ui, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
-  /* GmarketSansBold is NOT self-hosted yet (see DESIGN.md § Fonts); until the
-     build copies it, this resolves to Pretendard and weight 800 carries the
-     "display" register. Never add a CDN @font-face — it breaks connect-src 'self'. */
-  --font-display: 'GmarketSansBold', var(--font-ui);
-  --font-num: var(--font-display);
+  --font-display: var(--font-ui);
+  --font-num: var(--font-ui);
 
   /* ─── type scale — 10-foot UI at ~2 m ──────────────────────────────────── */
   --fs-display-1: 6rem;
@@ -93,32 +95,82 @@
   --fs-legal: 1rem; /* 개인정보 안내 body, read up close */
 }
 
+/* ─── 1b. party ───────────────────────────────────────────────────────────── */
+:root {
+  /* The ink. Every outline, slab edge, text stroke and drop shadow is this one
+     colour, which is what makes a dozen saturated hues read as one product. */
+  --c-ink: #1d1442;
+  --c-ink-60: rgb(29 20 66 / 0.6);
+  --c-ink-25: rgb(29 20 66 / 0.25);
+
+  /* party hues — DOM chrome only. Rewards stay amber (block 1). */
+  --c-sun: #ffd23f;
+  --c-tangerine: #ff8a3d;
+  --c-bubblegum: #ff5c9a;
+  --c-sky: #35c6ff;
+  --c-grape: #7b5cff;
+  --c-mint: #2fd8a5;
+  --c-gold: #ffc21a;
+  --c-gold-edge: #c97a00;
+
+  /* The backdrop: a 3-stop gradient per phase (set on .app[data-phase]) plus
+     one drifting pattern layer. These are the attract defaults. */
+  --bg-1: #ffd23f;
+  --bg-2: #ff8a3d;
+  --bg-3: #ff5c9a;
+  --bg-pattern: rgb(255 255 255 / 0.18);
+  /* A veil over the gradient. 0 in the light look; the dark blocks deepen it
+     a touch without leaving the party look. */
+  --bg-veil: rgb(29 20 66 / 0);
+
+  /* The chunky slab: thick ink border, solid ink bottom edge, top highlight. */
+  --slab-bw: 4px;
+  --slab-edge: 6px;
+  --slab-hi: inset 0 4px 0 rgb(255 255 255 / 0.55);
+
+  /* Outlined display text: white fill, ink stroke ≈ 0.15 × size, drawn
+     BEHIND the fill (paint-order) so the glyph keeps its full weight, plus a
+     solid drop shadow. */
+  --outline-w: 0.15em;
+  --outline-drop: 0 0.06em 0 var(--c-ink), 0 0.1em 0.14em rgb(29 20 66 / 0.35);
+}
+
 /* ─── 2. light (complete palette, bare :root) ─────────────────────────────── */
 :root {
-  --c-canvas: #FFF3DC;
+  --c-canvas: #ff8a3d; /* body fallback under the gradient */
   --c-surface: #ffffff;
-  --c-surface-2: #FFF8EC;
-  --c-surface-3: #FFEBC9;
-  --c-game-bg: #FFF8EC; /* the GAME canvas stays dark in BOTH modes */
-  --c-border: #E8D8BB;
-  --c-border-strong: #CBB48C;
-  --c-text: #131a33; /* 16.1:1 on surface */
-  --c-text-2: #4a5678; /* 7.4:1 */
-  --c-text-3: #7a86a8; /* 3.9:1 — large/decorative only */
+  --c-surface-2: #fff6e5;
+  --c-surface-3: #ffe7bf;
+  --c-game-bg: #fff8ec;
+  --c-border: #e8d8bb;
+  --c-border-strong: #cbb48c;
+  --c-text: #1d1442; /* 16.9:1 on surface */
+  --c-text-2: #4a3f72; /* 9.1:1 */
+  --c-text-3: #6b6390; /* 5.6:1 */
   --c-on-primary: #ffffff;
   --c-on-accent: #3a2600; /* amber needs DARK text, never white */
   --c-link: var(--c-primary-600); /* never -500 for text */
-  --c-overlay: rgb(13 18 38 / 0.56);
-  --c-focus: #ffb300; /* amber ring reads on both blue and white */
-  --sh-1: 0 1px 2px rgb(17 24 51 / 0.06), 0 1px 3px rgb(17 24 51 / 0.1);
-  --sh-2: 0 2px 4px rgb(17 24 51 / 0.06), 0 4px 10px rgb(17 24 51 / 0.09);
-  --sh-3: 0 4px 8px rgb(17 24 51 / 0.08), 0 12px 24px rgb(17 24 51 / 0.12);
-  --sh-4: 0 8px 16px rgb(17 24 51 / 0.1), 0 24px 48px rgb(17 24 51 / 0.18);
+  --c-overlay: rgb(29 20 66 / 0.6);
+  --c-focus: #ffb300;
+  --sh-1: 0 1px 2px rgb(29 20 66 / 0.08), 0 1px 3px rgb(29 20 66 / 0.12);
+  --sh-2: 0 2px 4px rgb(29 20 66 / 0.08), 0 4px 10px rgb(29 20 66 / 0.12);
+  --sh-3: 0 4px 8px rgb(29 20 66 / 0.1), 0 12px 24px rgb(29 20 66 / 0.16);
+  --sh-4: 0 8px 16px rgb(29 20 66 / 0.12), 0 24px 48px rgb(29 20 66 / 0.22);
 }
 
 /* ─── 3a. dark — system preference (explicit light opt-out respected) ─────── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg-veil: rgb(29 20 66 / 0.14);
+    --bg-pattern: rgb(255 255 255 / 0.14);
+  }
+}
 
 /* ─── 3b. dark — explicit in-app toggle. KEEP IN SYNC WITH 3a. ────────────── */
+:root[data-theme='dark'] {
+  --bg-veil: rgb(29 20 66 / 0.14);
+  --bg-pattern: rgb(255 255 255 / 0.14);
+}
 
 /* ─── 4. metrics ──────────────────────────────────────────────────────────── */
 :root {
@@ -143,7 +195,7 @@
   --r-xl: 32px;
   --r-2xl: 40px;
   --r-pill: 999px;
-  --r-button: var(--r-lg); /* kid UI leans BIG radius */
+  --r-button: var(--r-lg); /* kid UI leans BIG radius: 24px minimum */
   --r-card: var(--r-xl);
 
   --bw-1: 2px;
@@ -153,9 +205,11 @@
   /* touch targets: 44px is the adult minimum; children need more */
   --hit-min: 56px;
   --hit-primary: 72px;
-  --hit-huge: 96px; /* lobby game cards */
+  --hit-huge: 96px;
 
-  --sh-focus: 0 0 0 var(--bw-focus) var(--c-focus), 0 0 0 8px rgb(255 179 0 / 0.28);
+  /* Amber ring + ink halo: amber alone vanishes on the yellow/orange backdrop,
+     ink alone vanishes on an ink slab. Together they read on everything. */
+  --sh-focus: 0 0 0 var(--bw-focus) var(--c-focus), 0 0 0 calc(var(--bw-focus) + 3px) var(--c-ink);
   --sh-glow-primary: 0 0 24px rgb(76 111 255 / 0.45);
 
   /* the Duolingo trick: a solid-colour bottom shadow = pressable 3D slab */
@@ -181,6 +235,11 @@
   --dur-slower: 560ms;
   --dur-celebrate: 900ms;
   --dur-wheel: 3400ms;
+  /* The START pulse and the backdrop drift (`--t-*`, not `--dur-*`: they are
+     DOM-only ambience with no canvas mirror). Long on purpose: ambient motion
+     that is never stationary but never asks for attention either. */
+  --t-pulse: 1200ms;
+  --t-drift: 14s;
 
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -195,8 +254,8 @@
   --stagger: 60ms;
 
   /* layout */
-  --shell-max: 68rem;
-  --reading-max: 44rem;
+  --shell-max: 72rem;
+  --reading-max: 46rem;
 }
 
 /* ─── 5. a11y switches ────────────────────────────────────────────────────── */
@@ -215,10 +274,10 @@ html[data-text-size='large'] {
    child standing 2 m away and must not move. */
 @media (max-height: 52rem) {
   :root {
-    --fs-display-1: 3.75rem;
-    --fs-display-2: 3rem;
-    --fs-title-1: 2.5rem;
-    --fs-title-2: 2.125rem;
+    --fs-display-1: 4.25rem;
+    --fs-display-2: 3.25rem;
+    --fs-title-1: 2.75rem;
+    --fs-title-2: 2.25rem;
   }
 }
 
@@ -245,6 +304,12 @@ html[data-text-size='large'] {
     transition-duration: 1ms !important;
     scroll-behavior: auto !important;
   }
+  /* The one sanctioned exception: a plain opacity crossfade (the roulette's
+     450ms reveal). Fades are not vestibular motion, and a 1ms cut to the
+     result reads as a glitch. */
+  :root:not([data-motion='full']) .rm-fade {
+    animation: rm-fade 450ms linear both !important;
+  }
 }
 :root[data-motion='reduced'] {
   --dur-instant: 1ms;
@@ -265,13 +330,24 @@ html[data-text-size='large'] {
   transition-duration: 1ms !important;
   scroll-behavior: auto !important;
 }
+:root[data-motion='reduced'] .rm-fade {
+  animation: rm-fade 450ms linear both !important;
+}
+@keyframes rm-fade {
+  from {
+    opacity: 0;
+  }
+}
 
-/* High contrast: drop gradients, thicken borders, force full-strength text. */
+/* High contrast: drop gradients, thicken borders, force full-strength text.
+   The backdrop falls back to its solid --bg-2, which is why every gradient
+   surface also declares a background-color. */
 @media (prefers-contrast: more) {
   :root {
     --c-text-3: var(--c-text-2);
     --bw-1: var(--bw-2);
     --c-border: var(--c-border-strong);
+    --bg-pattern: transparent;
   }
   * {
     background-image: none !important;
@@ -281,6 +357,7 @@ html[data-text-size='large'] {
   --c-text-3: var(--c-text-2);
   --bw-1: var(--bw-2);
   --c-border: var(--c-border-strong);
+  --bg-pattern: transparent;
 }
 :root[data-contrast='more'] * {
   background-image: none !important;

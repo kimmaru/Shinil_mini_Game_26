@@ -1,9 +1,10 @@
 const S = {
-  goal: '풍선을 크게 부풀려요!',
-  pop: '빵! 괜찮아요, 새 풍선이에요',
-  careful: '조금만 더 조심해요',
-  secondBalloon: '풍선이 하나 더 왔어요!',
-  nice: '잘하고 있어요!',
+  goal: '두 팔을 위아래로 흔들어 풍선을 불어요!',
+  prompt: '두 팔을 위아래로 흔들어요!',
+  promptSub: '펌프질하듯이 쭉쭉!',
+  pop: '뻥! 풍선이 터졌어요!',
+  nice: '와, 빵빵해요!',
+  fill: '풍선',
 } as const;
 
 export type Key = keyof typeof S;

@@ -13,11 +13,11 @@
 //    throw is a flexed elbow (cocked) that straightens FAST while the wrist
 //    moves quickly. All three must hold inside a 0.6s window, and then the
 //    hand is locked out for 500ms. Without that lockout a child scratching
-//    their arm fires three snowballs. See NEEDS.md.
+//    their arm fires three snowballs. 
 //
 // 2. THE FIRST FIFTEEN SECONDS MISS ON PURPOSE. The snowmen open with throws
 //    aimed a shoulder-width to the side of the player, so the telegraph
-//    teaches the dodge before it costs a heart. A game that opens on five
+//    teaches the dodge before it costs anything. A game that opens on five
 //    unavoidable hits is a game a 7-year-old watches rather than plays.
 import type {
   Detector, EndReason, GameContext, GameResult, MiniGame,
@@ -31,8 +31,6 @@ import { C, fade, hue } from '@/engine/render/palette';
 import { manifest } from './manifest';
 import { t } from './locale';
 
-const HEALTH = 5;
-
 /** Ball kinds. */
 const SMALL = 0;
 /** Wide and head-high: sidestepping is not enough, this one must be ducked. */
@@ -41,6 +39,10 @@ const MINE = 2;
 
 const PTS = 15;
 const LABEL = '+15';
+/** A snowball that was really aimed at the player and flew past: the dodge
+ *  is the other half of the game, and it is the only thing that rewards it. */
+const DODGE_PTS = 8;
+const DODGE_LABEL = '+8';
 
 // ─── The throw gesture, in numbers a frontal camera can actually see ─────────
 /** Elbow interior angle (deg) below which the arm counts as cocked. */
@@ -83,6 +85,8 @@ interface Snowman {
   aimX: number;
   aimY: number;
   big: boolean;
+  /** This throw is aimed at the player rather than past them. */
+  threat: boolean;
   /** 0..1 knocked-over animation. */
   hitPop: number;
 }
@@ -119,7 +123,7 @@ class SnowballFight implements MiniGame {
   private hits = 0;
   private thrown = 0;
   private taken = 0;
-  private lives = HEALTH;
+  private dodges = 0;
   private combo = 0;
   private bestCombo = 0;
   private time = 0;
@@ -142,7 +146,8 @@ class SnowballFight implements MiniGame {
     this.bodyR = g * 0.1;
     this.headR = g * 0.055;
     this.ballR = g * 0.034;
-    this.manR = g * 0.06;
+    // 0.075 -> a snowman body is ~8.5% of the view width, the target floor.
+    this.manR = g * 0.075;
     this.gravity = g * 1.05;
 
     for (let i = 0; i < SNOWMEN; i++) {
@@ -154,7 +159,7 @@ class SnowballFight implements MiniGame {
         // Staggered openings, so the first four shots arrive one at a time.
         timer: 1.6 + i * 1.1,
         aimT: 0, aimT0: 1, aimX: w / 2, aimY: h / 2,
-        big: false, hitPop: 0,
+        big: false, threat: false, hitPop: 0,
       });
     }
 
@@ -170,7 +175,6 @@ class SnowballFight implements MiniGame {
 
   start(): void {
     this.ctx.hud.setScore(0);
-    this.ctx.hud.setLives(this.lives, HEALTH);
     this.ctx.audio.music({ bpm: 112 });
   }
 
@@ -362,6 +366,7 @@ class SnowballFight implements MiniGame {
       m.aimX = this.torso.x + side * scale * randRange(this.ctx.rng, 1.2, 1.9);
       m.aimY = this.torso.y;
     }
+    m.threat = m.big || m.aimX === this.torso.x;
     m.aimX = clamp(m.aimX, w * 0.06, w * 0.94);
     m.aimY = clamp(m.aimY, h * 0.1, h * 0.92);
 
@@ -389,7 +394,10 @@ class SnowballFight implements MiniGame {
       (m.aimY - m.y) / flight - 0.5 * this.gravity * flight,
       r, flight + 1.6, m.big ? BIG : SMALL,
     );
-    if (i >= 0) this.balls.spin[i] = m.aimX > m.x ? 7 : -7;
+    if (i >= 0) {
+      this.balls.spin[i] = m.aimX > m.x ? 7 : -7;
+      this.balls.data[i] = m.threat ? 1 : 0;
+    }
     this.ctx.audio.play('swing', { gain: 0.35 });
   }
 
@@ -442,7 +450,11 @@ class SnowballFight implements MiniGame {
       }
 
       if (y > h * 0.95) {
+        const threat = this.balls.data[i] === 1;
         this.balls.kill(i);
+        // Only a body that was there can have dodged: an empty frame must
+        // never earn points (or a 오늘 최고 기록).
+        if (threat && this.bodyOk && this.player) this.dodged(x, h * 0.9);
         this.ctx.fx.burst(x, h * 0.95, {
           count: 6, color: fade(C.white, 0.7), speed: 150, life: 0.3, size: 3,
         });
@@ -457,7 +469,7 @@ class SnowballFight implements MiniGame {
     this.hits++;
     this.combo++;
     if (this.combo > this.bestCombo) this.bestCombo = this.combo;
-    const pts = PTS + Math.floor(this.combo / 4);
+    const pts = PTS + Math.min(5, Math.floor(this.combo / 4));
     this.score += pts;
     this.ctx.fx.impact(x, y, 'hit', {
       color: hue(manifest.theme!.hue), sprite: 'burst', label: LABEL,
@@ -471,11 +483,19 @@ class SnowballFight implements MiniGame {
     this.ctx.emit({ kind: 'scored', points: pts });
   }
 
+  private dodged(x: number, y: number): void {
+    this.score += DODGE_PTS;
+    this.dodges++;
+    this.ctx.fx.impact(x, y, 'tap', { color: C.info, sprite: 'sparkle', label: DODGE_LABEL });
+    this.ctx.audio.play('pop.high', { gain: 0.5 });
+    if (this.dodges % 3 === 1) this.ctx.hud.toast(t('dodge'), { color: C.info });
+    this.ctx.hud.setScore(this.score);
+    this.ctx.emit({ kind: 'scored', points: DODGE_PTS });
+  }
+
   private takeHit(x: number, y: number): void {
     this.taken++;
-    this.lives--;
     this.combo = 0;
-    this.ctx.hud.setLives(this.lives, HEALTH);
     this.ctx.hud.setCombo(0);
     // A real cost, told gently: a white splat and a soft thud, no red, no
     // flash. Repeated failure cues lose this age group inside a minute.
@@ -487,7 +507,6 @@ class SnowballFight implements MiniGame {
     this.ctx.audio.play('thud', { gain: 0.5 });
     this.ctx.hud.toast(t('oops'), { color: C.info });
     this.ctx.emit({ kind: 'miss' });
-    if (this.lives <= 0) this.ctx.emit({ kind: 'clearEarly' });
   }
 
   render(g: Renderer, _interp: number): void {
@@ -514,6 +533,9 @@ class SnowballFight implements MiniGame {
       });
       g.circle(0, -this.manR * 0.62, this.manR * 0.66, {
         fill: fade(C.white, 0.95), stroke: C.ink, sw: 4 * g.s,
+      });
+      g.line(-this.manR * 0.5, -this.manR * 0.2, this.manR * 0.5, -this.manR * 0.2, this.manR * 0.2, {
+        stroke: C.accent,
       });
       g.circle(-this.manR * 0.22, -this.manR * 0.72, this.manR * 0.1, { fill: C.ink });
       g.circle(this.manR * 0.22, -this.manR * 0.72, this.manR * 0.1, { fill: C.ink });
@@ -569,7 +591,7 @@ class SnowballFight implements MiniGame {
 
     if (!this.bodyOk) {
       g.text(t('hint'), g.w / 2, g.h * 0.14, {
-        size: 32 * g.s, weight: 700, align: 'center', fill: C.text,
+        size: 36 * g.s, weight: 700, align: 'center', fill: C.text,
         stroke: C.bg, sw: 6 * g.s,
       });
     }
@@ -581,7 +603,7 @@ class SnowballFight implements MiniGame {
     if (this.taken === 0 && this.hits > 0) highlights.push('한 번도 안 맞았어요!');
     return {
       gameId: manifest.id,
-      cleared: this.lives > 0,
+      cleared: this.hits > 0,
       rawScore: this.score,
       maxScore: manifest.scoring.maxScore,
       normalized: 0,

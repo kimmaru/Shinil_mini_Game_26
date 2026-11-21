@@ -26,6 +26,7 @@ const BEE = 1;
 /** Highlighted on the skeleton: "these are the parts that matter". */
 const HANDS = [L.LEFT_WRIST, L.RIGHT_WRIST] as const;
 
+const LABELS = ['+0', '+1', '+2', '+3', '+4', '+5', '+6', '+7', '+8'] as const;
 const POINTS = 2;
 /** Every 4th catch in a row is worth an extra point. */
 const COMBO_STEP = 4;
@@ -129,7 +130,7 @@ class MosquitoClap implements MiniGame {
     // Bees arrive only once the player has the rhythm, and stay rare: this is
     // a 7-year-old's first game of the party.
     const bee = d > 0.35 && chance(this.ctx.rng, 0.18);
-    const r = Math.min(w, h) * (bee ? 0.062 : 0.055);
+    const r = Math.min(w, h) * (bee ? 0.07 : 0.066);
     const i = this.bugs.spawn(
       randRange(this.ctx.rng, w * 0.15, w * 0.85),
       randRange(this.ctx.rng, h * 0.15, h * 0.75),
@@ -175,8 +176,8 @@ class MosquitoClap implements MiniGame {
       this.misses++;
       this.combo = 0;
       this.ctx.hud.setCombo(0);
-      this.ctx.hud.toast(t('bee'), { color: C.warn });
-      this.ctx.audio.play('miss', { gain: 0.55 });
+      this.ctx.hud.toast(t('bee'), { color: C.info });
+      this.ctx.audio.play('miss', { gain: 0.25 });
       // Quiet by construction: the engine refuses to shake or flash here.
       this.ctx.fx.miss(x, y);
       this.ctx.emit({ kind: 'miss' });
@@ -195,7 +196,7 @@ class MosquitoClap implements MiniGame {
     this.ctx.fx.impact(x, y, this.combo >= 8 ? 'big' : 'hit', {
       color: C.success,
       sprite: 'sparkle',
-      label: `+${points}`,
+      label: LABELS[Math.min(points, LABELS.length - 1)]!,
     });
     // Rising pitch per combo step: the cheapest strong reward signal there is.
     this.ctx.audio.playLadder('pop', this.combo);
