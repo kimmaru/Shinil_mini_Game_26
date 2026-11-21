@@ -89,27 +89,26 @@ export function Intro({
       <h1 className="display-2 center slam-in">{game.nameKo}</h1>
       {game.taglineKo ? <p className="h3 center dim">{game.taglineKo}</p> : null}
 
-      <ol className="bullets card card--tinted intro__how">
-        {game.howToKo.map((line, i) => (
-          <li key={line} style={{ animationDelay: `${i * 60}ms` }} className="pop-in">
-            <span className="mark num" aria-hidden="true">
-              {i + 1}.
-            </span>
-            <span>{line}</span>
-          </li>
-        ))}
-      </ol>
+      {/* The gesture badges ARE the instructions. A numbered list of sentences
+          above them said the same thing twice, in the slower medium — and a
+          child standing two metres back does not read it. The full text stays
+          in the screen-reader announcement above.
 
-      {/* shortcut: static badges stand in for the looping gesture demo. Replace
-          with VirtualPoseSource driving g.skeleton once the engine loop lands —
-          the manifest already declares exactly which gestures to demonstrate. */}
-      <div className="row intro__gestures">
-        {game.gestures.map((g) => {
+          shortcut: static badges stand in for a looping gesture demo. Replace
+          with VirtualPoseSource driving g.skeleton once that lands — the
+          manifest already declares exactly which gestures to demonstrate. */}
+      <div className="moves">
+        {game.gestures.map((g, i) => {
           const hint = GESTURE_HINTS[g];
           if (!hint) return null;
           return (
-            <span key={g} className="chip breathe">
-              <SpriteIcon id={hint[0]} size={28} /> {hint[1]}
+            <span
+              key={g}
+              className="move pop-in"
+              style={{ animationDelay: `${i * 70}ms` }}
+            >
+              <SpriteIcon id={hint[0]} size={96} hue={game.hue} label={hint[1]} />
+              <span className="move__label">{hint[1]}</span>
             </span>
           );
         })}

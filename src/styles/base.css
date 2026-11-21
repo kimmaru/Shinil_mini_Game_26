@@ -1277,3 +1277,72 @@ table.legal-table th {
     font-size: var(--fs-body);
   }
 }
+
+
+/* ─── Promise row ────────────────────────────────────────────────────────────
+   A list of sentences, replaced by a row of pictures.
+
+   A seven-year-old does not read four sentences before a game starts, and the
+   adult who wants the detail has it one tap away. The icon carries the
+   meaning; the word underneath only names it, so it is small and quiet. */
+.promises {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: var(--sp-4);
+  width: min(100%, 52rem);
+  margin: var(--sp-5) auto;
+  padding: 0;
+  list-style: none;
+}
+.promise {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-4) var(--sp-2);
+  background: var(--c-surface);
+  border: var(--bw-1) solid var(--c-border);
+  border-radius: var(--r-lg);
+  /* The same pressable slab the buttons use, so a promise reads as part of
+     the same object family even though you cannot press it. */
+  box-shadow: 0 3px 0 var(--c-border-strong);
+}
+.promise__label {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  color: var(--c-text-2);
+  text-align: center;
+  word-break: keep-all;
+}
+
+
+/* ─── Move badges ───────────────────────────────────────────────────────────
+   What the player has to DO, at a size you can read from two metres while
+   standing up. These replaced a numbered list of sentences that said the same
+   thing more slowly. */
+.moves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  justify-content: center;
+  margin: var(--sp-5) 0;
+}
+.move {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 8rem;
+  padding: var(--sp-4) var(--sp-3);
+  background: var(--c-surface);
+  border: var(--bw-2) solid color-mix(in oklab, hsl(var(--hue, 210) 70% 60%) 45%, var(--c-border));
+  border-radius: var(--r-lg);
+  box-shadow: 0 4px 0 color-mix(in oklab, hsl(var(--hue, 210) 60% 45%) 35%, var(--c-border-strong));
+}
+.move__label {
+  font-size: var(--fs-label);
+  font-weight: 800;
+  color: var(--c-text);
+  text-align: center;
+  word-break: keep-all;
+}

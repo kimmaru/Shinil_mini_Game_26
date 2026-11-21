@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '../components/Button';
 import { ProgressRing } from '../components/ProgressRing';
 import { Screen } from '../components/Screen';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 export const BREAK_MS = 60_000;
 
@@ -18,11 +19,13 @@ export interface BreakPromptProps {
   onStop: () => void;
 }
 
-const TIPS: readonly string[] = [
-  '물 한 잔 마시고 올까요?',
-  '창문 밖 먼 곳을 20초만 바라봐요. 눈이 쉬어요.',
-  '팔과 다리를 쭉 펴고 기지개를 켜요.',
-  '바닥에 떨어진 물건이 없는지 다시 봐요.',
+/** A picture and two words. The sentences these replaced were read by nobody:
+ *  this screen appears when a child has been jumping for ten minutes. */
+const TIPS: ReadonlyArray<readonly [string, string]> = [
+  ['s-cup', '물 한 잔'],
+  ['s-window', '창밖 20초'],
+  ['s-stretch', '기지개'],
+  ['s-shoe', '바닥 정리'],
 ];
 
 export function BreakPrompt({ rounds, onContinue, onStop }: BreakPromptProps): React.ReactElement {
@@ -39,7 +42,7 @@ export function BreakPrompt({ rounds, onContinue, onStop }: BreakPromptProps): R
   }, []);
 
   const secs = Math.ceil(left / 1000);
-  const tip = TIPS[Math.min(TIPS.length - 1, Math.floor(rounds / 8)) % TIPS.length]!;
+  const [tipIcon, tipText] = TIPS[Math.min(TIPS.length - 1, Math.floor(rounds / 8)) % TIPS.length]!;
 
   return (
     <Screen
@@ -68,7 +71,12 @@ export function BreakPrompt({ rounds, onContinue, onStop }: BreakPromptProps): R
           {secs}
         </span>
       </ProgressRing>
-      <p className="body-lg center">{tip}</p>
+      <div className="promises" style={{ gridTemplateColumns: '1fr', maxWidth: '14rem' }}>
+        <span className="promise">
+          <SpriteIcon id={tipIcon} size={88} label={tipText} />
+          <span className="promise__label">{tipText}</span>
+        </span>
+      </div>
     </Screen>
   );
 }

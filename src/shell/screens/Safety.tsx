@@ -18,11 +18,11 @@ export interface SafetyProps {
 }
 
 const RULES: ReadonlyArray<readonly [string, string]> = [
-  ['s-ruler', '팔을 쫙 펴도 안 닿는 2m 공간을 만들어요.'],
-  ['s-chair', '의자, 책가방, 컵은 뒤로 치워요.'],
-  ['s-shoe', '미끄러운 바닥은 조심! 양말보다 운동화가 좋아요.'],
-  ['s-dog', '동생이나 강아지가 뒤에 없는지 봐요.'],
-  ['droplet', '목 마르면 언제든 쉬어도 돼요.'],
+  ['s-ruler', '2m 공간'],
+  ['s-chair', '의자 치우기'],
+  ['s-shoe', '운동화'],
+  ['s-dog', '뒤에 아무도'],
+  ['droplet', '목마르면 쉬기'],
 ];
 
 export function Safety({ onAck }: SafetyProps): React.ReactElement {
@@ -51,13 +51,11 @@ export function Safety({ onAck }: SafetyProps): React.ReactElement {
         </Button>
       }
     >
-      <ul className="bullets card">
+      <ul className="promises">
         {RULES.map(([mark, text]) => (
-          <li key={mark}>
-            <span className="mark">
-              <SpriteIcon id={mark} size={30} />
-            </span>
-            <span>{text}</span>
+          <li key={mark} className="promise">
+            <SpriteIcon id={mark} size={76} label={text} />
+            <span className="promise__label">{text}</span>
           </li>
         ))}
       </ul>

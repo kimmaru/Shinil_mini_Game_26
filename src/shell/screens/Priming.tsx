@@ -22,11 +22,19 @@ export interface PrimingProps {
   progressLabelKo: string;
 }
 
-const POINTS: ReadonlyArray<readonly [string, string, string]> = [
-  ['ui-lock', '카메라 화면은 이 컴퓨터 안에서만 봐요.', '인터넷으로 보내지 않아요.'],
-  ['ui-ban', '녹화하지 않아요.', '사진도, 영상도 남지 않아요.'],
-  ['ui-joints', '게임이 보는 건 몸의 관절 위치(점과 선) 뿐이에요.', ''],
-  ['ui-keyboard', '카메라 없이 키보드로도 놀 수 있어요!', ''],
+/**
+ * Four promises, as pictures.
+ *
+ * These were four sentences. A seven-year-old does not read four sentences
+ * before a game, and an adult does not need them spelled out twice — the full
+ * notice is one tap away under 보호자님께 안내, where it belongs. The icon
+ * carries the meaning; the word underneath only names it.
+ */
+const POINTS: ReadonlyArray<readonly [string, string]> = [
+  ['ui-lock', '이 컴퓨터 안에서만'],
+  ['ui-ban', '녹화 안 해요'],
+  ['ui-joints', '점과 선만 봐요'],
+  ['ui-keyboard', '키보드로도 OK'],
 ];
 
 export function Priming({
@@ -62,16 +70,11 @@ export function Priming({
         </>
       }
     >
-      <ul className="bullets card">
-        {POINTS.map(([mark, strong, rest]) => (
-          <li key={mark}>
-            <span className="mark">
-              <SpriteIcon id={mark} size={30} />
-            </span>
-            <span>
-              <strong>{strong}</strong>
-              {rest ? ` ${rest}` : ''}
-            </span>
+      <ul className="promises">
+        {POINTS.map(([mark, label]) => (
+          <li key={mark} className="promise">
+            <SpriteIcon id={mark} size={76} label={label} />
+            <span className="promise__label">{label}</span>
           </li>
         ))}
       </ul>
