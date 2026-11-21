@@ -15,11 +15,13 @@ export type ClipName =
   | 'step-lr' | 'knee-run' | 'hold-poses'
   | 'two-cross' | 'far-small' | 'no-legs' | 'laggy';
 
-/** One jump arc: hips rise then fall, ankles leave the floor. */
-function jumpArc(phase: number): Partial<BodyParams> {
+/** One jump arc: hips rise then fall, knees tuck, arms swing up.
+ *  `baseY` must be the clip's own standing hip height — hardcoding STAND.hipY
+ *  silently erases the jump in any clip that stands somewhere else. */
+function jumpArc(phase: number, baseY = STAND.hipY): Partial<BodyParams> {
   const up = Math.sin(clamp01(phase) * Math.PI);
   return {
-    hipY: STAND.hipY - 0.13 * up,
+    hipY: baseY - 0.13 * up,
     kneeL: 3 + 30 * up, kneeR: 3 + 30 * up,
     armL: lerp(-78, -30, up), armR: lerp(-102, -150, up),
   };
@@ -78,7 +80,7 @@ const CLIPS: Record<ClipName, () => PoseClip> = {
 
   /** 8 squats of varied depth. */
   'squat-x8': () =>
-    buildClip('squat-x8', 18, (_u, t) => {
+    buildClip('squat-x8', 17.6, (_u, t) => {
       const period = 2.2;
       const ph = (t % period) / period;
       const n = Math.floor(t / period);
@@ -86,18 +88,16 @@ const CLIPS: Record<ClipName, () => PoseClip> = {
       return squatBy(depth * (0.65 + 0.35 * ((n % 3) / 2)));
     }, { seed: 15 }),
 
-  /** 12 claps at varied height and speed. */
+  /** Exactly 12 claps, cycling through the three clap heights. */
   'clap-x12': () =>
-    buildClip('clap-x12', 18, (_u, t) => {
+    buildClip('clap-x12', 12 * 1.4, (_u, t) => {
       const period = 1.4;
       const ph = (t % period) / period;
       const n = Math.floor(t / period);
-      // Closed briefly at the top of each cycle; open the rest of the time so
-      // the detector's re-arm path is exercised every single clap.
+      // Closed briefly at the top of each cycle, wide open the rest of the
+      // time, so the detector's re-arm path runs on every single clap.
       const close = ph < 0.3 ? Math.sin((ph / 0.3) * Math.PI) : 0;
-      const base = clapAt(close);
-      const lift = (n % 3) * 26; // chest / face / overhead
-      return { ...base, armL: (base.armL ?? 0) + lift, armR: (base.armR ?? 0) - lift };
+      return clapAt(close, (n % 3) as 0 | 1 | 2);
     }, { seed: 16 }),
 
   /** Big fast arm swings in both directions — for slice and swat games. */
@@ -177,7 +177,7 @@ const CLIPS: Record<ClipName, () => PoseClip> = {
       hipY: 0.5,
       armL: 20 + 70 * Math.sin(t * 2),
       armR: 160 - 70 * Math.sin(t * 2),
-      ...(t % 3 < 0.5 ? jumpArc((t % 3) / 0.5) : {}),
+      ...(t % 3 < 0.5 ? jumpArc((t % 3) / 0.5, 0.5) : {}),
     }), { seed: 23, jitter: 0.004 }),
 
   /** Standing close to a laptop: legs and feet never visible. Games that need
@@ -192,7 +192,7 @@ const CLIPS: Record<ClipName, () => PoseClip> = {
   laggy: () =>
     buildClip('laggy', 14, (_u, t) => ({
       armL: 20 + 90 * Math.sin(t * 2), armR: 160 - 90 * Math.sin(t * 2),
-      ...(t % 2.5 < 0.45 ? jumpArc((t % 2.5) / 0.45) : {}),
+      ...(t % 2.5 < 0.45 ? jumpArc((t % 2.5) / 0.45, STAND.hipY) : {}),
     }), { seed: 25, fps: 10, jitter: 0.008, dropout: 0.12, frameDrop: 0.06 }),
 };
 

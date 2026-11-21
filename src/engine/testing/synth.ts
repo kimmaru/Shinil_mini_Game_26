@@ -266,14 +266,34 @@ export const armAt = (side: 'L' | 'R', deg: number): Partial<BodyParams> =>
   side === 'L'
     ? { armL: deg, elbowL: 4, armR: -102 }
     : { armR: 180 - deg, elbowR: 4, armL: -78 };
-/** Hands brought together in front of the chest (a clap, at `close` = 1). */
-export const clapAt = (close: number): Partial<BodyParams> => {
+/**
+ * Hands brought together, with a selectable clap height.
+ *
+ * `close`: 0 = hands apart, 1 = clapped. `height`: 0 = at the shoulders,
+ * 1 = in front of the chest, 2 = down at the waist.
+ *
+ * The forearm (0.78 shoulder-widths) is longer than the half shoulder-width it
+ * must cross, so the hands only meet when the elbows swing out — which is what
+ * a real clap looks like. Convergence therefore depends on the SAME upper-arm
+ * angle that sets the height, so the two cannot be varied independently: these
+ * three presets were found by searching the (upper, bend) space for pairs whose
+ * wrists meet (measured gap < 0.15 shoulder-widths) at distinct heights.
+ */
+export const clapAt = (close: number, height: 0 | 1 | 2 = 1): Partial<BodyParams> => {
   const c = clamp01(close);
-  return {
-    armL: lerp(-20, 8, c), armR: lerp(200, 172, c),
-    elbowL: lerp(55, 92, c), elbowR: lerp(55, 92, c),
-  };
+  // [upper-arm angle, elbow bend] with the wrists at the midline.
+  const CLOSED: readonly [number, number][] = [
+    [250, 148], // at the shoulders
+    [284, 122], // in front of the chest
+    [280, 62],  // down at the waist
+  ];
+  const [upper, bend] = CLOSED[height]!;
+  // Opening is a straightening of the elbows, which swings the wrists apart
+  // without touching the angle that controls convergence.
+  const b = lerp(bend - 58, bend, c);
+  return { armL: upper, armR: 180 - upper, elbowL: b, elbowR: b };
 };
+
 export const squatBy = (depth: number): Partial<BodyParams> => ({
   hipY: STAND.hipY + 0.11 * clamp01(depth),
   kneeL: 3 + 62 * clamp01(depth), kneeR: 3 + 62 * clamp01(depth),
