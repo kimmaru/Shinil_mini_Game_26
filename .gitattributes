@@ -1,3 +1,5 @@
-# The macOS launcher must keep LF endings on every checkout, Windows included:
-# a CRLF line makes bash fail with "$'\r': command not found".
-*.command text eol=lf
+# LF on every checkout, Windows included. Two things depend on it:
+#  - `npm run check:frozen` hashes the contract files byte for byte; a CRLF
+#    checkout (core.autocrlf=true, Git for Windows' default) fails the gate.
+#  - the macOS launcher: a CRLF line makes bash fail with "$'\r': command not found".
+* text=auto eol=lf
