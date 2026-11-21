@@ -115,14 +115,14 @@ export const toInfo = (m: MiniGameManifest): GameInfo => ({
 // with zero authored games the shell shows "아직 게임이 없어요" instead of lying.
 // Delete this table once Wave 1 lands.
 const DEV_GAMES: readonly GameInfo[] = [
-  ['mosquito-clap', '모기 잡기', '손뼉으로 모기를 잡아요', '🦟', 120, 'clap'],
-  ['candy-rain-catch', '사탕 받기', '떨어지는 사탕을 받아요', '🍬', 330, 'reach'],
-  ['air-whack-mole', '두더지 잡기', '튀어나오면 때려요', '🐹', 28, 'reach'],
-  ['balloon-pop-party', '풍선 터뜨리기', '풍선을 모두 터뜨려요', '🎈', 285, 'swing'],
-  ['fruit-slash', '과일 자르기', '손으로 쓱 베어요', '🍉', 8, 'swing'],
-  ['wrist-aim-target', '과녁 맞히기', '손으로 조준해요', '🎯', 200, 'reach'],
-  ['spider-touch', '거미 쫓기', '다가오면 손으로 쳐요', '🕷️', 265, 'reach'],
-  ['cheer-combo', '응원 콤보', '박자에 맞춰 응원해요', '📣', 45, 'raise'],
+  ['mosquito-clap', '모기 잡기', '손뼉으로 모기를 잡아요', 'mosquito', 120, 'clap'],
+  ['candy-rain-catch', '사탕 받기', '떨어지는 사탕을 받아요', 'candy', 330, 'reach'],
+  ['air-whack-mole', '두더지 잡기', '튀어나오면 때려요', 'target', 28, 'reach'],
+  ['balloon-pop-party', '풍선 터뜨리기', '풍선을 모두 터뜨려요', 'balloon', 285, 'swing'],
+  ['fruit-slash', '과일 자르기', '손으로 쓱 베어요', 'star', 8, 'swing'],
+  ['wrist-aim-target', '과녁 맞히기', '손으로 조준해요', 'target', 200, 'reach'],
+  ['spider-touch', '거미 쫓기', '다가오면 손으로 쳐요', 'bug', 265, 'reach'],
+  ['cheer-combo', '응원 콤보', '박자에 맞춰 응원해요', 'g-raise', 45, 'raise'],
 ].map(([id, nameKo, taglineKo, icon, hue, g]) => ({
   id: id as string,
   nameKo: nameKo as string,
@@ -149,7 +149,7 @@ export function describeGame(id: GameId): GameInfo {
     nameKo: id,
     taglineKo: '',
     howToKo: [],
-    icon: '🎮',
+    icon: 'ui-dice',
     hue: 230,
     durationMs: 40_000,
     intensity: 2,
@@ -170,7 +170,7 @@ export interface SessionState {
   /** Where to return when an overlay closes. */
   overlay: Overlay;
   inputMode: InputMode;
-  /** True only while a MediaStream track is live. Drives the 🔴 카메라 켜짐 chip. */
+  /** True only while a MediaStream track is live. Drives the 카메라 켜짐 chip. */
   cameraLive: boolean;
   cameraError: CameraErrorKind | null;
   /** 0..1 plus a Korean label, for both warmup stages. */

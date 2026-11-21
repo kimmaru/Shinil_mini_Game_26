@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CalibrationProfile } from '@/engine/types';
 import type { PoseSource } from '@/engine/pose/source';
 import type { Phase } from '../useSession';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 /** One gesture detector's live state. The enter/exit lines are the point. */
 export interface DebugDetectorBar {
@@ -174,7 +175,7 @@ export function DebugOverlay({
       <header className="dbg__head">
         <strong>debug</strong>
         <button type="button" onClick={() => setOpen(false)}>
-          ✕
+          <SpriteIcon id="ui-close" size={16} on="dark" />
         </button>
       </header>
 
@@ -206,7 +207,7 @@ export function DebugOverlay({
       </dl>
 
       <canvas ref={graphRef} className="dbg__graph" />
-      {snap.warning ? <p className="dbg__warn">⚠ {snap.warning}</p> : null}
+      {snap.warning ? <p className="dbg__warn"><SpriteIcon id="ui-warn" size={16} on="dark" /> {snap.warning}</p> : null}
 
       <section className="dbg__sec">
         <h3>detectors</h3>

@@ -17,6 +17,7 @@
 import { useSyncExternalStore } from 'react';
 import type { HudService, Slot } from '@/engine/types';
 import { Button } from '../components/Button';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 export interface HudBar {
   key: string;
@@ -284,7 +285,7 @@ export function HudOverlay({
         <div className="hud__lives" aria-label={`남은 기회 ${s.lives}개`}>
           {Array.from({ length: Math.max(s.livesMax, s.lives) }, (_, i) => (
             <span key={i} aria-hidden="true">
-              {i < s.lives ? '❤️' : '🤍'}
+              <SpriteIcon id={i < s.lives ? 'heart' : 'ui-heart-empty'} size={26} on="dark" />
             </span>
           ))}
         </div>

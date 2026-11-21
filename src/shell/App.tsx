@@ -578,12 +578,12 @@ export function App({ services = {} }: AppProps): React.ReactElement {
                   <Button
                     variant="primary"
                     size="huge"
-                    icon="▶"
+                    icon="ui-play"
                     onClick={() => dispatch({ type: 'resume' })}
                   >
                     계속하기
                   </Button>
-                  <Button variant="ghost" size="huge" icon="🎲" onClick={() => dispatch({ type: 'next' })}>
+                  <Button variant="ghost" size="huge" icon="ui-dice" onClick={() => dispatch({ type: 'next' })}>
                     다른 게임
                   </Button>
                 </div>

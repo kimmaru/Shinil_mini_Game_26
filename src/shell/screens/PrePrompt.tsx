@@ -6,6 +6,7 @@
 import { useEffect } from 'react';
 import { Button } from '../components/Button';
 import { Screen } from '../components/Screen';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 export const PREPROMPT_MS = 1200;
 
@@ -23,11 +24,11 @@ export function PrePrompt({ onReady, onKeyboard }: PrePromptProps): React.ReactE
 
   return (
     <Screen
-      icon="👆"
+      icon="ui-point-up"
       titleKo="곧 브라우저가 물어봐요"
       live="assertive"
       footer={
-        <Button variant="link" icon="⌨️" onClick={onKeyboard}>
+        <Button variant="link" icon="ui-keyboard" onClick={onKeyboard}>
           그냥 키보드로 놀래요
         </Button>
       }
@@ -38,7 +39,7 @@ export function PrePrompt({ onReady, onKeyboard }: PrePromptProps): React.ReactE
           라고 물어봐요.
         </p>
         <p className="h2 breathe">
-          <strong>[허용]</strong> 을 눌러 주세요! 👆
+          <strong>[허용]</strong> 을 눌러 주세요! <SpriteIcon id="ui-point-up" size={22} on="dark" />
         </p>
       </div>
     </Screen>

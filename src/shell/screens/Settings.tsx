@@ -64,10 +64,10 @@ export function Settings({
   return (
     <Screen
       variant="read"
-      icon="⚙️"
+      icon="ui-gear"
       titleKo="설정"
       actions={
-        <Button variant="primary" size="huge" icon="✓" sfx="ui.confirm" onClick={onClose}>
+        <Button variant="primary" size="huge" icon="ui-check-circle" sfx="ui.confirm" onClick={onClose}>
           다 했어요
         </Button>
       }
@@ -154,8 +154,8 @@ export function Settings({
           labelKo="소리"
           value={settings.sound ? 'on' : 'off'}
           options={[
-            ['on', '켜기 🔊'],
-            ['off', '끄기 🔇'],
+            ['on', '켜기'],
+            ['off', '끄기'],
           ]}
           onChange={(v) => set('sound', v === 'on')}
         />
@@ -192,7 +192,7 @@ export function Settings({
           <div className="row">
             <Button
               variant="danger"
-              icon="🗑️"
+              icon="ui-trash"
               sfx="ui.deny"
               onClick={() => {
                 setConfirmWipe(false);
@@ -206,7 +206,7 @@ export function Settings({
             </Button>
           </div>
         ) : (
-          <Button variant="ghost" icon="🗑️" onClick={() => setConfirmWipe(true)}>
+          <Button variant="ghost" icon="ui-trash" onClick={() => setConfirmWipe(true)}>
             전체 삭제
           </Button>
         )}

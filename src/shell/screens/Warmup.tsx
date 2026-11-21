@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '../components/Button';
 import { ProgressRing } from '../components/ProgressRing';
 import { Screen } from '../components/Screen';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 export const WARMUP_TIMEOUT_MS = 60_000;
 /** Offer the keyboard this early — long before the hard timeout. */
@@ -21,7 +22,7 @@ export interface WarmupProps {
   onKeyboard: () => void;
 }
 
-const FACES = ['🏃', '🤸', '🕺', '💃', '🤾', '🧘'];
+const FACES = ['s-run', 's-stretch', 's-dance', 'g-balance', 'g-swing', 'g-still'];
 
 export function Warmup({ progress, labelKo, onKeyboard }: WarmupProps): React.ReactElement {
   const [tick, setTick] = useState(0);
@@ -42,7 +43,7 @@ export function Warmup({ progress, labelKo, onKeyboard }: WarmupProps): React.Re
       titleKo="게임을 깨우고 있어요"
       footer={
         slow ? (
-          <Button variant="link" icon="⌨️" onClick={onKeyboard}>
+          <Button variant="link" icon="ui-keyboard" onClick={onKeyboard}>
             기다리기 싫어요 — 키보드로 놀래요
           </Button>
         ) : null
@@ -55,7 +56,7 @@ export function Warmup({ progress, labelKo, onKeyboard }: WarmupProps): React.Re
         labelKo="준비 중"
       >
         <span className="display-2" aria-hidden="true">
-          {FACES[tick % FACES.length]}
+          <SpriteIcon id={FACES[tick % FACES.length]!} size={64} on="dark" />
         </span>
       </ProgressRing>
       <p className="body-lg center dim">{labelKo}</p>

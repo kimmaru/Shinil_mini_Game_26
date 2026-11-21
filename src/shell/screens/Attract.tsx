@@ -24,6 +24,7 @@ import { PlayerChip } from '../components/PlayerChip';
 import type { PoseSource } from '@/engine/pose/source';
 import type { Detector, GestureService, PlayerPose } from '@/engine/types';
 import { L, ny, visible } from '@/engine/pose/landmarks';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 /** After this long with no jump, tell them about the spacebar. */
 export const KEYBOARD_HINT_MS = 25_000;
@@ -176,7 +177,7 @@ export function Attract({
             className="attract__go"
             onClick={fire}
           >
-            {cameraMode ? '🙋 점프!' : '▶ 시작'}
+            {cameraMode ? '점프!' : '시작'}
           </Button>
         </DwellRing>
 
@@ -184,7 +185,7 @@ export function Attract({
           {!cameraMode
             ? '스페이스바를 누르거나 버튼을 눌러 주세요.'
             : armed
-              ? '좋아요! 이제 점프해 보세요 🎉'
+              ? '좋아요! 이제 점프해 보세요!'
               : dwell > 0
                 ? '보이고 있어요… 그대로 서 주세요'
                 : '카메라 앞에 서 볼까요?'}
@@ -192,7 +193,7 @@ export function Attract({
 
         {showHint ? (
           <p className="chip pop-in attract__kbd">
-            ⌨️ 스페이스바를 눌러도 돼요
+            <SpriteIcon id="ui-keyboard" size={20} on="dark" /> 스페이스바를 눌러도 돼요
           </p>
         ) : null}
 
@@ -208,18 +209,18 @@ export function Attract({
       <div className="attract__foot">
         {cameraMode ? (
           <p className="caption attract__honest">
-            🦴 카메라가 보는 건 이 점과 선뿐이에요. 녹화하지 않아요.
+            <SpriteIcon id="ui-joints" size={20} on="dark" /> 카메라가 보는 건 이 점과 선뿐이에요. 녹화하지 않아요.
           </p>
         ) : null}
         <div className="row">
-          <Button variant="link" icon="⚙️" onClick={onSettings}>
+          <Button variant="link" icon="ui-gear" onClick={onSettings}>
             설정
           </Button>
           <Button variant="link" onClick={onPrivacy}>
             개인정보 안내
           </Button>
           {returning ? (
-            <Button variant="link" icon="🏁" onClick={onFinish}>
+            <Button variant="link" icon="ui-flag-finish" onClick={onFinish}>
               그만하기
             </Button>
           ) : null}

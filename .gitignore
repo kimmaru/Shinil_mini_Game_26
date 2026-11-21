@@ -5,3 +5,4 @@ dist/
 /public/wasm/
 /public/models/
 /shots/
+.tmp/

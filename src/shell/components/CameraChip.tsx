@@ -1,4 +1,4 @@
-// 🔴 카메라 켜짐 · [끄기]
+// The "카메라 켜짐 · [끄기]" chip.
 //
 // Always visible whenever a MediaStream track is live, on every screen, with a
 // one-press off switch. This is not decoration: it is the part of the privacy

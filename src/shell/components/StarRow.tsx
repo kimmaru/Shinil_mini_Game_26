@@ -5,6 +5,7 @@
 // is the difference between "you got 2" and "you got... TWO!".
 import { useEffect, useState } from 'react';
 import { useServices } from '../useSession';
+import { SpriteIcon } from './SpriteIcon';
 
 export interface StarRowProps {
   stars: 0 | 1 | 2 | 3;
@@ -47,7 +48,7 @@ export function StarRow({ stars, animate = true, size = 'lg' }: StarRowProps): R
           className={`stars__one${i <= shown ? ' is-on' : ''}`}
           aria-hidden="true"
         >
-          ★
+          <SpriteIcon id="star" size={28} on="dark" />
         </span>
       ))}
     </div>

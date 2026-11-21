@@ -10,6 +10,7 @@
 // requires for notices aimed at under-14s.
 import { Button } from '../components/Button';
 import { Screen } from '../components/Screen';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 export interface PrimingProps {
   onCamera: () => void;
@@ -22,10 +23,10 @@ export interface PrimingProps {
 }
 
 const POINTS: ReadonlyArray<readonly [string, string, string]> = [
-  ['🔒', '카메라 화면은 이 컴퓨터 안에서만 봐요.', '인터넷으로 보내지 않아요.'],
-  ['🚫', '녹화하지 않아요.', '사진도, 영상도 남지 않아요.'],
-  ['🦴', '게임이 보는 건 몸의 관절 위치(점과 선) 뿐이에요.', ''],
-  ['🎹', '카메라 없이 키보드로도 놀 수 있어요!', ''],
+  ['ui-lock', '카메라 화면은 이 컴퓨터 안에서만 봐요.', '인터넷으로 보내지 않아요.'],
+  ['ui-ban', '녹화하지 않아요.', '사진도, 영상도 남지 않아요.'],
+  ['ui-joints', '게임이 보는 건 몸의 관절 위치(점과 선) 뿐이에요.', ''],
+  ['ui-keyboard', '카메라 없이 키보드로도 놀 수 있어요!', ''],
 ];
 
 export function Priming({
@@ -38,14 +39,14 @@ export function Priming({
 }: PrimingProps): React.ReactElement {
   return (
     <Screen
-      icon="🕺"
+      icon="s-dance"
       titleKo="카메라를 켜면 몸으로 게임할 수 있어요!"
       actions={
         <>
-          <Button variant="primary" size="huge" icon="🎥" sfx="ui.confirm" onClick={onCamera}>
+          <Button variant="primary" size="huge" icon="ui-camera" sfx="ui.confirm" onClick={onCamera}>
             카메라 켜고 시작하기
           </Button>
-          <Button variant="ghost" size="huge" icon="⌨️" onClick={onKeyboard}>
+          <Button variant="ghost" size="huge" icon="ui-keyboard" onClick={onKeyboard}>
             카메라 없이 하기
           </Button>
         </>
@@ -55,7 +56,7 @@ export function Priming({
           <Button variant="link" onClick={onPrivacy}>
             보호자님께 안내 ▸
           </Button>
-          <Button variant="link" icon="⚙️" onClick={onSettings}>
+          <Button variant="link" icon="ui-gear" onClick={onSettings}>
             설정
           </Button>
         </>
@@ -64,8 +65,8 @@ export function Priming({
       <ul className="bullets card">
         {POINTS.map(([mark, strong, rest]) => (
           <li key={mark}>
-            <span className="mark" aria-hidden="true">
-              {mark}
+            <span className="mark">
+              <SpriteIcon id={mark} size={30} on="dark" />
             </span>
             <span>
               <strong>{strong}</strong>

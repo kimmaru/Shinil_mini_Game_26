@@ -15,6 +15,7 @@
 // guardian, on purpose.
 import { Button } from '../components/Button';
 import { Screen } from '../components/Screen';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 /** Keep in step with real edits to the copy below. */
 export const PRIVACY_UPDATED = '2026-11-21';
@@ -45,12 +46,12 @@ export function Privacy({ onClose, onSettings }: PrivacyProps): React.ReactEleme
       titleKo="개인정보 안내"
       leadKo="아이와 보호자 모두를 위한 안내"
       actions={
-        <Button variant="primary" size="huge" icon="←" sfx="ui.back" onClick={onClose}>
+        <Button variant="primary" size="huge" icon="ui-back" sfx="ui.back" onClick={onClose}>
           돌아가기
         </Button>
       }
       footer={
-        <Button variant="link" icon="⚙️" onClick={onSettings}>
+        <Button variant="link" icon="ui-gear" onClick={onSettings}>
           설정에서 저장된 기록 지우기 ▸
         </Button>
       }
@@ -60,8 +61,8 @@ export function Privacy({ onClose, onSettings }: PrivacyProps): React.ReactEleme
         <ul className="bullets">
           {GLANCE.map((line) => (
             <li key={line} className="legal">
-              <span className="mark" aria-hidden="true">
-                ✅
+              <span className="mark">
+                <SpriteIcon id="ui-check-circle" size={22} on="dark" />
               </span>
               <span>{line}</span>
             </li>

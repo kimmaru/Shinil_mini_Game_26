@@ -280,7 +280,7 @@ export function Wheel({
         })}
       </ul>
       <div className="wheel__hub" aria-hidden="true">
-        🎲
+        <SpriteIcon id="ui-dice" size={40} on="dark" />
       </div>
     </div>
   );

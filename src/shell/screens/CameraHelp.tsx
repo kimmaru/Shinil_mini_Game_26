@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { Button } from '../components/Button';
 import { Screen } from '../components/Screen';
 import type { CameraErrorKind } from '../useSession';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 export interface CameraHelpProps {
   error: CameraErrorKind | null;
@@ -27,18 +28,18 @@ interface Copy {
 
 const COPY: Record<CameraErrorKind, Copy> = {
   denied: {
-    icon: '🙈',
+    icon: 'ui-camera',
     titleKo: '카메라를 못 쓰게 되어 있어요',
     leadKo: '괜찮아요! 키보드로도 똑같이 재미있게 할 수 있어요.',
     howKo: [
-      '주소창 왼쪽의 🎥 또는 🔒 아이콘을 눌러요.',
+      '주소창 왼쪽의 카메라 또는 자물쇠 아이콘을 눌러요.',
       '"카메라"를 "허용"으로 바꿔요.',
       '새로고침하고 다시 시작해요.',
     ],
     retry: true,
   },
   notFound: {
-    icon: '😅',
+    icon: 'ui-camera',
     titleKo: '카메라를 못 찾았어요',
     leadKo: '괜찮아요! 키보드로도 똑같이 재미있게 할 수 있어요.',
     howKo: [
@@ -49,7 +50,7 @@ const COPY: Record<CameraErrorKind, Copy> = {
     retry: true,
   },
   inUse: {
-    icon: '📹',
+    icon: 'ui-camera',
     titleKo: '다른 앱이 카메라를 쓰고 있어요',
     leadKo: '화상회의 앱(줌, 팀즈 같은 것)을 닫고 다시 해 볼까요?',
     howKo: [
@@ -59,7 +60,7 @@ const COPY: Record<CameraErrorKind, Copy> = {
     retry: true,
   },
   insecure: {
-    icon: '🔒',
+    icon: 'ui-lock',
     titleKo: '이 주소에서는 카메라를 쓸 수 없어요',
     leadKo: '선생님이나 보호자님께 알려 주세요. 그동안 키보드로 놀 수 있어요!',
     howKo: [
@@ -69,7 +70,7 @@ const COPY: Record<CameraErrorKind, Copy> = {
     retry: false,
   },
   unknown: {
-    icon: '😅',
+    icon: 'ui-camera',
     titleKo: '카메라를 켜지 못했어요',
     leadKo: '괜찮아요! 키보드로도 똑같이 재미있게 할 수 있어요.',
     howKo: ['새로고침하고 다시 해 보세요.', '그래도 안 되면 키보드로 놀아요. 재미는 똑같아요!'],
@@ -89,11 +90,11 @@ export function CameraHelp({ error, onKeyboard, onRetry }: CameraHelpProps): Rea
       live="assertive"
       actions={
         <>
-          <Button variant="primary" size="huge" icon="⌨️" sfx="ui.confirm" onClick={onKeyboard}>
+          <Button variant="primary" size="huge" icon="ui-keyboard" sfx="ui.confirm" onClick={onKeyboard}>
             키보드로 놀기
           </Button>
           {c.retry ? (
-            <Button variant="ghost" size="huge" icon="🔄" onClick={onRetry}>
+            <Button variant="ghost" size="huge" icon="ui-refresh" onClick={onRetry}>
               다시 시도하기
             </Button>
           ) : null}

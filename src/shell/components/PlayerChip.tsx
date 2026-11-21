@@ -4,6 +4,7 @@
 // instruction sayable across a classroom — "2번, 주황 네모!" works, "the orange
 // one" does not.
 import type { Slot } from '@/engine/types';
+import { SpriteIcon } from './SpriteIcon';
 
 const SLOT_COLORS = ['var(--c-p1)', 'var(--c-p2)', 'var(--c-p3)', 'var(--c-p4)'] as const;
 /** Mirrors C.slotShape in src/engine/render/palette.ts. */
@@ -45,7 +46,7 @@ export function PlayerChip({
       {score !== undefined ? <span className="pchip__score num">{score}</span> : null}
       {mvp ? (
         <span className="pchip__mvp" aria-hidden="true">
-          👑
+          <SpriteIcon id="ui-crown" size={22} on="dark" />
         </span>
       ) : null}
     </div>

@@ -14,7 +14,9 @@ export const manifest: MiniGameManifest = {
   nameKo: '템플릿',                      // <= 20 chars
   taglineKo: '여기에 한 줄 설명',          // <= 18 chars reads best
   howToKo: ['이렇게 하세요', '그리고 이렇게'], // 1-3 imperative lines
-  icon: '🎮',                            // emoji only; there are no image files
+  // A sprite id from src/engine/render/sprites.ts — NEVER an emoji.
+  // `npm run gate` rejects emoji in a game file.
+  icon: 'star',
   theme: { hue: 210 },                   // 0-360; tints the card and accents
 
   difficulty: 1,   // 1 anyone / 2 some skill / 3 needs timing

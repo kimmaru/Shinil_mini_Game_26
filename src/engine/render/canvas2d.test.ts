@@ -13,7 +13,7 @@
 import { describe, expect, it } from 'vitest';
 import { Canvas2DRenderer, GLOW_BUDGET } from './canvas2d';
 import { C } from './palette';
-import { L, LANDMARK_COUNT } from '../pose/landmarks';
+import { L, LANDMARK_COUNT, MIN_VIS } from '../pose/landmarks';
 import type { PlayerPose } from '../types';
 
 interface Rec {
@@ -496,5 +496,92 @@ describe('ghostBody', () => {
     f.log.length = 0;
     g.ghostBody(pose(), 0);
     expect(f.log).toHaveLength(0);
+  });
+});
+
+describe('skeleton: confidence and taper', () => {
+  /** A player whose left arm the model is unsure about. */
+  function player(visOverrides: Record<number, number> = {}): PlayerPose {
+    const px = new Float32Array(LANDMARK_COUNT * 2);
+    const vis = new Float32Array(LANDMARK_COUNT).fill(0.95);
+    for (let i = 0; i < LANDMARK_COUNT; i++) {
+      px[i * 2] = 400 + (i % 5) * 20;
+      px[i * 2 + 1] = 200 + Math.floor(i / 5) * 30;
+    }
+    for (const [j, v] of Object.entries(visOverrides)) vis[Number(j)] = v;
+    return {
+      id: 1, slot: 0, present: true, conf: 0.9,
+      n: new Float32Array(LANDMARK_COUNT * 2), v: new Float32Array(LANDMARK_COUNT * 2),
+      px, vis, box: { x: 0, y: 0, w: 1, h: 1 }, rollDeg: 0, scalePx: 100,
+      calib: {} as PlayerPose['calib'],
+    };
+  }
+
+  it('fades a low-confidence limb instead of blinking it out', () => {
+    // The bug this replaces: a hard threshold made an arm vanish and reappear
+    // between frames, which reads as the camera having lost the player.
+    const f = fakeCanvas();
+    const g = new Canvas2DRenderer(f.canvas, { dpr: 1 });
+    f.log.length = 0;
+    // Just above the visibility floor: should draw, but faintly.
+    g.skeleton(player({ [L.LEFT_WRIST]: MIN_VIS + 0.06 }));
+    const alphas = f.log.filter((r) => r.op === 'set:globalAlpha').map((r) => r.args[0] as number);
+    const partial = alphas.filter((a) => a > 0 && a < 0.9);
+    expect(partial.length).toBeGreaterThan(0);
+  });
+
+  it('draws nothing for a limb below the visibility floor', () => {
+    // Gate, do not guess: a joint the model cannot see must not be drawn at
+    // an invented position.
+    const f = fakeCanvas();
+    const g = new Canvas2DRenderer(f.canvas, { dpr: 1 });
+    const all = new Canvas2DRenderer(fakeCanvas().canvas, { dpr: 1 });
+    void all;
+    f.log.length = 0;
+    g.skeleton(player({
+      [L.LEFT_WRIST]: 0.1, [L.LEFT_ELBOW]: 0.1,
+      [L.RIGHT_WRIST]: 0.1, [L.RIGHT_ELBOW]: 0.1,
+    }));
+    const strokes = f.log.filter((r) => r.op === 'stroke').length;
+    const full = fakeCanvas();
+    const g2 = new Canvas2DRenderer(full.canvas, { dpr: 1 });
+    full.log.length = 0;
+    g2.skeleton(player());
+    const strokesFull = full.log.filter((r) => r.op === 'stroke').length;
+    expect(strokes).toBeLessThan(strokesFull);
+  });
+
+  it('varies limb thickness rather than drawing a uniform stick figure', () => {
+    const f = fakeCanvas();
+    const g = new Canvas2DRenderer(f.canvas, { dpr: 1 });
+    f.log.length = 0;
+    g.skeleton(player());
+    const widths = new Set(
+      f.log.filter((r) => r.op === 'set:lineWidth').map((r) => Number(r.args[0]).toFixed(2)),
+    );
+    // Torso, upper arm, forearm and foot are four different weights.
+    expect(widths.size).toBeGreaterThanOrEqual(4);
+  });
+
+  it('puts dots only on the ends by default', () => {
+    const ends = fakeCanvas();
+    const gEnds = new Canvas2DRenderer(ends.canvas, { dpr: 1 });
+    ends.log.length = 0;
+    gEnds.skeleton(player());
+    const all = fakeCanvas();
+    const gAll = new Canvas2DRenderer(all.canvas, { dpr: 1 });
+    all.log.length = 0;
+    gAll.skeleton(player(), { jointSet: 'all' });
+    const arcs = (l: typeof ends.log): number => l.filter((r) => r.op === 'arc').length;
+    expect(arcs(ends.log)).toBeLessThan(arcs(all.log));
+  });
+
+  it('draws no joint dots at all when asked', () => {
+    const f = fakeCanvas();
+    const g = new Canvas2DRenderer(f.canvas, { dpr: 1 });
+    f.log.length = 0;
+    g.skeleton(player(), { jointSet: 'none', outline: false });
+    // The head ring is still drawn — a skeleton without one reads as decapitated.
+    expect(f.log.filter((r) => r.op === 'arc').length).toBeLessThanOrEqual(2);
   });
 });

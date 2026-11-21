@@ -7,7 +7,7 @@
   "src/engine/registry.ts": "46e576f4db0b2942a5f0dd9b304c6fdbbf8b62e1951c963d69970cbf99cf70f7",
   "src/engine/pose/landmarks.ts": "2a90e699e93ca547334edb36249b32200abb18970832a7a926b53ea7f1f3b1e2",
   "src/engine/pose/source.ts": "ec1fa89b18ebef010a67132122c807074848c43f13e9b4fcb4146292dcffa769",
-  "src/engine/render/renderer.ts": "316ca88def72946444f0851abcd933f867a973a31b6bde3b93f5b7e113e0cf3d",
+  "src/engine/render/renderer.ts": "aa6b11550dcda0958841af8ceab6d2fda1c8f97389eeebbbad3992230a81c5ed",
   "src/engine/render/palette.ts": "68e8056fd8b4b029b4208e113de53fa2fc3ef8b9dca08ffa30700588fa507237",
   "src/engine/gestures/index.ts": "64a5aac22cf1f42ad7efd1707405fe3a83eea5a5d194ca39f9a13488ec932875",
   "src/engine/fx/index.ts": "449df71e969cf7981787ff1ef620d2f55babb2d84b635734263deb9a3bdf9f3e",

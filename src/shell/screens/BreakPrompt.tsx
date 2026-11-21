@@ -19,10 +19,10 @@ export interface BreakPromptProps {
 }
 
 const TIPS: readonly string[] = [
-  '💧 물 한 잔 마시고 올까요?',
-  '🪟 창문 밖 먼 곳을 20초만 바라봐요. 눈이 쉬어요.',
-  '🤸 팔과 다리를 쭉 펴고 기지개를 켜요.',
-  '🧦 바닥에 떨어진 물건이 없는지 다시 봐요.',
+  '물 한 잔 마시고 올까요?',
+  '창문 밖 먼 곳을 20초만 바라봐요. 눈이 쉬어요.',
+  '팔과 다리를 쭉 펴고 기지개를 켜요.',
+  '바닥에 떨어진 물건이 없는지 다시 봐요.',
 ];
 
 export function BreakPrompt({ rounds, onContinue, onStop }: BreakPromptProps): React.ReactElement {
@@ -43,7 +43,7 @@ export function BreakPrompt({ rounds, onContinue, onStop }: BreakPromptProps): R
 
   return (
     <Screen
-      icon="🧃"
+      icon="s-cup"
       titleKo="잠깐 쉬는 시간!"
       leadKo={`${rounds}판이나 했어요. 정말 잘했어요!`}
       actions={
@@ -51,13 +51,13 @@ export function BreakPrompt({ rounds, onContinue, onStop }: BreakPromptProps): R
           <Button
             variant={secs === 0 ? 'primary' : 'ghost'}
             size="huge"
-            icon="▶"
+            icon="ui-play"
             sfx="ui.confirm"
             onClick={onContinue}
           >
             {secs === 0 ? '다시 놀자!' : '그래도 계속하기'}
           </Button>
-          <Button variant="ghost" size="huge" icon="🏁" sfx="ui.back" onClick={onStop}>
+          <Button variant="ghost" size="huge" icon="ui-flag-finish" sfx="ui.back" onClick={onStop}>
             오늘은 그만
           </Button>
         </>

@@ -9,6 +9,7 @@ import { Button } from '../components/Button';
 import { PlayerChip } from '../components/PlayerChip';
 import { StarRow } from '../components/StarRow';
 import { useServices } from '../useSession';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 export interface ResultsProps {
   result: GameResult;
@@ -24,8 +25,8 @@ export interface ResultsProps {
 const PRAISE: Record<0 | 1 | 2 | 3, string> = {
   0: '다음엔 더 잘할 수 있어요!',
   1: '잘했어요! 한 판 더?',
-  2: '아주 잘했어요! 👏',
-  3: '최고예요! 별 세 개! 🎉',
+  2: '아주 잘했어요!',
+  3: '최고예요! 별 세 개!',
 };
 
 const COUNT_MS = 700;
@@ -75,15 +76,19 @@ export function Results({
       <div className="card results__score center">
         <p className="caption">점수</p>
         <p className="display-1 num">{shown}</p>
-        {isBest ? <p className="chip results__best pop-in">🏆 최고 기록!</p> : null}
+        {isBest ? (
+          <p className="chip results__best pop-in">
+            <SpriteIcon id="ui-trophy" size={22} on="dark" /> 최고 기록!
+          </p>
+        ) : null}
       </div>
 
       {result.highlightsKo?.length ? (
         <ul className="bullets card card--flat">
           {result.highlightsKo.map((h) => (
             <li key={h}>
-              <span className="mark" aria-hidden="true">
-                ✨
+              <span className="mark">
+                <SpriteIcon id="sparkle" size={20} on="dark" />
               </span>
               <span>{h}</span>
             </li>
@@ -105,14 +110,14 @@ export function Results({
       ) : null}
 
       <div className="actions">
-        <Button variant="primary" size="huge" icon="🎲" sfx="ui.confirm" onClick={onNext}>
+        <Button variant="primary" size="huge" icon="ui-dice" sfx="ui.confirm" onClick={onNext}>
           다음 게임!
         </Button>
-        <Button variant="ghost" size="huge" icon="🔄" onClick={onAgain}>
+        <Button variant="ghost" size="huge" icon="ui-refresh" onClick={onAgain}>
           다시 하기
         </Button>
       </div>
-      <Button variant="link" icon="🏁" sfx="ui.back" onClick={onStop}>
+      <Button variant="link" icon="ui-flag-finish" sfx="ui.back" onClick={onStop}>
         그만하기
       </Button>
     </main>

@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../components/Button';
 import { Screen } from '../components/Screen';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 export const SAFETY_MS = 15_000;
 /** 계속하기 arms after this. Short enough not to be a punishment. */
@@ -17,11 +18,11 @@ export interface SafetyProps {
 }
 
 const RULES: ReadonlyArray<readonly [string, string]> = [
-  ['📏', '팔을 쫙 펴도 안 닿는 2m 공간을 만들어요.'],
-  ['🪑', '의자, 책가방, 컵은 뒤로 치워요.'],
-  ['🧦', '미끄러운 바닥은 조심! 양말보다 운동화가 좋아요.'],
-  ['🐶', '동생이나 강아지가 뒤에 없는지 봐요.'],
-  ['💧', '목 마르면 언제든 쉬어도 돼요.'],
+  ['s-ruler', '팔을 쫙 펴도 안 닿는 2m 공간을 만들어요.'],
+  ['s-chair', '의자, 책가방, 컵은 뒤로 치워요.'],
+  ['s-shoe', '미끄러운 바닥은 조심! 양말보다 운동화가 좋아요.'],
+  ['s-dog', '동생이나 강아지가 뒤에 없는지 봐요.'],
+  ['droplet', '목 마르면 언제든 쉬어도 돼요.'],
 ];
 
 export function Safety({ onAck }: SafetyProps): React.ReactElement {
@@ -34,14 +35,14 @@ export function Safety({ onAck }: SafetyProps): React.ReactElement {
 
   return (
     <Screen
-      icon="🙌"
+      icon="g-raise"
       titleKo="놀 준비!"
       leadKo="다치지 않게 딱 다섯 가지만 확인해요."
       actions={
         <Button
           variant="success"
           size="huge"
-          icon="👍"
+          icon="ui-thumb-up"
           sfx="ui.confirm"
           disabled={left > 0}
           onClick={onAck}
@@ -53,8 +54,8 @@ export function Safety({ onAck }: SafetyProps): React.ReactElement {
       <ul className="bullets card">
         {RULES.map(([mark, text]) => (
           <li key={mark}>
-            <span className="mark" aria-hidden="true">
-              {mark}
+            <span className="mark">
+              <SpriteIcon id={mark} size={30} on="dark" />
             </span>
             <span>{text}</span>
           </li>

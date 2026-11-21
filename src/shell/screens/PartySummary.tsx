@@ -22,11 +22,11 @@ function titleFor(h: GameResult[]): readonly [string, string] {
   const stars = h.reduce((n, r) => n + r.stars, 0);
   const threes = h.filter((r) => r.stars === 3).length;
   const combo = Math.max(0, ...h.map((r) => Math.max(0, ...r.perPlayer.map((p) => p.bestCombo))));
-  if (threes >= 3) return ['🏅', '별 수집가'];
-  if (combo >= 12) return ['🔥', '콤보 장인'];
-  if (h.length >= 8) return ['🏃', '끝까지 달린 사람'];
-  if (stars >= 6) return ['🌟', '반짝반짝 선수'];
-  return ['🎉', '오늘의 놀이왕'];
+  if (threes >= 3) return ['ui-medal', '별 수집가'];
+  if (combo >= 12) return ['ui-fire', '콤보 장인'];
+  if (h.length >= 8) return ['s-run', '끝까지 달린 사람'];
+  if (stars >= 6) return ['star', '반짝반짝 선수'];
+  return ['ui-party', '오늘의 놀이왕'];
 }
 
 export function PartySummary({
@@ -47,10 +47,10 @@ export function PartySummary({
       leadKo={`${history.length}판 놀고 별 ${stars}개를 모았어요.`}
       actions={
         <>
-          <Button variant="primary" size="huge" icon="🎲" sfx="ui.confirm" onClick={onAgain}>
+          <Button variant="primary" size="huge" icon="ui-dice" sfx="ui.confirm" onClick={onAgain}>
             한 판 더!
           </Button>
-          <Button variant="ghost" size="huge" icon="🏠" sfx="ui.back" onClick={onHome}>
+          <Button variant="ghost" size="huge" icon="ui-home" sfx="ui.back" onClick={onHome}>
             처음으로
           </Button>
         </>

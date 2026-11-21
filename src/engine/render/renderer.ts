@@ -60,6 +60,13 @@ export interface SkeletonOpts {
   outline?: boolean;
   /** Highlight these joints at 2x radius — "this is the hand that matters". */
   emphasize?: readonly number[];
+  /**
+   * Which joints get a dot. Default `'ends'` (wrists and ankles).
+   *
+   * `'all'` puts a dot on every joint, which reads as a medical scan of a
+   * child rather than a character — use it only in the debug overlay.
+   */
+  jointSet?: 'none' | 'hands' | 'ends' | 'all';
 }
 
 export interface Renderer {

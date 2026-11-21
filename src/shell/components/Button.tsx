@@ -7,6 +7,7 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import type { SfxId } from '@/engine/types';
 import { useServices } from '../useSession';
+import { SpriteIcon } from './SpriteIcon';
 
 export type ButtonVariant = 'primary' | 'accent' | 'success' | 'danger' | 'ghost' | 'link';
 export type ButtonSize = 'sm' | 'md' | 'huge';
@@ -15,6 +16,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
   size?: ButtonSize;
   /** Emoji, shown before the label. Decorative: always aria-hidden. */
+  /** A sprite id (see src/engine/render/sprites*.ts), never an emoji. */
   icon?: string;
   block?: boolean;
   /** Override the press sound. 'ui.back' for a 뒤로, 'ui.confirm' for a commit. */
@@ -55,9 +57,12 @@ export function Button({
       {...rest}
     >
       {icon ? (
-        <span className="btn__icon" aria-hidden="true">
-          {icon}
-        </span>
+        <SpriteIcon
+          id={icon}
+          size={size === 'huge' ? 34 : size === 'sm' ? 20 : 26}
+          on="dark"
+          className="btn__icon"
+        />
       ) : null}
       {children}
     </button>

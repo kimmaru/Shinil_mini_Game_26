@@ -17,23 +17,23 @@ export const INTRO_AUTO_MS = 4500;
 
 /** Gesture → the demo badge shown while the chunk loads. Mirrors GestureKind. */
 const GESTURE_HINTS: Record<string, readonly [string, string]> = {
-  jump: ['🙋', '점프!'],
-  squat: ['🧎', '앉기!'],
-  clap: ['👏', '손뼉!'],
-  swing: ['💫', '팔 휘두르기'],
-  raise: ['🙌', '손 들기'],
-  lean: ['↔️', '몸 기울이기'],
-  step: ['👣', '발 옮기기'],
-  reach: ['🫳', '손 뻗기'],
-  limbAngle: ['📐', '팔 각도 맞추기'],
-  zone: ['🎯', '그 자리에 서기'],
-  holdPose: ['🗿', '자세 유지'],
-  rep: ['🔁', '반복 동작'],
-  stillness: ['🤫', '가만히!'],
-  balance: ['🦩', '한 발로 서기'],
-  stroke: ['✍️', '손으로 그리기'],
-  poseMatch: ['🪞', '자세 따라하기'],
-  jointTargets: ['⭐', '점 짚기'],
+  jump: ['g-jump', '점프!'],
+  squat: ['g-squat', '앉기!'],
+  clap: ['g-clap', '손뼉!'],
+  swing: ['g-swing', '팔 휘두르기'],
+  raise: ['g-raise', '손 들기'],
+  lean: ['g-lean', '몸 기울이기'],
+  step: ['g-step', '발 옮기기'],
+  reach: ['g-reach', '손 뻗기'],
+  limbAngle: ['g-angle', '팔 각도 맞추기'],
+  zone: ['g-target', '그 자리에 서기'],
+  holdPose: ['g-hold', '자세 유지'],
+  rep: ['g-rep', '반복 동작'],
+  stillness: ['g-still', '가만히!'],
+  balance: ['g-balance', '한 발로 서기'],
+  stroke: ['g-draw', '손으로 그리기'],
+  poseMatch: ['g-mirror', '자세 따라하기'],
+  jointTargets: ['g-points', '점 짚기'],
 };
 
 export interface IntroProps {
@@ -109,17 +109,17 @@ export function Intro({
           if (!hint) return null;
           return (
             <span key={g} className="chip breathe">
-              <span aria-hidden="true">{hint[0]}</span> {hint[1]}
+              <SpriteIcon id={hint[0]} size={28} on="dark" /> {hint[1]}
             </span>
           );
         })}
       </div>
 
       <div className="actions">
-        <Button variant="primary" size="huge" icon="▶" sfx="ui.confirm" onClick={onReady}>
+        <Button variant="primary" size="huge" icon="ui-play" sfx="ui.confirm" onClick={onReady}>
           바로 시작!
         </Button>
-        <Button variant="ghost" icon="🎲" sfx="ui.back" onClick={onBack}>
+        <Button variant="ghost" icon="ui-dice" sfx="ui.back" onClick={onBack}>
           다른 게임
         </Button>
       </div>

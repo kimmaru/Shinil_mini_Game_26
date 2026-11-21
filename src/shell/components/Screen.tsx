@@ -4,9 +4,11 @@
 // and action-row order. If a screen needs to break out of this, it uses
 // `variant="full"` (attract, roulette, play) and owns its own layout.
 import type { ReactNode } from 'react';
+import { SpriteIcon } from './SpriteIcon';
 
 export interface ScreenProps {
   /** Emoji above the title. Decorative. */
+  /** A sprite id (see src/engine/render/sprites*.ts), never an emoji. */
   icon?: string;
   /** Small line above the title — "1단계", "3번째 게임". */
   kickerKo?: string;
@@ -55,8 +57,8 @@ export function Screen({
         </p>
       ) : null}
       {icon ? (
-        <div className="screen__icon pop-in" aria-hidden="true">
-          {icon}
+        <div className="screen__icon pop-in">
+          <SpriteIcon id={icon} size={92} on="dark" />
         </div>
       ) : null}
       {kickerKo ? <p className="label dim center">{kickerKo}</p> : null}

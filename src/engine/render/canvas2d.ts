@@ -58,6 +58,14 @@ const DIGIT_COUNT = 10;
 /** Joints that get a dot in `skeleton()` — the union of POSE_EDGES endpoints.
  *  Computed once; face points are deliberately absent (drawing 11 dots on a
  *  child's face looks like surveillance). */
+/** Wrists, ankles and the head: the parts a player actually steers with. */
+const END_JOINTS: readonly number[] = [
+  L.LEFT_WRIST, L.RIGHT_WRIST, L.LEFT_ANKLE, L.RIGHT_ANKLE,
+];
+/** Hands only — the default for games played with the arms. */
+const HAND_JOINTS: readonly number[] = [L.LEFT_WRIST, L.RIGHT_WRIST];
+const EMPTY_JOINTS: readonly number[] = [];
+
 const SKELETON_JOINTS: readonly number[] = (() => {
   const seen = new Set<number>();
   for (const e of POSE_EDGES) {
@@ -742,19 +750,27 @@ export class Canvas2DRenderer implements Renderer {
 
     if (outline) {
       c.strokeStyle = C.ink;
-      c.lineWidth = lw + ow * 2;
-      this.strokeEdges(p);
+      this.strokeEdges(p, lw, ow * 2);
       this.strokeHead(p, jr, lw + ow * 2, true);
     }
     c.strokeStyle = col;
-    c.lineWidth = lw;
-    this.strokeEdges(p);
+    this.strokeEdges(p, lw, 0);
     this.strokeHead(p, jr, lw, false, col);
 
     if (jr > 0) {
       // Joint dots: dark ring under a coloured core, same reason as the limbs.
-      for (let i = 0; i < SKELETON_JOINTS.length; i++) {
-        const j = SKELETON_JOINTS[i]!;
+      // Only the ENDS by default — wrists, ankles, head. Elbows and knees are
+      // already rounded by lineJoin, and a dot on all eighteen joints reads as
+      // a medical scan of a child rather than a character.
+      const dots = o?.jointSet === 'all'
+        ? SKELETON_JOINTS
+        : o?.jointSet === 'none'
+          ? EMPTY_JOINTS
+          : o?.jointSet === 'hands'
+            ? HAND_JOINTS
+            : END_JOINTS;
+      for (let i = 0; i < dots.length; i++) {
+        const j = dots[i]!;
         if (p.vis[j]! < MIN_VIS) continue;
         const jxp = p.px[j * 2]!;
         const jyp = p.px[j * 2 + 1]!;
@@ -799,23 +815,67 @@ export class Canvas2DRenderer implements Renderer {
     c.restore();
   }
 
-  private strokeEdges(p: PlayerPose): void {
+  /**
+   * Limb thickness relative to the base width, in POSE_EDGES order.
+   *
+   * A uniform stroke reads as a stick puppet. Scaling each limb by roughly its
+   * real mass turns the same fourteen lines into a body, at no extra cost.
+   */
+  private static readonly EDGE_W = [
+    1.45, // shoulders
+    1.0, 0.78, // left upper arm, forearm
+    1.0, 0.78, // right
+    1.45, 1.45, // torso sides
+    1.45, // hips
+    1.2, 0.88, // left thigh, shin
+    1.2, 0.88, // right
+    0.7, 0.7, // feet
+  ];
+
+  /**
+   * Confidence as a FADE, not a switch.
+   *
+   * Hard-gating on MIN_VIS makes a limb vanish and reappear between frames,
+   * which reads as the tracking having broken. Fading it out over a narrow
+   * band above the threshold keeps the body whole while still refusing to
+   * draw a joint the model is guessing at.
+   */
+  private edgeAlpha(p: PlayerPose, a: number, b: number): number {
+    const va = p.vis[a]!;
+    const vb = p.vis[b]!;
+    const v = va < vb ? va : vb;
+    if (v <= MIN_VIS) return 0;
+    const t = (v - MIN_VIS) / 0.25;
+    const k = t > 1 ? 1 : t;
+    return k * k * (3 - 2 * k); // smoothstep
+  }
+
+  /** Stroke the skeleton's limbs. `widthScale` multiplies the per-limb table,
+   *  so the outline pass and the colour pass stay in proportion. */
+  private strokeEdges(p: PlayerPose, base = 0, extra = 0): void {
     const c = this.c;
-    c.beginPath();
+    const lw = base > 0 ? base : c.lineWidth;
+    const baseAlpha = c.globalAlpha;
     for (let i = 0; i < POSE_EDGES.length; i++) {
       const e = POSE_EDGES[i]!;
       const a = e[0];
       const b = e[1];
-      if (p.vis[a]! < MIN_VIS || p.vis[b]! < MIN_VIS) continue;
+      const al = this.edgeAlpha(p, a, b);
+      if (al <= 0) continue;
       const ax = p.px[a * 2]!;
       const ay = p.px[a * 2 + 1]!;
       const bx = p.px[b * 2]!;
       const by = p.px[b * 2 + 1]!;
       if (!fin4(ax, ay, bx, by)) continue;
+      c.globalAlpha = baseAlpha * al;
+      c.lineWidth = lw * (Canvas2DRenderer.EDGE_W[i] ?? 1) + extra;
+      c.beginPath();
       c.moveTo(ax, ay);
       c.lineTo(bx, by);
+      c.stroke();
     }
-    c.stroke();
+    c.globalAlpha = baseAlpha;
+    c.lineWidth = lw;
   }
 
   /** A neck line plus a head ring. POSE_EDGES has no head (no face dots, by

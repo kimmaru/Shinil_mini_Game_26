@@ -115,6 +115,35 @@ for (const folder of await readdir(GAMES, { withFileTypes: true })) {
   }
 }
 
+// ─── Shell: no emoji in anything the player sees ────────────────────────────
+//
+// Same reason as the games: an emoji is a different artwork on every OS and
+// cannot be recoloured, so a lobby of emoji can never match the game it
+// launches. Comments are exempt — the rule is about what a child sees.
+const SHELL = resolve(ROOT, 'src/shell');
+const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u;
+
+async function checkShell() {
+  let files;
+  try { files = await walk(SHELL); } catch { return; }
+  for (const f of files) {
+    const rel = f.replace(ROOT + '/', '');
+    if (/\.test\.tsx?$/.test(rel)) continue;
+    const src = await readFile(f, 'utf8');
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    const lines = code.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const m = EMOJI_RE.exec(lines[i]);
+      if (m) {
+        errs.push(`${rel}:${i + 1}: emoji ${m[0]} in UI — use <SpriteIcon id="…"/> or a sprite id`);
+      }
+    }
+  }
+}
+await checkShell();
+
 if (errs.length) {
   console.error(`✗ boundary violations (${errs.length}):\n`);
   for (const e of errs) console.error(`    ${e}`);

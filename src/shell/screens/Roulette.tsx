@@ -56,7 +56,7 @@ export function Roulette({
   if (shortlist.length === 0 || !winner) {
     return (
       <main className="screen">
-        <h1 className="h1 center">아직 놀 수 있는 게임이 없어요 😅</h1>
+        <h1 className="h1 center">아직 놀 수 있는 게임이 없어요</h1>
         <p className="body-lg center dim">조금만 기다려 주세요. 곧 게임이 들어와요!</p>
         <Button variant="primary" size="huge" onClick={onBack}>
           돌아가기
