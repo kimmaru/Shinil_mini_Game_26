@@ -196,6 +196,32 @@ describe('clips: each contains the motion its name promises', () => {
   });
 });
 
+describe('clips: the standing body fits in frame', () => {
+  const FULL_BODY: ClipName[] = [
+    'idle', 'fidget', 'reach-grid', 'jump-x8', 'squat-x8', 'clap-x12',
+    'swing-wide', 'step-lr', 'knee-run', 'hold-poses', 'far-small',
+  ];
+
+  it.each(FULL_BODY)('%s keeps head and ankles inside the image', (name) => {
+    // Without this, ankles sit at y>1 and `lowerBodyVisible` is false for the
+    // whole corpus, which silently makes every legs/feet game untestable.
+    for (const f of clip(name).frames) {
+      for (const p of f.people) {
+        for (const j of [L.NOSE, L.LEFT_ANKLE, L.RIGHT_ANKLE]) {
+          expect(Y(p.lm, j), `${name} joint ${j}`).toBeGreaterThan(-0.02);
+          expect(Y(p.lm, j), `${name} joint ${j}`).toBeLessThan(1.02);
+        }
+      }
+    }
+  });
+
+  it.each(FULL_BODY)('%s keeps the ankles visible', (name) => {
+    const frames = clip(name).frames;
+    const ok = frames.filter((f) => f.people[0]!.vis[L.LEFT_ANKLE]! > 0.5).length;
+    expect(ok / frames.length, name).toBeGreaterThan(0.85);
+  });
+});
+
 describe('clips: the adverse conditions', () => {
   it('far-small puts the subject ~4m away', () => {
     for (const f of clip('far-small').frames) {
@@ -204,9 +230,14 @@ describe('clips: the adverse conditions', () => {
   });
 
   it('far-small still contains real jumps, so scale invariance is testable', () => {
+    // Derive the standing baseline from the clip itself rather than hardcoding
+    // it: a clip's framing is its own business, and a literal here silently
+    // rots the moment someone reframes it.
+    const hips = clip('far-small').frames.map((f) => hipY(f.people[0]!.lm));
+    const base = [...hips].sort((a, b) => a - b)[Math.floor(hips.length / 2)]!;
     const rise = clip('far-small').frames.map((f) => {
       const lm = f.people[0]!.lm;
-      return (0.5 - hipY(lm)) / shoulderW(lm);
+      return (base - hipY(lm)) / shoulderW(lm);
     });
     expect(countExcursions(rise, 0.3, 0.1)).toBeGreaterThan(2);
   });

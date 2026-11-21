@@ -139,8 +139,10 @@ const r = 48 * g.s;             // good
 const r = 48;                   // breaks on a TV and on a 13" laptop
 ```
 
-Remember: `L.LEFT_WRIST` is the **subject's** left hand, which appears on the
-**right** of the mirrored screen. Decided once, in `landmarks.ts`.
+Remember: the preview is mirrored, so it behaves like a real mirror — a child
+raising their left hand sees it on the **left** of the screen. `L.LEFT_WRIST`
+is the subject's left hand and it is the screen-left one, so a game prompting
+"왼손을 들어요" watches `L.LEFT_WRIST`. Decided once, in `landmarks.ts`.
 
 ---
 

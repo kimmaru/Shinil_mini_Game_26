@@ -52,19 +52,30 @@ export interface PoseSource {
   resume(): void;
 }
 
-/** A standing-adult default, used when calibration is skipped (keyboard mode,
- *  tests, `?skip=calib`). Every value is in the units documented on
- *  CalibrationProfile. */
+/**
+ * The profile used when calibration is skipped — keyboard mode, tests,
+ * `?skip=calib`. Every value is in the units documented on CalibrationProfile,
+ * and every number here is measured off the synthetic corpus rather than
+ * guessed, because a wrong default silently mis-sizes every game's targets.
+ */
 export function defaultCalibration(viewW = 1280, viewH = 720): CalibrationProfile {
   return {
-    shoulderW: viewW * 0.17,
-    armSpan: 2.1,
+    // A whole body only fits a 16:9 frame below ~0.13 of the width; 0.17 would
+    // put the ankles outside the image.
+    shoulderW: viewW * 0.105,
+    // Wrist to wrist with arms out is 2*armLen + 1 shoulder width, ~4.3 in
+    // anthropometry. (This read 2.1, which is barely wider than the shoulders.)
+    armSpan: 4.3,
     armLen: 1.6,
-    standHipY: 0.62,
-    squatHipY: 0.74,
-    reachUpY: 0.18,
-    floorY: 0.98,
-    idleEnergy: 0.35,
+    standHipY: 0.52,
+    squatHipY: 0.64,
+    reachUpY: 0.12,
+    floorY: 0.93,
+    // Mean per-joint motion while standing still, SW/sec. Measured at ~0.13 on
+    // the idle clip. Freeze games threshold against a multiple of the player's
+    // OWN value, because children cannot hold still and a global constant
+    // fails them.
+    idleEnergy: 0.15,
     lowerBodyVisible: true,
     mirrored: true,
     capturedAt: 0,

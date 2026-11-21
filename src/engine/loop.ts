@@ -8,6 +8,7 @@
 import type { MiniGame, PoseFrame } from './types';
 import type { PoseSource } from './pose/source';
 import type { Renderer } from './render/renderer';
+import type { FxRuntime } from './fx/service';
 
 export const STEP = 1 / 60;
 /** ~83ms of catch-up, then we drop time. Without this cap, a long stall makes
@@ -18,14 +19,15 @@ const MAX_STEPS = 5;
 const MAX_FRAME = 0.25;
 
 export interface LoopHooks {
-  /** Called after each fixed step, for the engine's own timers (round clock,
-   *  HUD, fx). Receives the same fixed dt. */
+  /** The effects runtime. The loop owns its update/draw order because getting
+   *  it wrong is invisible until it is very visible: fx must advance on REAL
+   *  time (so particles keep moving during a hitstop), shake must move the
+   *  world but not the flash, and the fx pass must land on top of the game. */
+  fx?: FxRuntime;
+  /** Called after each fixed step, for the engine's own timers and HUD. */
   onStep?(dt: number, frame: PoseFrame): void;
-  /** Called after the game's render pass, for the fx overlay and debug HUD. */
+  /** Called after the fx pass, for the debug overlay. */
   onAfterRender?(g: Renderer, interp: number): void;
-  /** Time-scale provider, so fx.hitstop() can briefly freeze the simulation.
-   *  Returns 1 normally, 0 during hitstop. */
-  timeScale?(): number;
   /** Per-frame diagnostics for the debug overlay. */
   onFrameStats?(s: FrameStats): void;
 }
@@ -94,11 +96,17 @@ export function createLoop(
     let frameTime = now - prev;
     prev = now;
     if (paused) return;
-    if (!(frameTime > 0)) frameTime = STEP;
+    // A zero-length frame is normal (the first rAF fires at the same instant
+    // start() sampled the clock) and must simulate nothing. Only guard against
+    // NaN and a clock that went backwards.
+    if (!(frameTime >= 0)) frameTime = 0;
     if (frameTime > MAX_FRAME) frameTime = MAX_FRAME;
     fps += (1 / Math.max(frameTime, 1e-4) - fps) * 0.1;
 
-    acc += frameTime * (hooks.timeScale?.() ?? 1);
+    // Effects always advance on real time: during a hitstop the world freezes
+    // but the sparks must keep flying, which is the entire point of the freeze.
+    hooks.fx?.update(frameTime);
+    acc += frameTime * (hooks.fx?.timeScale ?? 1);
 
     const t0 = perfNow();
     let steps = 0;
@@ -114,7 +122,11 @@ export function createLoop(
     const t1 = perfNow();
 
     const interp = acc / STEP;
+    g.save();
+    hooks.fx?.applyCamera(g);   // shake moves the world...
     game.render(g, interp);
+    g.restore();
+    hooks.fx?.draw(g);          // ...but not the particles, text or flash
     hooks.onAfterRender?.(g, interp);
     const t2 = perfNow();
 

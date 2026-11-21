@@ -2,9 +2,17 @@
 //
 // The 33 BlazePose GHUM landmarks, and the accessors every game uses.
 //
-// "left"/"right" are THE SUBJECT'S left and right. Because the preview is
-// mirrored, the player's visually-left hand is RIGHT_WRIST. This is decided
-// once, here, and never re-litigated.
+// "left"/"right" are THE SUBJECT'S left and right.
+//
+// The preview is mirrored, which makes it behave like an actual mirror: a child
+// raising their left hand sees it on the LEFT of the screen. So screen-left is
+// LEFT_WRIST, and a game prompting "왼손을 들어요" should watch LEFT_WRIST.
+// (The raw camera image is the opposite — unmirrored, the subject's left hand
+// is on the image's right — but no game ever sees raw coordinates: `px` is
+// already mirrored by the time it reaches you.)
+//
+// Decided once, here, and never re-litigated: getting it backwards sends every
+// 7-year-old the wrong way, and nothing in the code will complain.
 import type { PlayerPose, Pt } from '../types';
 
 export const L = {

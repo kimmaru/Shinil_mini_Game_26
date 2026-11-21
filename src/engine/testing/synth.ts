@@ -62,8 +62,17 @@ export interface BodyParams {
   footLiftR: number;
 }
 
+/**
+ * A whole body, standing, fully inside a 16:9 frame.
+ *
+ * The body spans ~7.4 shoulder-widths head to heel, and the vertical axis is
+ * `aspect` times coarser than the horizontal, so a 16:9 frame only fits a
+ * complete body below shoulderW ~0.13. At 0.17 the ankles land at y=1.27 —
+ * outside the image — which quietly turns every clip into an upper-body
+ * framing and makes legs/feet games untestable.
+ */
 export const STAND: BodyParams = {
-  hipX: 0.5, hipY: 0.62, shoulderW: 0.17, leanDeg: 0,
+  hipX: 0.5, hipY: 0.52, shoulderW: 0.105, leanDeg: 0,
   armL: -78, armR: -102, elbowL: 8, elbowR: 8,
   legL: -84, legR: -96, kneeL: 3, kneeR: 3,
   footLiftL: 0, footLiftR: 0,
@@ -294,10 +303,26 @@ export const clapAt = (close: number, height: 0 | 1 | 2 = 1): Partial<BodyParams
   return { armL: upper, armR: 180 - upper, elbowL: b, elbowR: b };
 };
 
-export const squatBy = (depth: number): Partial<BodyParams> => ({
-  hipY: STAND.hipY + 0.11 * clamp01(depth),
-  kneeL: 3 + 62 * clamp01(depth), kneeR: 3 + 62 * clamp01(depth),
-});
+/**
+ * Lower the hips into a squat, in SHOULDER-WIDTH units off the clip's own
+ * standing height. A full squat drops the hips 0.6 shoulder-widths, which
+ * clears the 0.45 that `SquatOpts.enter` documents.
+ *
+ * The knee bend is not decoration: without it the whole leg translates down
+ * with the hip and the feet sink through the floor.
+ */
+export const squatBy = (
+  depth: number,
+  base: Pick<BodyParams, 'hipY' | 'shoulderW'> = STAND,
+  aspect = 16 / 9,
+): Partial<BodyParams> => {
+  const d = clamp01(depth);
+  return {
+    hipY: base.hipY + 0.6 * d * base.shoulderW * aspect,
+    kneeL: 3 + 78 * d,
+    kneeR: 3 + 78 * d,
+  };
+};
 export const leanBy = (deg: number): Partial<BodyParams> => ({ leanDeg: deg });
 export const hipAt = (y: number): Partial<BodyParams> => ({ hipY: y });
 /** Lift one knee toward the chest, 0..1. Run-in-place and stair-climb. */

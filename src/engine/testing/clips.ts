@@ -15,14 +15,31 @@ export type ClipName =
   | 'step-lr' | 'knee-run' | 'hold-poses'
   | 'two-cross' | 'far-small' | 'no-legs' | 'laggy';
 
-/** One jump arc: hips rise then fall, knees tuck, arms swing up.
- *  `baseY` must be the clip's own standing hip height — hardcoding STAND.hipY
- *  silently erases the jump in any clip that stands somewhere else. */
-function jumpArc(phase: number, baseY = STAND.hipY): Partial<BodyParams> {
+/**
+ * One jump: hips rise and fall, knees tuck, arms swing up.
+ *
+ * Height is in SHOULDER-WIDTHS off the clip's own standing height — hardcoding
+ * an image-space offset erases the jump in any clip that stands elsewhere, and
+ * makes a distant body's jump look smaller than a near one's.
+ *
+ * 0.6 shoulder-widths over a ~0.4s airborne window is a real child's jump and
+ * peaks well above the 1.5 SW/s that `JumpOpts.enter` documents. The previous
+ * arc was spread over 0.9s and filtered down to 1.13 SW/s — below the engine's
+ * own default, so no jump game could have been smoke-tested.
+ */
+const JUMP_SW = 0.6;
+/** Seconds from takeoff to landing. */
+const AIRBORNE_SEC = 0.4;
+
+function jumpArc(
+  phase: number,
+  base: Pick<BodyParams, 'hipY' | 'shoulderW'> = STAND,
+  aspect = 16 / 9,
+): Partial<BodyParams> {
   const up = Math.sin(clamp01(phase) * Math.PI);
   return {
-    hipY: baseY - 0.13 * up,
-    kneeL: 3 + 30 * up, kneeR: 3 + 30 * up,
+    hipY: base.hipY - JUMP_SW * up * base.shoulderW * aspect,
+    kneeL: 3 + 34 * up, kneeR: 3 + 34 * up,
     armL: lerp(-78, -30, up), armR: lerp(-102, -150, up),
   };
 }
@@ -70,12 +87,15 @@ const CLIPS: Record<ClipName, () => PoseClip> = {
   'jump-x8': () =>
     buildClip('jump-x8', 16, (_u, t) => {
       const period = 2;
-      const ph = (t % period) / period;
-      if (ph > 0.45) return {}; // grounded between jumps
+      const into = t % period;
+      if (into > AIRBORNE_SEC) return {}; // grounded, resetting between jumps
       const n = Math.floor(t / period);
-      const scale = 0.6 + 0.4 * ((n % 3) / 2);
-      const a = jumpArc(ph / 0.45);
-      return { ...a, hipY: STAND.hipY - (STAND.hipY - (a.hipY ?? STAND.hipY)) * scale };
+      const scale = 0.7 + 0.3 * ((n % 3) / 2); // varied height, all detectable
+      const a = jumpArc(into / AIRBORNE_SEC);
+      return {
+        ...a,
+        hipY: STAND.hipY - (STAND.hipY - (a.hipY ?? STAND.hipY)) * scale,
+      };
     }, { seed: 14 }),
 
   /** 8 squats of varied depth. */
@@ -85,7 +105,7 @@ const CLIPS: Record<ClipName, () => PoseClip> = {
       const ph = (t % period) / period;
       const n = Math.floor(t / period);
       const depth = ph < 0.6 ? Math.sin((ph / 0.6) * Math.PI) : 0;
-      return squatBy(depth * (0.65 + 0.35 * ((n % 3) / 2)));
+      return squatBy(depth * (0.75 + 0.25 * ((n % 3) / 2)));
     }, { seed: 15 }),
 
   /** Exactly 12 claps, cycling through the three clap heights. */
@@ -172,13 +192,15 @@ const CLIPS: Record<ClipName, () => PoseClip> = {
   /** Same motions, 4m away: shoulder width ~0.07. Any game with a hard-coded
    *  pixel threshold fails here, which is the whole reason it exists. */
   'far-small': () =>
-    buildClip('far-small', 16, (_u, t) => ({
-      shoulderW: 0.075,
-      hipY: 0.5,
-      armL: 20 + 70 * Math.sin(t * 2),
-      armR: 160 - 70 * Math.sin(t * 2),
-      ...(t % 3 < 0.5 ? jumpArc((t % 3) / 0.5, 0.5) : {}),
-    }), { seed: 23, jitter: 0.004 }),
+    buildClip('far-small', 16, (_u, t) => {
+      const far = { shoulderW: 0.058, hipY: 0.42 };
+      return {
+        ...far,
+        armL: 20 + 70 * Math.sin(t * 2),
+        armR: 160 - 70 * Math.sin(t * 2),
+        ...(t % 3 < AIRBORNE_SEC ? jumpArc((t % 3) / AIRBORNE_SEC, far) : {}),
+      };
+    }, { seed: 23, jitter: 0.004 }),
 
   /** Standing close to a laptop: legs and feet never visible. Games that need
    *  them must degrade, not crash. */
@@ -192,7 +214,7 @@ const CLIPS: Record<ClipName, () => PoseClip> = {
   laggy: () =>
     buildClip('laggy', 14, (_u, t) => ({
       armL: 20 + 90 * Math.sin(t * 2), armR: 160 - 90 * Math.sin(t * 2),
-      ...(t % 2.5 < 0.45 ? jumpArc((t % 2.5) / 0.45, STAND.hipY) : {}),
+      ...(t % 2.5 < AIRBORNE_SEC ? jumpArc((t % 2.5) / AIRBORNE_SEC) : {}),
     }), { seed: 25, fps: 10, jitter: 0.008, dropout: 0.12, frameDrop: 0.06 }),
 };
 
