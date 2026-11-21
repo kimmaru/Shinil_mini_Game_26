@@ -1,0 +1,21 @@
+{
+  "src/engine/types.ts": "1749f6902766f103e86dac32aaf4bc2bf8d71c1356db79b3172ffa33c1d6612c",
+  "src/engine/math.ts": "0cc6fc6b64b85badf4fd8156203f8860768d73ce79247573fc4e6aef96b591f8",
+  "src/engine/entities.ts": "39439a72297850f8cc9ab66aa6c390d124ab06640a71b514769bbf31dc681315",
+  "src/engine/spawn.ts": "99c1d43c9df39198dac533b91b22d8e77b4e034ab9332739cd764049a051b7e2",
+  "src/engine/catalog.ts": "5ecd388cfbf1b5365881276b0463a7efcb9454be5a780f06c0d5ae5df2b4ee61",
+  "src/engine/registry.ts": "46e576f4db0b2942a5f0dd9b304c6fdbbf8b62e1951c963d69970cbf99cf70f7",
+  "src/engine/pose/landmarks.ts": "ceca69ecf63ac4268f6feee2b3ea1e7c713d9ce709e39beeb0b9aca97925da8a",
+  "src/engine/pose/source.ts": "46f94ed8e73813fb1ab31a432001c087807c27754e4987ecc65faf33d86393b5",
+  "src/engine/render/renderer.ts": "b726c308b6812e9d12de80cfe6ff5f4a41fc20d963125acf2cc633f29ea91072",
+  "src/engine/render/palette.ts": "2df6d5c02e85caa16021aedf64e6cba608a4469339e2e2367c42943a548c6d7a",
+  "src/engine/gestures/index.ts": "5a6caa8e51307238fea54f7df38c02027f628d2f3a748196bbce1d8e94e08c88",
+  "src/engine/fx/index.ts": "76570775b44d42764311b558ffda8fef186bd3242c1d811f0ed55e63bded2c83",
+  "src/engine/hud/index.ts": "4624050a6419e9ba60dd11cf8a07058e62595ea06045e0a0f3940dc9212f1bd3",
+  "src/engine/audio/index.ts": "bbe75986a66146302e78a7082ff9beacdc81c7b5c6f0580fbb306ff3d4bc5290",
+  "src/engine/audio/sfx.ts": "86f40271cadbe93de8d8bec4939e75f344f3614c244b5cd5f962bdd089982baa",
+  "src/engine/testing/harness.ts": "6f31163e466358958c5b8fdca2c895c816a1e26a18121824d70e35a17f8f8032",
+  "src/engine/testing/synth.ts": "bde7d3afd7b365d00872ceba98bbba45f40530f2e779ee75063b269788cea4e2",
+  "src/engine/testing/clips.ts": "757f875f628107eabc089d9a49ff4c563c2ee153eddae224f1acaa02c9455da3",
+  "src/engine/testing/nullRenderer.ts": "91eca3116b6ee3793a23ba1593b9a6001c16d854df12b9b11bdd7cfdd18b1bca"
+}

@@ -1,0 +1,22 @@
+// The contract surface. Imported by check-frozen.mjs and documented in AGENTS.md.
+export const FROZEN = [
+  'src/engine/types.ts',
+  'src/engine/math.ts',
+  'src/engine/entities.ts',
+  'src/engine/spawn.ts',
+  'src/engine/catalog.ts',
+  'src/engine/registry.ts',
+  'src/engine/pose/landmarks.ts',
+  'src/engine/pose/source.ts',
+  'src/engine/render/renderer.ts',
+  'src/engine/render/palette.ts',
+  'src/engine/gestures/index.ts',
+  'src/engine/fx/index.ts',
+  'src/engine/hud/index.ts',
+  'src/engine/audio/index.ts',
+  'src/engine/audio/sfx.ts',
+  'src/engine/testing/harness.ts',
+  'src/engine/testing/synth.ts',
+  'src/engine/testing/clips.ts',
+  'src/engine/testing/nullRenderer.ts',
+];

@@ -1,0 +1,41 @@
+{
+  "name": "shinil-mini-game-party",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "prepare:vision": "node scripts/copy-vision-assets.mjs",
+    "dev": "npm run prepare:vision && vite",
+    "build": "npm run prepare:vision && tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "check:frozen": "node scripts/check-frozen.mjs",
+    "check:assets": "node scripts/check-no-assets.mjs",
+    "check:privacy": "node scripts/check-privacy.mjs",
+    "freeze": "node scripts/check-frozen.mjs --write",
+    "gate": "npm run typecheck && npm run check:boundaries && npm run check:frozen && npm run check:assets && vitest run",
+    "shot": "node scripts/shot.mjs"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "1.2.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "pretendard": "1.3.9",
+    "typescript": "~5.9.3",
+    "vite": "8.3.8",
+    "vitest": "5.1.1",
+    "zod": "4.6.7"
+  }
+}
