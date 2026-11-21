@@ -1,23 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
-  cameraErrorKind, cameraShouldRun, isRoundActive, needsPose, showsSkeleton, type Phase,
+  cameraErrorKind, cameraShouldRun, isGuestPhase, isRoundActive, needsPose,
+  showsSkeleton, type Phase,
 } from './session';
 
 const ALL_PHASES: Phase[] = [
-  'boot', 'priming', 'prePrompt', 'cameraRequest', 'cameraHelp', 'warmup',
-  'calibration', 'safety', 'attract', 'roulette', 'intro', 'countdown',
-  'play', 'paused', 'results', 'breakPrompt', 'partySummary',
+  'boot', 'setup', 'setupHelp', 'attract', 'roulette', 'countdown',
+  'play', 'paused', 'results',
 ];
 
 describe('camera lifecycle', () => {
-  it('releases the camera in every phase that is not using it', () => {
-    // This is the property the privacy copy rests on, so it is asserted
-    // directly rather than left to code review.
-    const mustBeOff: Phase[] = [
-      'boot', 'priming', 'prePrompt', 'cameraRequest', 'cameraHelp', 'safety',
-      'paused', 'breakPrompt', 'partySummary',
-    ];
-    for (const p of mustBeOff) {
+  it('holds the camera off until the operator has finished setup', () => {
+    // A kiosk runs its camera all day by necessity — it has to notice a guest
+    // arriving. What is still asserted here is that nothing opens the camera
+    // BEFORE setup has succeeded, which is where the permission and the
+    // capability probe live.
+    for (const p of ['boot', 'setupHelp'] as Phase[]) {
       expect(cameraShouldRun(p, 'camera'), p).toBe(false);
     }
   });
@@ -28,22 +26,27 @@ describe('camera lifecycle', () => {
     }
   });
 
-  it('runs the camera while a round is in flight', () => {
-    for (const p of ['warmup', 'calibration', 'attract', 'play'] as Phase[]) {
+  it('keeps the camera on across the whole guest loop', () => {
+    // Dropping the track between rounds would mean the booth could not see
+    // the next guest walk up, and re-acquiring takes long enough to be felt.
+    for (const p of ALL_PHASES.filter(isGuestPhase)) {
       expect(cameraShouldRun(p, 'camera'), p).toBe(true);
     }
   });
 
   it('only consumes pose frames where a body is actually being read', () => {
     expect(needsPose('play')).toBe(true);
+    // Presence detection and background auto-calibration both run here, which
+    // is what removes the calibration screen from a stranger's path.
     expect(needsPose('attract')).toBe(true);
-    expect(needsPose('priming')).toBe(false);
-    expect(needsPose('partySummary')).toBe(false);
+    expect(needsPose('boot')).toBe(false);
+    expect(needsPose('results')).toBe(false);
   });
 
   it('shows the skeleton on the attract screen', () => {
-    // Deliberate: it is the honest demonstration of what the camera extracts,
-    // for the parent standing behind the child.
+    // Deliberate, and now doing double duty: it is the hook that makes a
+    // passer-by stop, and the honest demonstration that the camera extracts
+    // joints rather than a face.
     expect(showsSkeleton('attract')).toBe(true);
   });
 
@@ -58,6 +61,17 @@ describe('camera lifecycle', () => {
     expect(isRoundActive('play')).toBe(true);
     expect(isRoundActive('attract')).toBe(false);
   });
+
+  it('keeps setup out of the guest-visible flow', () => {
+    // The whole point of the kiosk restructure: a walk-up stranger must never
+    // land on a permission, warmup or calibration screen.
+    for (const p of ['boot', 'setup', 'setupHelp'] as Phase[]) {
+      expect(isGuestPhase(p), p).toBe(false);
+    }
+    for (const p of ['attract', 'roulette', 'play', 'results'] as Phase[]) {
+      expect(isGuestPhase(p), p).toBe(true);
+    }
+  });
 });
 
 describe('cameraErrorKind', () => {
@@ -68,6 +82,9 @@ describe('cameraErrorKind', () => {
     // getUserMedia missing entirely means an insecure context — telling this
     // user to "press 허용" would be useless advice.
     expect(cameraErrorKind({ name: 'TypeError' })).toBe('insecure');
+    // The camera opened but the pose engine did not: a separate failure with a
+    // separate fix, and the one actually seen on this machine.
+    expect(cameraErrorKind({ name: 'EngineStartError' })).toBe('engine');
   });
 
   it('never throws on junk', () => {

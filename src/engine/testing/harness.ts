@@ -9,6 +9,7 @@
 import type {
   EndReason, GameContext, GameId, GameResult, MiniGameManifest,
 } from '../types';
+import type { Renderer } from '../render/renderer';
 import { clip, type ClipName } from './clips';
 import { NullRenderer, type RenderAudit } from './nullRenderer';
 import { createCallLog, stubAudio, stubFx, stubHud, type CallLog } from './stubs';
@@ -17,6 +18,17 @@ import { replaySource } from '../pose/replay';
 import { createGestureService } from '../gestures/service';
 import { mulberry32 } from '../rng';
 import { applyScoring } from '../stars';
+
+/** The renderer surface runGame drives. The NullRenderer is the default; the
+ *  SVG shot tool substitutes itself here so the visual gate can look at a
+ *  frame without a browser (rAF is suspended in a hidden pane) and without
+ *  canvas.toDataURL (banned by check-privacy, deliberately). */
+export interface AuditRenderer extends Renderer {
+  strict: boolean;
+  readonly audit: RenderAudit;
+  beginFrame(t: number): void;
+  endFrame(): void;
+}
 
 export interface RunOpts {
   clip: ClipName;
@@ -34,6 +46,8 @@ export interface RunOpts {
   strict?: boolean;
   /** Stop early after this many steps, for debugging. */
   maxSteps?: number;
+  /** Substitute renderer. Defaults to a NullRenderer. */
+  renderer?: AuditRenderer;
 }
 
 export interface RunReport {
@@ -74,7 +88,7 @@ export async function runGame(id: GameId, opts: RunOpts): Promise<RunReport> {
   const steps = Math.min(opts.maxSteps ?? Infinity, Math.round((durationMs / 1000) * 60));
   const seed = opts.seed ?? 7;
 
-  const g = new NullRenderer(view.w, view.h);
+  const g: AuditRenderer = opts.renderer ?? new NullRenderer(view.w, view.h);
   g.strict = opts.strict ?? false;
   const log = createCallLog();
 

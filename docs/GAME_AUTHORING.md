@@ -81,7 +81,7 @@ class MyGame implements MiniGame {
   render(g: Renderer, _interp: number): void {
     g.clear(this.ctx.manifest.theme?.hue);
     for (let i = 0; i < this.bugs.n; i++) {
-      g.emoji('🦟', this.bugs.x[i]!, this.bugs.y[i]!, this.bugs.r[i]! * 2, this.bugs.rot[i]!);
+      g.sprite('mosquito', this.bugs.x[i]!, this.bugs.y[i]!, this.bugs.r[i]! * 2, { rot: this.bugs.rot[i]! });
     }
   }
 
@@ -216,12 +216,10 @@ beats a clever game with none.
 
 ```ts
 // A hit should produce, within 100ms:
-ctx.fx.burst(x, y, { count: 18, color: C.accent, emoji: '✨' });
-ctx.fx.pop(x, y, 40 * g.s, C.accent);
-ctx.fx.shake(0.12);
-ctx.fx.hitstop(0.05);
+// ONE call, one grade. Particles, ring, shake, hitstop, squash and the
+// floating score all land together at the catalogue's standard weight.
+ctx.fx.impact(x, y, 'hit', { label: '+10', sprite: 'sparkle', squashKey: id });
 ctx.audio.playLadder('pop', this.combo);     // pitch rises with the combo
-ctx.fx.popText(x, y, '+10');
 ```
 
 Rules learned from this genre:
@@ -295,6 +293,18 @@ and new ids are rejected by the gate. A rough map:
 | Round | `round.start`, `round.win`, `round.lose`, `star.1/2/3`, `fanfare` |
 | Melody | `note.c` … `note.b`, `chime`, `sparkle` |
 
+### Impact grades
+
+| grade | when |
+|---|---|
+| `tap` | collecting, touching |
+| `hit` | **the default** |
+| `big` | a break, a 10-combo |
+| `huge` | a boss, a milestone — once or twice a round |
+
+`ctx.fx.miss(x, y)` for a miss. It is quiet by construction: no shake, no
+flash, no red — the engine refuses to make a miss loud even if you ask.
+
 **Audio is never load-bearing.** Every spoken or sung cue must have a visual
 twin. If your game is unplayable muted, set `a11y.audioOptional: false` and the
 engine will render a beat ring for you.
@@ -364,3 +374,29 @@ In the browser:
 - [ ] `dev.clip` set, and the game scores > 0 on it
 - [ ] `enabled: false`
 - [ ] `npm run gate` green
+
+
+---
+
+## 14. Art: sprites, not emoji
+
+All art is vector sprites drawn from SVG path data. **`ART.md` is the full
+guide**; the three rules that catch people out:
+
+1. **Reuse before you draw.** `spriteIds()` lists what exists — 77 sprites,
+   including `star heart circle ring target balloon candy rock basket mosquito
+   bee wave bubble droplet check cross burst` plus `ui-*` and `g-*` sets. Many
+   needs are an existing sprite with a `tint`: a snowball is `circle` tinted
+   white, a meteor is `rock` with a glow.
+2. **At most 2 new sprites per game**, in `src/games/<id>/sprites.ts`, with ids
+   namespaced `<game-id>:<name>`. Three means the design needs rethinking or
+   the shape belongs in the shared set.
+3. **Colour comes from palette ROLES**, never a literal hex — that is what lets
+   one sprite serve games of different hues.
+
+```ts
+g.sprite('balloon', x, y, 72 * g.s, { rot, hue: 320 });
+```
+
+The canvas is **light** (warm cream). Sprite keylines are near-black ink;
+plain white fills are invisible. Scale every size by `g.s`.

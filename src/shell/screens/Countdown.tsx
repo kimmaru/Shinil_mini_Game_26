@@ -13,15 +13,22 @@ import { useServices } from '../useSession';
 
 export const COUNT_STEP_MS = 800;
 
+import type { PoseSource } from '@/engine/pose/source';
+import type { GameInfo } from '../useSession';
+
 export interface CountdownProps {
   onDone: () => void;
-  /** Shown faintly behind the number, so they know what they are about to play. */
-  gameNameKo?: string;
+  /** The game about to start. Its gesture demo plays during the count —
+   *  there is no intro screen, because a stranger does not read one. */
+  game: GameInfo | null;
+  pose: PoseSource | null;
+  reducedMotion: boolean;
 }
 
 const STEPS = ['3', '2', '1', '시작!'] as const;
 
-export function Countdown({ onDone, gameNameKo }: CountdownProps): React.ReactElement {
+export function Countdown({ onDone, game }: CountdownProps): React.ReactElement {
+  const gameNameKo = game?.nameKo;
   const [i, setI] = useState(0);
   const services = useServices();
 

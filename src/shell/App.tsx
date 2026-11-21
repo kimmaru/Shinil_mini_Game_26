@@ -3,50 +3,50 @@
 // screens must not: the camera, the two warmup stages, calibration, the round,
 // and teardown.
 //
-// Every screen below is a pure function of props. That is what lets the real
-// `src/engine/session.ts` replace `useSession`'s local reducer without touching
-// a single screen, and what lets each screen be reviewed on its own.
+// Every screen below is a pure function of props, which is what lets each one
+// be redesigned on its own without touching this file. App owns the PROP
+// CONTRACTS; the screens own what they look like.
+//
+// ── Kiosk flow ─────────────────────────────────────────────────────────────
+//   boot → setup ⇄ setupHelp        operator, once, when the booth opens
+//   attract ⇄ settings              the resting state, all day
+//     └ START → roulette → countdown → play → results → attract
+//
+// Setup is not a guest's problem and results do not accumulate into a party:
+// every round is a different stranger. See engine/session.ts for why each
+// phase in the old classroom chain is gone.
 //
 // Query params (all DEV-friendly, all harmless in production):
 //   ?debug=1        the debug overlay
 //   ?screen=attract jump straight to a phase
 //   ?seed=hello     deterministic round
 //   ?all=1          include games the lead has not switched on
-//   ?players=2      multi-player layout
 //   ?fakepose=1     DEV: animate a synthetic skeleton (no camera needed)
 // ════════════════════════════════════════════════════════════════════════════
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GameResult } from '@/engine/types';
+import { ABANDON_SEC, RESULTS_AUTO_HOME_SEC } from '@/engine/session';
 import { defaultCalibration } from '@/engine/pose/source';
 import { hashSeed } from '@/engine/rng';
 
-import { Button } from './components/Button';
 import { CameraChip } from './components/CameraChip';
 import { ToastHost, useToasts } from './components/Toast';
 import { createHudService, HudOverlay } from './hud/HudOverlay';
 import { DebugOverlay, type DebugPush } from './debug/DebugOverlay';
 
 import { Attract } from './screens/Attract';
-import { BreakPrompt } from './screens/BreakPrompt';
-import { Calibration, CALIBRATION_MS } from './screens/Calibration';
-import { CameraHelp } from './screens/CameraHelp';
 import { Countdown } from './screens/Countdown';
-import { Intro } from './screens/Intro';
-import { PartySummary } from './screens/PartySummary';
-import { PrePrompt } from './screens/PrePrompt';
-import { Priming } from './screens/Priming';
-import { Privacy } from './screens/Privacy';
 import { Results } from './screens/Results';
 import { Roulette, decideRound } from './screens/Roulette';
-import { Safety } from './screens/Safety';
 import { Settings } from './screens/Settings';
-import { Warmup, WARMUP_TIMEOUT_MS } from './screens/Warmup';
+import { Setup } from './screens/Setup';
+import { SetupHelp } from './screens/SetupHelp';
 
 import {
   ServicesContext,
   cameraErrorKind,
   describeGame,
-  needsBreak,
+  poolItems,
   useSession,
   useSettings,
   type Phase,
@@ -54,36 +54,20 @@ import {
 } from './useSession';
 
 const PHASES: readonly Phase[] = [
-  'boot', 'priming', 'prePrompt', 'cameraRequest', 'cameraHelp', 'warmup',
-  'calibration', 'safety', 'attract', 'roulette', 'intro', 'countdown',
-  'play', 'paused', 'results', 'breakPrompt', 'partySummary',
+  'boot', 'setup', 'setupHelp', 'attract', 'roulette', 'countdown',
+  'play', 'paused', 'results',
 ];
 
 /** Hidden this long and we give the camera back — a tab nobody is looking at
- *  has no business holding the webcam. */
+ *  has no business holding the webcam, kiosk or not. */
 const CAMERA_IDLE_MS = 60_000;
 
-// ─── localStorage: best scores only, namespaced, wipeable in one press ──────
-const BEST_KEY = 'mg:best';
+/** Stage B can hang on a cold shader cache. Measured at ~20s in the worst
+ *  case, so this is generous rather than optimistic. */
+const WARMUP_TIMEOUT_MS = 60_000;
 
-function readBest(): Record<string, number> {
-  try {
-    return JSON.parse(localStorage.getItem(BEST_KEY) ?? '{}') as Record<string, number>;
-  } catch {
-    return {};
-  }
-}
-
-function writeBest(id: string, score: number): void {
-  try {
-    const all = readBest();
-    if ((all[id] ?? -1) >= score) return;
-    all[id] = score;
-    localStorage.setItem(BEST_KEY, JSON.stringify(all));
-  } catch {
-    /* storage blocked: records just are not kept */
-  }
-}
+/** How often the booth checks whether anybody is still standing there. */
+const PRESENCE_POLL_MS = 500;
 
 export interface AppProps {
   services?: ShellServices;
@@ -133,13 +117,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
   }, [services, settings.sound]);
 
   const hud = useMemo(
-    () =>
-      createHudService({
-        reducedMotion,
-        ...(settings.speak && services.audio
-          ? { speak: (t: string) => (services.audio as { speak?: (s: string) => void }).speak?.(t) }
-          : {}),
-      }),
+    () => createHudService({ reducedMotion }),
     // One HUD per app instance; reducedMotion is read at construction only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
@@ -149,12 +127,25 @@ export function App({ services = {} }: AppProps): React.ReactElement {
   const pushRef = useRef<DebugPush>({});
   const stageRef = useRef<HTMLDivElement>(null);
   const [roundSecondsLeft, setRoundSecondsLeft] = useState<number | null>(null);
-  const [calibProgress, setCalibProgress] = useState(0);
+  const [setupStarted, setSetupStarted] = useState(false);
 
   const pose = services.pose ?? null;
   const game = state.currentGame ? describeGame(state.currentGame) : null;
 
-  // ─── DEV console API (docs/PLAN.md § Browser pane 검증) ──────────────────
+  /** The games the attract reel cycles through. Real playable games, because
+   *  there are no video files anywhere in this project and there is no reason
+   *  to add any: the reel runs the games themselves. */
+  const reel = useMemo(
+    () => poolItems({
+      players: 1,
+      space: ['seated', 'standing', 'room'],
+      cameraOn: true,
+      ...(includeDisabled ? { includeDisabled: true } : {}),
+    }),
+    [includeDisabled],
+  );
+
+  // ─── DEV console API ────────────────────────────────────────────────────
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     window.__mg = {
@@ -170,7 +161,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
         currentGame: state.currentGame,
         shortlist: state.shortlist.map((s) => s.id),
         chosenIndex: state.chosenIndex,
-        rounds: state.history.length,
+        rounds: state.roundsPlayed,
         ...pushRef.current,
       }),
     };
@@ -179,126 +170,126 @@ export function App({ services = {} }: AppProps): React.ReactElement {
     };
   }, [state, dispatch]);
 
-  // ─── Stage A: prefetch the 20MB of wasm + model while they read ─────────
+  // ─── Setup: prefetch → permission → warmup, as one chain ────────────────
+  //
+  // These were three phases with three screens. They are one effect now
+  // because the operator has no decision to make between them — splitting
+  // them only ever served the guest-facing copy that no longer exists.
   useEffect(() => {
-    if (state.phase !== 'priming' || !services.prefetchAssets) return;
+    if (state.phase !== 'setup' || !setupStarted) return;
     let alive = true;
-    services
-      .prefetchAssets((p, labelKo) => {
-        if (alive) dispatch({ type: 'progress', progress: p, labelKo });
-      })
-      .catch(() => {
-        // Not fatal: the model will simply be fetched later, more slowly.
-        if (alive) push('준비가 조금 늦어요. 그래도 놀 수 있어요!', 'warn');
-      });
-    return () => {
-      alive = false;
-    };
-  }, [state.phase, services, dispatch, push]);
+    const timeout = window.setTimeout(() => {
+      if (!alive) return;
+      push('준비가 너무 오래 걸려요. 카메라 없이도 쓸 수 있어요.', 'warn', 8000);
+      dispatch({ type: 'setupDone' });
+    }, WARMUP_TIMEOUT_MS);
 
-  // ─── getUserMedia ────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (state.phase !== 'cameraRequest') return;
-    let alive = true;
-    const open = services.openCamera;
-    if (!open) {
-      // No engine attached: do not pretend. Offer the keyboard route.
-      dispatch({ type: 'cameraFailed', error: 'unknown' });
-      return;
-    }
-    open()
-      .then(() => alive && dispatch({ type: 'cameraGranted' }))
-      .catch((e: unknown) => {
+    const progress = (lo: number, hi: number) => (p: number, labelKo: string) => {
+      if (alive) dispatch({ type: 'progress', progress: lo + (hi - lo) * p, labelKo });
+    };
+
+    (async () => {
+      // Stage A is advisory: a slow prefetch means a slow first round, not a
+      // broken booth, so its failure must not stop the chain.
+      if (services.prefetchAssets) {
+        await services.prefetchAssets(progress(0, 0.5)).catch(() => undefined);
+      }
+      if (!alive) return;
+
+      if (!services.openCamera) {
+        // No engine attached: do not pretend a camera is coming.
+        dispatch({ type: 'cameraFailed', error: 'unknown' });
+        return;
+      }
+      try {
+        await services.openCamera();
+      } catch (e) {
         if (!alive) return;
         // Carry the real error text through. Without it the help screen is a
         // dead end for whoever has to fix the problem.
         const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
         dispatch({ type: 'cameraFailed', error: cameraErrorKind(e), detail });
-      });
-    return () => {
-      alive = false;
-    };
-  }, [state.phase, services, dispatch]);
-
-  // ─── Stage B: landmarker + 3 real inferences (shader compile) ────────────
-  useEffect(() => {
-    if (state.phase !== 'warmup') return;
-    let alive = true;
-    const timeout = window.setTimeout(() => {
+        return;
+      }
       if (!alive) return;
-      push('준비가 너무 오래 걸려요. 키보드로 놀아도 재미는 똑같아요!', 'warn', 8000);
-      dispatch({ type: 'warmupDone' });
-    }, WARMUP_TIMEOUT_MS);
+      dispatch({ type: 'cameraGranted' });
 
-    const run = services.warmup;
-    if (!run) {
-      dispatch({ type: 'warmupDone' });
-    } else {
-      run((p, labelKo) => alive && dispatch({ type: 'progress', progress: p, labelKo }))
-        .then(() => alive && dispatch({ type: 'warmupDone' }))
-        .catch(() => {
+      // Stage B is NOT advisory: this is the lazy shader compile, and letting
+      // it land mid-round is the stutter it exists to prevent.
+      if (services.warmup) {
+        try {
+          await services.warmup(progress(0.5, 1));
+        } catch (e) {
           if (!alive) return;
-          push('카메라 준비에 실패했어요. 키보드로 놀 수 있어요!', 'warn');
-          dispatch({ type: 'chooseKeyboard' });
-        });
-    }
+          const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+          dispatch({ type: 'cameraFailed', error: 'engine', detail });
+          return;
+        }
+      }
+      if (alive) dispatch({ type: 'setupDone' });
+    })();
+
     return () => {
       alive = false;
       window.clearTimeout(timeout);
     };
-  }, [state.phase, services, dispatch, push]);
+  }, [state.phase, setupStarted, services, dispatch, push]);
 
-  // ─── Calibration: 4s, median over ~60 frames ─────────────────────────────
+  // ─── Background calibration ─────────────────────────────────────────────
+  //
+  // shortcut: a one-shot capture the first time a guest appears on `attract`.
+  // The continuous AutoCalibrator (engine/pose/calibration.ts) replaces this
+  // and will also handle a guest who walks closer mid-wait; until it lands,
+  // this at least means nobody is asked to stand still for a progress bar.
   useEffect(() => {
-    if (state.phase !== 'calibration') return;
+    if (state.phase !== 'attract' || state.calib || !pose) return;
     let alive = true;
-    setCalibProgress(0);
-    const t0 = performance.now();
-    const ticker = window.setInterval(() => {
-      if (alive) setCalibProgress(Math.min(1, (performance.now() - t0) / CALIBRATION_MS));
-    }, 80);
-
-    const finish = (profile: ReturnType<typeof defaultCalibration>) => {
-      if (!alive) return;
-      if (!profile.lowerBodyVisible) {
-        push('발이 안 보여요. 다리를 쓰는 게임은 잠깐 쉴게요!', 'info', 5000);
-      }
-      dispatch({ type: 'calibrated', profile });
-    };
-
-    if (!pose) {
-      // Keyboard / no engine: a standing-adult default is honest and instant.
-      const id = window.setTimeout(() => finish(defaultCalibration()), CALIBRATION_MS);
-      return () => {
-        alive = false;
-        window.clearInterval(ticker);
-        window.clearTimeout(id);
-      };
-    }
-
-    pose
-      .calibrate(CALIBRATION_MS)
-      .then(finish)
-      .catch(() => {
-        if (!alive) return;
-        dispatch({ type: 'calibHint', hintKo: '잘 안 보여요. 뒤로 한 걸음 가 볼까요?' });
-        finish(defaultCalibration());
-      });
+    const id = window.setTimeout(() => {
+      pose
+        .calibrate(1200)
+        .then((profile) => alive && dispatch({ type: 'calibrated', profile }))
+        .catch(() => alive && dispatch({ type: 'calibrated', profile: defaultCalibration() }));
+    }, 300);
     return () => {
       alive = false;
-      window.clearInterval(ticker);
+      window.clearTimeout(id);
     };
-  }, [state.phase, pose, dispatch, push]);
+  }, [state.phase, state.calib, pose, dispatch]);
+
+  // Keyboard mode has no body to measure, so it gets the measured default
+  // immediately rather than a null profile every game has to guard against.
+  useEffect(() => {
+    if (state.inputMode === 'keyboard' && !state.calib) {
+      dispatch({ type: 'calibrated', profile: defaultCalibration() });
+    }
+  }, [state.inputMode, state.calib, dispatch]);
+
+  // ─── Nobody there: reset the booth for the next person ──────────────────
+  useEffect(() => {
+    if (state.inputMode !== 'camera' || !pose) return;
+    if (state.phase !== 'results' && state.phase !== 'countdown') return;
+    let empty = 0;
+    const id = window.setInterval(() => {
+      const f = pose.sample(performance.now() / 1000);
+      const here = f.players.some((p) => p.present);
+      empty = here ? 0 : empty + PRESENCE_POLL_MS / 1000;
+      if (empty >= ABANDON_SEC) dispatch({ type: 'abandon' });
+    }, PRESENCE_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [state.phase, state.inputMode, pose, dispatch]);
+
+  // A guest who walks off without pressing 처음으로 must not leave their score
+  // up for the next person.
+  useEffect(() => {
+    if (state.phase !== 'results') return;
+    const id = window.setTimeout(
+      () => dispatch({ type: 'home' }),
+      RESULTS_AUTO_HOME_SEC * 1000,
+    );
+    return () => window.clearTimeout(id);
+  }, [state.phase, dispatch]);
 
   // ─── The round ───────────────────────────────────────────────────────────
-  const finishRound = useCallback(
-    (result: GameResult) => {
-      writeBest(result.gameId, result.rawScore);
-      dispatch({ type: 'roundEnded', result });
-    },
-    [dispatch],
-  );
-
   useEffect(() => {
     if (state.phase !== 'play' || !state.currentGame) return;
     const host = stageRef.current;
@@ -323,14 +314,14 @@ export function App({ services = {} }: AppProps): React.ReactElement {
       seed: state.seed,
       signal: ac.signal,
     })
-      .then(finishRound)
+      .then((result: GameResult) => dispatch({ type: 'roundEnded', result }))
       .catch(() => push('게임을 불러오지 못했어요. 다른 게임을 해 볼까요?', 'warn'));
 
     return () => {
       ac.abort();
       window.clearInterval(ticker);
     };
-  }, [state.phase, state.currentGame, state.seed, services, hud, finishRound, push]);
+  }, [state.phase, state.currentGame, state.seed, services, hud, dispatch, push]);
 
   // ─── Pose source warnings surface as gentle toasts ──────────────────────
   useEffect(() => {
@@ -372,7 +363,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
     };
   }, [services, dispatch, closeCamera]);
 
-  // Esc pauses, and closes an overlay first.
+  // Esc closes an overlay, then pauses.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
@@ -387,97 +378,68 @@ export function App({ services = {} }: AppProps): React.ReactElement {
   const startRound = useCallback(() => {
     const pick = decideRound({
       players: state.players,
-      space: state.safetyDone ? ['seated', 'standing', 'room'] : ['seated', 'standing'],
+      space: ['seated', 'standing', 'room'],
       cameraOn: state.inputMode === 'camera',
       ...(state.calib && !state.calib.lowerBodyVisible ? { lowerBodyVisible: false } : {}),
       ...(includeDisabled ? { includeDisabled: true } : {}),
     });
     dispatch({ type: 'spin', shortlist: pick.shortlist, chosenIndex: pick.chosenIndex });
-  }, [state.players, state.safetyDone, state.inputMode, state.calib, includeDisabled, dispatch]);
+  }, [state.players, state.inputMode, state.calib, includeDisabled, dispatch]);
 
-  const afterResults = useCallback(() => {
-    if (needsBreak(state, Date.now())) dispatch({ type: 'goto', phase: 'breakPrompt' });
-    else startRound();
-  }, [state, dispatch, startRound]);
-
-  // Transitions that a screen fires from a TIMER must be referentially stable,
-  // or a re-render here (a toast, a pose warning) restarts that timer and the
+  // Transitions a screen fires from a TIMER must be referentially stable, or a
+  // re-render here (a toast, a pose warning) restarts that timer and the
   // auto-advance never completes. `dispatch` from useReducer is stable.
   const goKeyboard = useCallback(() => dispatch({ type: 'chooseKeyboard' }), [dispatch]);
-  const goPromptNow = useCallback(() => dispatch({ type: 'promptNow' }), [dispatch]);
+  const goRetry = useCallback(() => {
+    setSetupStarted(true);
+    dispatch({ type: 'retryCamera' });
+  }, [dispatch]);
   const goSpinDone = useCallback(() => dispatch({ type: 'spinDone' }), [dispatch]);
-  const goIntroDone = useCallback(() => dispatch({ type: 'introDone' }), [dispatch]);
   const goCountdownDone = useCallback(() => dispatch({ type: 'countdownDone' }), [dispatch]);
-  const goNext = useCallback(() => dispatch({ type: 'next' }), [dispatch]);
+  const goHome = useCallback(() => dispatch({ type: 'home' }), [dispatch]);
+  const goAgain = useCallback(() => dispatch({ type: 'again' }), [dispatch]);
+
+  const onSetupStart = useCallback(() => {
+    setSetupStarted(true);
+    dispatch({ type: 'setupStart' });
+  }, [dispatch]);
+
+  // Boot goes straight to setup so the operator sees one screen, not two.
+  useEffect(() => {
+    if (state.phase === 'boot') dispatch({ type: 'setupStart' });
+  }, [state.phase, dispatch]);
 
   // ─── Render ─────────────────────────────────────────────────────────────
-  const openSettings = () => dispatch({ type: 'openOverlay', overlay: 'settings' });
-  const openPrivacy = () => dispatch({ type: 'openOverlay', overlay: 'privacy' });
-  const closeOverlay = () => dispatch({ type: 'closeOverlay' });
+  const openSettings = useCallback(
+    () => dispatch({ type: 'openOverlay', overlay: 'settings' }),
+    [dispatch],
+  );
+  const closeOverlay = useCallback(() => dispatch({ type: 'closeOverlay' }), [dispatch]);
 
   let screen: React.ReactElement;
   switch (state.phase) {
     case 'boot':
-    case 'priming':
+    case 'setup':
       screen = (
-        <Priming
-          progress={state.loading.progress}
-          progressLabelKo={state.loading.labelKo}
-          onCamera={() => dispatch({ type: 'chooseCamera' })}
-          onKeyboard={() => dispatch({ type: 'chooseKeyboard' })}
-          onPrivacy={openPrivacy}
-          onSettings={openSettings}
-        />
-      );
-      break;
-
-    case 'prePrompt':
-      screen = (
-        <PrePrompt onReady={goPromptNow} onKeyboard={goKeyboard} />
-      );
-      break;
-
-    case 'cameraRequest':
-      screen = (
-        <Warmup progress={0} labelKo="카메라를 켜고 있어요…" onKeyboard={goKeyboard} />
-      );
-      break;
-
-    case 'cameraHelp':
-      screen = (
-        <CameraHelp
-          error={state.cameraError}
-          detailKo={state.cameraErrorDetail}
-          onKeyboard={goKeyboard}
-          onRetry={() => dispatch({ type: 'retryCamera' })}
-        />
-      );
-      break;
-
-    case 'warmup':
-      screen = (
-        <Warmup
+        <Setup
           progress={state.loading.progress}
           labelKo={state.loading.labelKo}
+          started={setupStarted}
+          onStart={onSetupStart}
           onKeyboard={goKeyboard}
         />
       );
       break;
 
-    case 'calibration':
+    case 'setupHelp':
       screen = (
-        <Calibration
-          pose={pose}
-          progress={calibProgress}
-          hintKo={state.calibHintKo}
-          onSkip={() => dispatch({ type: 'calibrated', profile: defaultCalibration() })}
-          {...(fakePose ? { fakePose: true } : {})}
+        <SetupHelp
+          error={state.cameraError}
+          detailKo={state.cameraErrorDetail}
+          onRetry={goRetry}
+          onKeyboard={goKeyboard}
         />
       );
-      break;
-
-    case 'safety':
-      screen = <Safety onAck={() => dispatch({ type: 'safetyAck' })} />;
       break;
 
     case 'attract':
@@ -486,13 +448,10 @@ export function App({ services = {} }: AppProps): React.ReactElement {
           pose={pose}
           gestures={services.gestures}
           inputMode={state.inputMode}
-          nicknameKo={settings.nickname}
-          players={state.players}
-          returning={state.history.length > 0}
+          reel={reel}
+          reducedMotion={reducedMotion}
           onStart={startRound}
           onSettings={openSettings}
-          onPrivacy={openPrivacy}
-          onFinish={() => dispatch({ type: 'stop' })}
           {...(fakePose ? { fakePose: true } : {})}
         />
       );
@@ -505,19 +464,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
           chosenIndex={state.chosenIndex}
           reducedMotion={reducedMotion}
           onDone={goSpinDone}
-          onBack={goNext}
-        />
-      );
-      break;
-
-    case 'intro':
-      screen = (
-        <Intro
-          gameId={state.currentGame ?? ''}
-          nextIds={state.shortlist.map((s) => s.id).filter((id) => id !== state.currentGame)}
-          autoAdvance={settings.autoAdvance}
-          onReady={goIntroDone}
-          onBack={goNext}
+          onBack={goHome}
         />
       );
       break;
@@ -525,7 +472,9 @@ export function App({ services = {} }: AppProps): React.ReactElement {
     case 'countdown':
       screen = (
         <Countdown
-          {...(game ? { gameNameKo: game.nameKo } : {})}
+          game={game}
+          pose={pose}
+          reducedMotion={reducedMotion}
           onDone={goCountdownDone}
         />
       );
@@ -533,146 +482,61 @@ export function App({ services = {} }: AppProps): React.ReactElement {
 
     case 'play':
     case 'paused':
-      screen = (
-        <main className="screen screen--full stage-wrap">
-          <div ref={stageRef} className="stage" />
+      screen = <div className="stage" ref={stageRef} />;
+      break;
+
+    case 'results':
+      screen = state.lastResult && game ? (
+        <Results
+          result={state.lastResult}
+          gameNameKo={game.nameKo}
+          hue={game.hue}
+          record={state.records[game.id] ?? null}
+          beatRecord={state.beatRecord}
+          reducedMotion={reducedMotion}
+          onHome={goHome}
+          onAgain={goAgain}
+        />
+      ) : (
+        <div className="stage" />
+      );
+      break;
+
+    default: {
+      const never: never = state.phase;
+      throw new Error(`[App] unhandled phase ${String(never)}`);
+    }
+  }
+
+  return (
+    <ServicesContext.Provider value={ctxValue}>
+      <div className="app" data-phase={state.phase}>
+        {screen}
+
+        {/* The camera runs all day on a kiosk, so this chip is the honest
+            indicator rather than a formality. It is never hidden. */}
+        <CameraChip live={state.cameraLive} onOff={closeCamera} />
+
+        {(state.phase === 'play' || state.phase === 'paused') && (
           <HudOverlay
             handle={hud}
             roundSecondsLeft={roundSecondsLeft}
             players={state.players}
             onPause={() => dispatch({ type: 'pause' })}
           />
-          {!services.runRound ? (
-            <div className="stage__placeholder card">
-              <p className="h3">게임 엔진을 아직 붙이지 않았어요</p>
-              <p className="body dim">
-                {game ? `«${game.nameKo}»` : '게임'} 은 엔진이 연결되면 여기에서 바로 시작해요.
-              </p>
-              <div className="row">
-                {import.meta.env.DEV ? (
-                  <Button
-                    variant="primary"
-                    onClick={() =>
-                      finishRound({
-                        gameId: state.currentGame ?? 'dev',
-                        cleared: true,
-                        rawScore: 42,
-                        maxScore: 60,
-                        normalized: 0.7,
-                        stars: 2,
-                        durationMs: 40_000,
-                        perPlayer: [
-                          { playerId: 0, slot: 0, score: 42, hits: 21, misses: 3, bestCombo: 7 },
-                        ],
-                        highlightsKo: ['콤보 7연속!'],
-                      })
-                    }
-                  >
-                    결과 화면 보기 (dev)
-                  </Button>
-                ) : null}
-                <Button variant="ghost" onClick={() => dispatch({ type: 'next' })}>
-                  다른 게임 하기
-                </Button>
-              </div>
-            </div>
-          ) : null}
-          {state.phase === 'paused' ? (
-            <div className="pause-veil" aria-live="assertive">
-              <div className="card center stack pop-in">
-                <p className="h1">잠깐 멈췄어요</p>
-                <div className="actions">
-                  <Button
-                    variant="primary"
-                    size="huge"
-                    icon="ui-play"
-                    onClick={() => dispatch({ type: 'resume' })}
-                  >
-                    계속하기
-                  </Button>
-                  <Button variant="ghost" size="huge" icon="ui-dice" onClick={() => dispatch({ type: 'next' })}>
-                    다른 게임
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </main>
-      );
-      break;
+        )}
 
-    case 'results':
-      screen = state.lastResult ? (
-        <Results
-          result={state.lastResult}
-          gameNameKo={game?.nameKo ?? ''}
-          bestScore={readBest()[state.lastResult.gameId] ?? -1}
-          reducedMotion={reducedMotion}
-          onAgain={() => dispatch({ type: 'again' })}
-          onNext={afterResults}
-          onStop={() => dispatch({ type: 'stop' })}
-        />
-      ) : (
-        <Attract
-          pose={pose}
-          gestures={services.gestures}
-          inputMode={state.inputMode}
-          nicknameKo={settings.nickname}
-          players={state.players}
-          returning
-          onStart={startRound}
-          onSettings={openSettings}
-          onPrivacy={openPrivacy}
-          onFinish={() => dispatch({ type: 'stop' })}
-        />
-      );
-      break;
-
-    case 'breakPrompt':
-      screen = (
-        <BreakPrompt
-          rounds={state.history.length}
-          onContinue={() => dispatch({ type: 'breakDone' })}
-          onStop={() => dispatch({ type: 'stop' })}
-        />
-      );
-      break;
-
-    case 'partySummary':
-      screen = (
-        <PartySummary
-          history={state.history}
-          nicknameKo={settings.nickname}
-          onAgain={() => dispatch({ type: 'breakDone' })}
-          onHome={() => dispatch({ type: 'goto', phase: 'priming' })}
-        />
-      );
-      break;
-  }
-
-  return (
-    <ServicesContext.Provider value={ctxValue}>
-      <div className="app" data-phase={state.phase}>
-        {state.overlay === 'settings' ? (
+        {state.overlay === 'settings' && (
           <Settings
             settings={settings}
             set={set}
-            onReset={() => {
-              reset();
-              push('저장된 기록을 모두 지웠어요.', 'success');
-            }}
+            onReset={reset}
             onClose={closeOverlay}
-            onPrivacy={openPrivacy}
           />
-        ) : state.overlay === 'privacy' ? (
-          <Privacy onClose={closeOverlay} onSettings={openSettings} />
-        ) : (
-          screen
         )}
 
-        <CameraChip live={state.cameraLive} onOff={closeCamera} />
         <ToastHost toasts={toasts} />
-        {debugOn ? (
+        {debugOn && (
           <DebugOverlay
             phase={state.phase}
             seed={state.seed}
@@ -681,7 +545,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
             calib={state.calib}
             getPush={() => pushRef.current}
           />
-        ) : null}
+        )}
       </div>
     </ServicesContext.Provider>
   );

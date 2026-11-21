@@ -25,6 +25,7 @@ import type { PoseSource } from '@/engine/pose/source';
 import type { Detector, GestureService, PlayerPose } from '@/engine/types';
 import { L, ny, visible } from '@/engine/pose/landmarks';
 import { SpriteIcon } from '../components/SpriteIcon';
+import type { GameInfo } from '../useSession';
 
 /** After this long with no jump, tell them about the spacebar. */
 export const KEYBOARD_HINT_MS = 25_000;
@@ -36,14 +37,13 @@ export interface AttractProps {
   pose: PoseSource | null | undefined;
   gestures: GestureService | null | undefined;
   inputMode: 'camera' | 'keyboard';
-  nicknameKo: string;
-  players: number;
+  /** Games the background reel cycles through. There are no video files in
+   *  this project; the reel runs the real games. */
+  reel: GameInfo[];
+  reducedMotion: boolean;
   onStart: () => void;
   onSettings: () => void;
-  onPrivacy: () => void;
-  onFinish: () => void;
-  /** True once at least one round has been played — changes the copy. */
-  returning: boolean;
+
   fakePose?: boolean;
 }
 
@@ -57,13 +57,10 @@ export function Attract({
   pose,
   gestures,
   inputMode,
-  nicknameKo,
-  players,
+  reel,
+  reducedMotion,
   onStart,
   onSettings,
-  onPrivacy,
-  onFinish,
-  returning,
   fakePose,
 }: AttractProps): React.ReactElement {
   const [dwell, setDwell] = useState(0);
@@ -164,7 +161,7 @@ export function Attract({
       />
 
       <div className="attract__body">
-        <p className="label dim">{returning ? '한 판 더?' : '몸으로 놀자!'}</p>
+        <p className="label dim">몸으로 놀자!</p>
         <h1 className="display-1 attract__title">
           {cameraMode ? '점프하면 시작!' : '눌러서 시작!'}
         </h1>
@@ -197,13 +194,6 @@ export function Attract({
           </p>
         ) : null}
 
-        {players > 1 ? (
-          <div className="row attract__players">
-            {Array.from({ length: players }, (_, i) => (
-              <PlayerChip key={i} slot={i as 0 | 1 | 2 | 3} size="sm" nameKo={i === 0 ? nicknameKo : ''} />
-            ))}
-          </div>
-        ) : null}
       </div>
 
       <div className="attract__foot">
@@ -216,14 +206,6 @@ export function Attract({
           <Button variant="link" icon="ui-gear" onClick={onSettings}>
             설정
           </Button>
-          <Button variant="link" onClick={onPrivacy}>
-            개인정보 안내
-          </Button>
-          {returning ? (
-            <Button variant="link" icon="ui-flag-finish" onClick={onFinish}>
-              그만하기
-            </Button>
-          ) : null}
         </div>
       </div>
     </main>

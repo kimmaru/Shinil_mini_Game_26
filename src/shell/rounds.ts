@@ -4,8 +4,13 @@
 //   - the shuffle bag's no-repeat guarantee (children notice a repeat in two
 //     minutes, and "또 이거야?" is the end of the party)
 //   - mechanic variety (two swat games in a row read as the same game twice)
-//   - SAFETY PACING: never three high-intensity games in a row, a rest game
-//     after two hard ones, and intensity-weighted break prompts
+//
+// On a kiosk the no-repeat guarantee matters for a different reason than it
+// did in a classroom: consecutive rounds are played by different strangers,
+// so a repeat is not "또 이거야?" but a booth that appears to contain one
+// game. Intensity PACING, by contrast, is gone — it balanced exertion across
+// one child's eight rounds, and there is no such person here. Each guest
+// plays once and leaves.
 //
 // The scheduler is stateful (it owns the bag and the history), so it lives
 // here as a module singleton while the reducer stays pure — the reducer only
@@ -68,29 +73,21 @@ export function decideRound(f: PoolFilter): RoundPick {
       chosenIndex: pick.winnerIndex,
     };
   }
-  // The scheduler works off the real registry, which is empty until Wave 1
-  // lands. poolItems() supplies the dev placeholders so every screen
-  // downstream of the wheel stays reviewable; in production it returns [] and
-  // the roulette shows "아직 게임이 없어요" rather than lying.
+  // The scheduler can come up empty when the filter excludes everything (no
+  // camera plus no lower body, say). Falling back to the unscheduled pool
+  // keeps the booth playable; an empty shortlist makes the roulette say
+  // "아직 게임이 없어요" rather than spin on nothing.
   const fallback: readonly GameInfo[] = poolItems(f);
   if (fallback.length === 0) return { shortlist: [], chosenIndex: 0 };
   const picked = fallback.slice(0, WHEEL_SLICES);
   return { shortlist: picked.map(asWheelItem), chosenIndex: secureInt(picked.length) };
 }
 
-/** Record a finished round so pacing and the break timer stay correct. */
+/** Record a finished round so the no-repeat bag stays correct. */
 export function recordRound(id: GameId, result: GameResult): void {
   const m: MiniGameManifest | undefined = ALL.get(id);
   if (!m || !scheduler) return;
   scheduler.record(m, result.durationMs);
-}
-
-/** Intensity-weighted: a run of hard games earns a rest sooner than a run of
- *  seated ones. */
-export const shouldBreak = (): boolean => scheduler?.shouldBreak() ?? false;
-
-export function takeBreak(): void {
-  scheduler?.takeBreak();
 }
 
 export const roundsPlayed = (): number => scheduler?.rounds ?? 0;

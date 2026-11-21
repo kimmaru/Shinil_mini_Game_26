@@ -11,15 +11,23 @@ import { StarRow } from '../components/StarRow';
 import { useServices } from '../useSession';
 import { SpriteIcon } from '../components/SpriteIcon';
 
+import type { GameRecord } from '../records';
+
 export interface ResultsProps {
   result: GameResult;
   gameNameKo: string;
-  /** Previous best for this game, from localStorage. -1 when there is none. */
-  bestScore: number;
+  /** The game's hue, so the screen belongs to the game just played. */
+  hue: number;
+  /** Today's best for this game — null when this is the first play today. */
+  record: GameRecord | null;
+  /** Whether THIS round took the record. Computed in the reducer so the
+   *  screen never has to diff tables. */
+  beatRecord: boolean;
   reducedMotion: boolean;
+  /** 처음으로 — back to the attract screen for the next guest. */
+  onHome: () => void;
+  /** Same guest wants another go. */
   onAgain: () => void;
-  onNext: () => void;
-  onStop: () => void;
 }
 
 const PRAISE: Record<0 | 1 | 2 | 3, string> = {
@@ -34,15 +42,15 @@ const COUNT_MS = 700;
 export function Results({
   result,
   gameNameKo,
-  bestScore,
+  record,
+  beatRecord,
   reducedMotion,
   onAgain,
-  onNext,
-  onStop,
+  onHome,
 }: ResultsProps): React.ReactElement {
   const [shown, setShown] = useState(reducedMotion ? result.rawScore : 0);
   const services = useServices();
-  const isBest = bestScore >= 0 && result.rawScore > bestScore;
+  const isBest = beatRecord;
 
   useEffect(() => {
     services.audio?.play(result.stars > 0 ? 'round.win' : 'round.lose');
@@ -110,14 +118,14 @@ export function Results({
       ) : null}
 
       <div className="actions">
-        <Button variant="primary" size="huge" icon="ui-dice" sfx="ui.confirm" onClick={onNext}>
+        <Button variant="primary" size="huge" icon="ui-dice" sfx="ui.confirm" onClick={onAgain}>
           다음 게임!
         </Button>
         <Button variant="ghost" size="huge" icon="ui-refresh" onClick={onAgain}>
           다시 하기
         </Button>
       </div>
-      <Button variant="link" icon="ui-flag-finish" sfx="ui.back" onClick={onStop}>
+      <Button variant="link" icon="ui-flag-finish" sfx="ui.back" onClick={onHome}>
         그만하기
       </Button>
     </main>

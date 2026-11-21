@@ -17,52 +17,28 @@ import type { AudioService, GestureService, MiniGameManifest } from '@/engine/ty
 import type { PoseSource } from '@/engine/pose/source';
 import { ALL, pickPool, type PoolFilter } from '@/engine/registry';
 import { LAUNCH_SET } from '@/engine/catalog';
-import { recordRound, shouldBreak as schedulerShouldBreak, takeBreak } from './rounds';
 
 // ─── Phases ─────────────────────────────────────────────────────────────────
 
-/** Mirrors docs/PLAN.md § 쉘 흐름 exactly, in order. */
-export type Phase =
-  | 'boot'
-  | 'priming'
-  | 'prePrompt'
-  | 'cameraRequest'
-  | 'cameraHelp'
-  | 'warmup'
-  | 'calibration'
-  | 'safety'
-  | 'attract'
-  | 'roulette'
-  | 'intro'
-  | 'countdown'
-  | 'play'
-  | 'paused'
-  | 'results'
-  | 'breakPrompt'
-  | 'partySummary';
+// The vocabulary lives in the engine now (`@/engine/session`) rather than
+// being declared twice. It was duplicated here while the engine's copy was
+// still a stub, and the cost of that showed up immediately: the two unions
+// drifted, and a change to the engine's flow typechecked clean against a
+// shell that no longer matched it.
+export type {
+  CameraErrorKind, InputMode, Overlay, Phase,
+} from '@/engine/session';
+export { cameraErrorKind } from '@/engine/session';
 
-/** 설정 / 개인정보 안내 are overlays, not phases: they open from anywhere
- *  (including mid-party) and return to exactly where they were opened. */
-export type Overlay = 'none' | 'settings' | 'privacy';
-
-export type InputMode = 'camera' | 'keyboard';
-
-/** Distinct copy per kind — see screens/CameraHelp.tsx. Mapped from the
- *  DOMException name by `cameraErrorKind`. */
-export type CameraErrorKind = 'denied' | 'notFound' | 'inUse' | 'insecure' | 'engine' | 'unknown';
-
-export function cameraErrorKind(e: unknown): CameraErrorKind {
-  const name = (e as { name?: string } | null)?.name ?? '';
-  if (name === 'NotAllowedError' || name === 'SecurityError') return 'denied';
-  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'notFound';
-  if (name === 'NotReadableError' || name === 'AbortError') return 'inUse';
-  if (name === 'TypeError') return 'insecure'; // getUserMedia missing: not https
-  if (name === 'EngineStartError') return 'engine';
-  return 'unknown';
-}
+import type {
+  CameraErrorKind, InputMode, Overlay, Phase,
+} from '@/engine/session';
+import { ABANDON_SEC, RESULTS_AUTO_HOME_SEC } from '@/engine/session';
+import { loadRecords, submitRecord, type RecordTable } from './records';
 
 /** One slice on the roulette. The shell never puts all 58 games on the wheel:
- *  pickPool() → shuffle bag → 8. A 58-slice wheel is illegible. */
+ *  pickPool() → shuffle bag → 8. A 58-slice wheel is illegible, and a guest
+ *  who sees 58 options starts shopping instead of playing. */
 export interface WheelItem {
   id: GameId;
   nameKo: string;
@@ -71,14 +47,10 @@ export interface WheelItem {
 }
 
 export const WHEEL_SIZE = 8;
-/** Fallback break thresholds, used only when no round has been recorded with
- *  the scheduler (dev placeholder games). The real decision is intensity-
- *  weighted and lives in RoundScheduler — see ./rounds.ts. */
-export const BREAK_AFTER_ROUNDS = 8;
-export const BREAK_AFTER_MS = 10 * 60_000;
 
-/** What the shell needs to draw a game's card, intro and wheel slice. A subset
- *  of MiniGameManifest so screens never depend on fields they do not render. */
+/** What the shell needs to draw a game's reel card, wheel slice and countdown
+ *  demo. A subset of MiniGameManifest so screens never depend on fields they
+ *  do not render. */
 export interface GameInfo {
   id: GameId;
   nameKo: string;
@@ -111,78 +83,40 @@ export const toInfo = (m: MiniGameManifest): GameInfo => ({
   gestures: [...m.gestures],
 });
 
-// shortcut: DEV-only placeholders so every screen downstream of the roulette can
-// be built and reviewed before src/games/** exists. Returns [] in production —
-// with zero authored games the shell shows "아직 게임이 없어요" instead of lying.
-// Delete this table once Wave 1 lands.
-const DEV_GAMES: readonly GameInfo[] = [
-  ['mosquito-clap', '모기 잡기', '손뼉으로 모기를 잡아요', 'mosquito', 120, 'clap'],
-  ['candy-rain-catch', '사탕 받기', '떨어지는 사탕을 받아요', 'candy', 330, 'reach'],
-  ['air-whack-mole', '두더지 잡기', '튀어나오면 때려요', 'target', 28, 'reach'],
-  ['balloon-pop-party', '풍선 터뜨리기', '풍선을 모두 터뜨려요', 'balloon', 285, 'swing'],
-  ['fruit-slash', '과일 자르기', '손으로 쓱 베어요', 'star', 8, 'swing'],
-  ['wrist-aim-target', '과녁 맞히기', '손으로 조준해요', 'target', 200, 'reach'],
-  ['spider-touch', '거미 쫓기', '다가오면 손으로 쳐요', 'bug', 265, 'reach'],
-  ['cheer-combo', '응원 콤보', '박자에 맞춰 응원해요', 'g-raise', 45, 'raise'],
-].map(([id, nameKo, taglineKo, icon, hue, g]) => ({
-  id: id as string,
-  nameKo: nameKo as string,
-  taglineKo: taglineKo as string,
-  howToKo: ['화면을 보고 몸을 움직여요!', '빠르게 움직이면 점수가 올라가요.'],
-  icon: icon as string,
-  hue: hue as number,
-  durationMs: 40_000,
-  intensity: 2 as 1 | 2 | 3,
-  gestures: [g as string],
-}));
-
-const devGames = (): readonly GameInfo[] => (import.meta.env.DEV ? DEV_GAMES : []);
-
-/** Everything a screen knows about a game id. Never throws: an unknown id
- *  degrades to a readable placeholder rather than a blank screen. */
 export function describeGame(id: GameId): GameInfo {
   const m = ALL.get(id);
-  if (m) return toInfo(m);
-  const dev = devGames().find((g) => g.id === id);
-  if (dev) return dev;
-  return {
-    id,
-    nameKo: id,
-    taglineKo: '',
-    howToKo: [],
-    icon: 'ui-dice',
-    hue: 230,
-    durationMs: 40_000,
-    intensity: 2,
-    gestures: [],
-  };
+  if (!m) throw new Error(`[shell] unknown game "${id}"`);
+  return toInfo(m);
 }
 
-/** The roulette candidate set: pickPool, as GameInfo. */
 export function poolItems(f: PoolFilter): GameInfo[] {
-  const real = pickPool(f).map(toInfo);
-  if (real.length > 0) return real;
-  // Keyboard mode must not silently serve games that need a body.
-  return [...devGames()].filter(() => LAUNCH_SET.length > 0);
+  return pickPool(f).map(toInfo);
 }
+
+// ─── State ──────────────────────────────────────────────────────────────────
 
 export interface SessionState {
   phase: Phase;
-  /** Where to return when an overlay closes. */
+  /** Where to return when the 설정 overlay closes. */
   overlay: Overlay;
   inputMode: InputMode;
-  /** True only while a MediaStream track is live. Drives the 카메라 켜짐 chip. */
+  /** True only while a MediaStream track is live. Drives the 카메라 켜짐 chip,
+   *  which on a kiosk is lit essentially all day — see engine/session.ts. */
   cameraLive: boolean;
   cameraError: CameraErrorKind | null;
-  /** The raw error text, for the small print on the help screen. */
+  /** The raw error text, for the small print on the operator's help screen. */
   cameraErrorDetail: string | null;
-  /** 0..1 plus a Korean label, for both warmup stages. */
+  /** 0..1 plus a Korean label. Operator-facing: both warmup stages. */
   loading: { progress: number; labelKo: string };
+  /**
+   * The live auto-calibration profile for whoever is standing there now.
+   *
+   * Null until a guest has been seen. It updates continuously on `attract`
+   * and freezes for the duration of a round — a stranger will not hold a
+   * calibration pose on request, so the standing-in-front-of-START pose is
+   * the calibration (see engine/pose/calibration.ts).
+   */
   calib: CalibrationProfile | null;
-  /** e.g. "발이 보이게 뒤로 가 볼까요?" — shown on the calibration screen. */
-  calibHintKo: string | null;
-  /** Safety screen is shown once per session, before the first standing game. */
-  safetyDone: boolean;
   /** The 8 slices currently on the wheel. */
   shortlist: WheelItem[];
   /** Decided BEFORE the spin starts. The animation is cosmetic and cannot
@@ -190,10 +124,14 @@ export interface SessionState {
   chosenIndex: number;
   currentGame: GameId | null;
   lastResult: GameResult | null;
-  /** Every finished round this session, for 파티 결과. */
-  history: GameResult[];
-  roundsSinceBreak: number;
-  partyStartedAt: number;
+  /** Today's best per game. 기록. */
+  records: RecordTable;
+  /** Whether the round that just ended took the record, so the results screen
+   *  can celebrate it without diffing tables itself. */
+  beatRecord: boolean;
+  /** Rounds since the booth opened. An operator stat, not a guest-facing one:
+   *  consecutive guests are different people, so there is no party to total. */
+  roundsPlayed: number;
   seed: number;
   players: number;
   /** A fatal, user-visible problem that still must not dead-end the page. */
@@ -201,30 +139,35 @@ export interface SessionState {
 }
 
 export type SessionAction =
-  | { type: 'chooseCamera' }
-  | { type: 'chooseKeyboard' }
-  | { type: 'promptNow' }
+  /** boot → setup. The operator opening the booth. */
+  | { type: 'setupStart' }
   | { type: 'cameraGranted' }
   | { type: 'cameraFailed'; error: CameraErrorKind; detail?: string }
   | { type: 'retryCamera' }
+  /** Run with no camera at all — a dead kiosk is worse than a keyboard one. */
+  | { type: 'chooseKeyboard' }
   | { type: 'progress'; progress: number; labelKo?: string }
-  | { type: 'warmupDone' }
-  | { type: 'calibHint'; hintKo: string | null }
+  /** setup → attract. From here the booth never leaves the guest loop. */
+  | { type: 'setupDone' }
+  /** A background auto-calibration tick. Fires repeatedly on `attract`. */
   | { type: 'calibrated'; profile: CalibrationProfile }
-  | { type: 'safetyAck' }
   | { type: 'cameraOff' }
   /** attract → roulette. The winner is already decided here. */
   | { type: 'spin'; shortlist: WheelItem[]; chosenIndex: number }
+  /** roulette → countdown. There is no intro phase: a stranger does not read
+   *  a how-to page, so the gesture demo plays inside the countdown. */
   | { type: 'spinDone' }
-  | { type: 'introDone' }
   | { type: 'countdownDone' }
   | { type: 'pause' }
   | { type: 'resume' }
-  | { type: 'roundEnded'; result: GameResult }
+  | { type: 'roundEnded'; result: GameResult; nowMs?: number }
+  /** 처음으로 — the explicit button on the results screen. */
+  | { type: 'home' }
+  /** Same guest wants another go: straight back to the wheel. */
   | { type: 'again' }
-  | { type: 'next' }
-  | { type: 'stop' }
-  | { type: 'breakDone' }
+  /** Nobody has been detected for a while. Reset the booth for the next
+   *  person, from any guest phase. */
+  | { type: 'abandon' }
   | { type: 'openOverlay'; overlay: Exclude<Overlay, 'none'> }
   | { type: 'closeOverlay' }
   | { type: 'error'; messageKo: string | null }
@@ -238,7 +181,7 @@ export function initialSession(o: {
   now?: number;
 }): SessionState {
   return {
-    phase: 'priming',
+    phase: 'boot',
     overlay: 'none',
     inputMode: o.inputMode ?? 'camera',
     cameraLive: false,
@@ -246,115 +189,88 @@ export function initialSession(o: {
     cameraErrorDetail: null,
     loading: { progress: 0, labelKo: '준비하고 있어요' },
     calib: null,
-    calibHintKo: null,
-    safetyDone: false,
     shortlist: [],
     chosenIndex: 0,
     currentGame: null,
     lastResult: null,
-    history: [],
-    roundsSinceBreak: 0,
-    partyStartedAt: o.now ?? 0,
+    records: loadRecords(o.now ?? Date.now()),
+    beatRecord: false,
+    roundsPlayed: 0,
     seed: o.seed,
     players: o.players ?? 1,
     errorKo: null,
   };
 }
 
-/**
- * True when the round that just finished should be followed by a rest.
- *
- * Prefers the scheduler's intensity-weighted judgement — a run of 점프 games
- * earns a break sooner than a run of seated ones, which a flat round count
- * cannot express. Falls back to the round/time thresholds when the scheduler
- * has no history (dev placeholder games are not in the registry).
- */
-export function needsBreak(s: SessionState, now: number): boolean {
-  if (schedulerShouldBreak()) return true;
-  return (
-    s.roundsSinceBreak >= BREAK_AFTER_ROUNDS ||
-    (s.partyStartedAt > 0 && now - s.partyStartedAt >= BREAK_AFTER_MS)
-  );
-}
+/** Seconds of no-one-there before `abandon` should be dispatched. Re-exported
+ *  so screens do not import two modules to find one number. */
+export { ABANDON_SEC, RESULTS_AUTO_HOME_SEC };
 
-/** Pure. Every transition in docs/PLAN.md § 쉘 흐름 and nothing else. */
+/** Pure. Every transition in the kiosk flow and nothing else. */
 export function sessionReducer(s: SessionState, a: SessionAction): SessionState {
   switch (a.type) {
-    case 'chooseCamera':
-      return { ...s, phase: 'prePrompt', inputMode: 'camera', cameraError: null };
+    case 'setupStart':
+      return { ...s, phase: 'setup', cameraError: null, cameraErrorDetail: null };
 
-    case 'chooseKeyboard':
-      // Keyboard mode skips camera, warmup and calibration entirely — and it is
-      // reachable from every error state, which is what "never a dead end" means.
+    case 'cameraGranted':
+      return { ...s, cameraLive: true, cameraError: null, cameraErrorDetail: null };
+
+    case 'cameraFailed':
       return {
         ...s,
-        phase: s.safetyDone ? 'attract' : 'safety',
+        phase: 'setupHelp',
+        cameraLive: false,
+        cameraError: a.error,
+        cameraErrorDetail: a.detail ?? null,
+      };
+
+    case 'retryCamera':
+      return { ...s, phase: 'setup', cameraError: null, cameraErrorDetail: null };
+
+    case 'chooseKeyboard':
+      // Reachable from every error state, which is what "never a dead end"
+      // means for a booth nobody is standing next to.
+      return {
+        ...s,
+        phase: 'attract',
         inputMode: 'keyboard',
         cameraLive: false,
         cameraError: null,
-    cameraErrorDetail: null,
+        cameraErrorDetail: null,
       };
-
-    case 'promptNow':
-      return { ...s, phase: 'cameraRequest' };
-
-    case 'cameraGranted':
-      return { ...s, phase: 'warmup', cameraLive: true, cameraError: null };
-
-    case 'cameraFailed':
-      return { ...s, phase: 'cameraHelp', cameraLive: false, cameraError: a.error, cameraErrorDetail: a.detail ?? null };
-
-    case 'retryCamera':
-      return { ...s, phase: 'prePrompt', cameraError: null };
 
     case 'progress':
       return {
         ...s,
         loading: {
-          progress: Math.max(0, Math.min(1, a.progress)),
+          progress: a.progress,
           labelKo: a.labelKo ?? s.loading.labelKo,
         },
       };
 
-    case 'warmupDone':
-      return { ...s, phase: 'calibration', loading: { progress: 1, labelKo: '준비 끝!' } };
-
-    case 'calibHint':
-      return { ...s, calibHintKo: a.hintKo };
+    case 'setupDone':
+      return { ...s, phase: 'attract', loading: { progress: 1, labelKo: '준비됐어요' } };
 
     case 'calibrated':
-      return {
-        ...s,
-        phase: s.safetyDone ? 'attract' : 'safety',
-        calib: a.profile,
-        calibHintKo: null,
-      };
-
-    case 'safetyAck':
-      return { ...s, phase: 'attract', safetyDone: true };
+      // Deliberately does not change phase: this fires many times per guest.
+      return { ...s, calib: a.profile };
 
     case 'cameraOff':
-      // The 끄기 chip. The camera dies immediately; play continues on the
-      // keyboard source rather than stranding the player on a dead screen.
-      return { ...s, inputMode: 'keyboard', cameraLive: false };
+      return { ...s, cameraLive: false };
 
     case 'spin':
-      if (a.shortlist.length === 0) return s;
       return {
         ...s,
         phase: 'roulette',
         shortlist: a.shortlist,
-        chosenIndex: Math.max(0, Math.min(a.shortlist.length - 1, a.chosenIndex)),
+        chosenIndex: a.chosenIndex,
+        currentGame: a.shortlist[a.chosenIndex]?.id ?? null,
+        lastResult: null,
+        beatRecord: false,
       };
 
-    case 'spinDone': {
-      const pick = s.shortlist[s.chosenIndex];
-      if (!pick) return s;
-      return { ...s, phase: 'intro', currentGame: pick.id };
-    }
-
-    case 'introDone':
-      return s.currentGame ? { ...s, phase: 'countdown' } : { ...s, phase: 'attract' };
+    case 'spinDone':
+      return { ...s, phase: 'countdown' };
 
     case 'countdownDone':
       return { ...s, phase: 'play' };
@@ -365,30 +281,42 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
     case 'resume':
       return s.phase === 'paused' ? { ...s, phase: 'play' } : s;
 
-    case 'roundEnded':
-      // Tell the scheduler, so the next wheel respects the safety pacing
-      // (never three hard games in a row) and the break timer is weighted.
-      if (s.currentGame) recordRound(s.currentGame, a.result);
+    case 'roundEnded': {
+      const id = s.currentGame;
+      if (!id) return { ...s, phase: 'results', lastResult: a.result };
+      const { table, beat } = submitRecord(
+        s.records, id, a.result, a.nowMs ?? Date.now(),
+      );
       return {
         ...s,
         phase: 'results',
         lastResult: a.result,
-        history: [...s.history, a.result],
-        roundsSinceBreak: s.roundsSinceBreak + 1,
+        records: table,
+        beatRecord: beat,
+        roundsPlayed: s.roundsPlayed + 1,
+      };
+    }
+
+    case 'home':
+    case 'abandon':
+      // Both land on the same reset. The difference is only who decided:
+      // the guest pressing 처음으로, or the booth noticing an empty frame.
+      return {
+        ...s,
+        phase: 'attract',
+        currentGame: null,
+        lastResult: null,
+        beatRecord: false,
+        // The next person is a different body. Dropping the profile here is
+        // the whole reason a 190cm adult's scale cannot leak into the round
+        // played by the child who walks up after them.
+        calib: null,
+        errorKo: null,
       };
 
     case 'again':
-      return s.currentGame ? { ...s, phase: 'countdown' } : s;
-
-    case 'next':
-      return { ...s, phase: 'attract', currentGame: null };
-
-    case 'stop':
-      return { ...s, phase: 'partySummary' };
-
-    case 'breakDone':
-      takeBreak();
-      return { ...s, phase: 'attract', roundsSinceBreak: 0, partyStartedAt: 0 };
+      // Keeps `calib`: it is the same guest, still standing there.
+      return { ...s, phase: 'attract', lastResult: null, beatRecord: false };
 
     case 'openOverlay':
       return { ...s, overlay: a.overlay };
@@ -401,6 +329,13 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
 
     case 'goto':
       return { ...s, phase: a.phase };
+
+    default: {
+      // Exhaustiveness: a new action without a case fails the build here
+      // rather than silently doing nothing at runtime.
+      const never: never = a;
+      return never;
+    }
   }
 }
 
@@ -413,7 +348,7 @@ export interface RoundRequest {
   /** The DOM HUD, from `createHudService()` in shell/hud/HudOverlay.tsx. */
   hud: HudService;
   seed: number;
-  /** Aborted by 그만하기, by the camera chip, and on unmount. */
+  /** Aborted by the camera chip, by 처음으로, and on unmount. */
   signal: AbortSignal;
 }
 

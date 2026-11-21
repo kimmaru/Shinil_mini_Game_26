@@ -81,10 +81,14 @@ about reaching, jumping or ducking.
 for more than ~10 s, spinning, or floor contact. `intensity: 3` means the
 scheduler will not serve yours back-to-back with another hard game.
 
-**No assets.** All art is shapes + emoji (`g.emoji('🦟', x, y, size)`), all
-audio is synthesized from the closed `SFX_IDS` list. This is why 58 parallel
-authors have a merge surface of exactly zero, and why the page has no
-third-party requests at all.
+**No assets.** All art is shapes + vector sprites
+(`g.sprite('mosquito', x, y, size)`), all audio is synthesized from the closed
+`SFX_IDS` list. This is why 58 parallel authors have a merge surface of exactly
+zero, and why the page has no third-party requests at all.
+
+**No emoji, anywhere.** They render as a different artwork on every OS and
+cannot be recoloured, so a catalogue of them can never look like one product.
+`npm run gate` rejects them. See `ART.md`.
 
 **Privacy.** There is no network path out of this app and there must never be
 one. Never store or transmit landmark data. `toDataURL`, `toBlob`,

@@ -10,7 +10,7 @@ import { Screen } from '../components/Screen';
 import type { CameraErrorKind } from '../useSession';
 import { SpriteIcon } from '../components/SpriteIcon';
 
-export interface CameraHelpProps {
+export interface SetupHelpProps {
   error: CameraErrorKind | null;
   /** The underlying error, shown in small print. Not for the child — for
    *  whoever has to fix it, who otherwise has nothing to go on. */
@@ -91,9 +91,9 @@ const COPY: Record<CameraErrorKind, Copy> = {
   },
 };
 
-export function CameraHelp({
+export function SetupHelp({
   error, detailKo, onKeyboard, onRetry,
-}: CameraHelpProps): React.ReactElement {
+}: SetupHelpProps): React.ReactElement {
   const c = COPY[error ?? 'unknown'];
   const [open, setOpen] = useState(false);
 

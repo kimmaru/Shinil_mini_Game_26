@@ -14,7 +14,6 @@ export interface SettingsProps {
   set: <K extends keyof S>(k: K, v: S[K]) => void;
   onReset: () => void;
   onClose: () => void;
-  onPrivacy: () => void;
 }
 
 function Group<T extends string | number>({
@@ -56,7 +55,6 @@ export function Settings({
   set,
   onReset,
   onClose,
-  onPrivacy,
 }: SettingsProps): React.ReactElement {
   // Two presses, because it cannot be undone and the button sits next to
   // things a child is encouraged to poke at.
@@ -69,11 +67,6 @@ export function Settings({
       actions={
         <Button variant="primary" size="huge" icon="ui-check-circle" sfx="ui.confirm" onClick={onClose}>
           다 했어요
-        </Button>
-      }
-      footer={
-        <Button variant="link" onClick={onPrivacy}>
-          개인정보 안내 ▸
         </Button>
       }
     >
