@@ -28,6 +28,7 @@ const BANNED_TOKENS = [
   ['new Image(', 'no asset files — use g.emoji() and shapes'],
   ['new Audio(', 'no asset files — use ctx.audio.play() with an SFX_ID'],
   ['CanvasRenderingContext2D', 'the Renderer interface has no ctx escape hatch'],
+  ['g.emoji(', 'emoji were removed: use g.sprite() — see src/engine/render/sprites.ts'],
   ['getContext(', 'the Renderer interface has no ctx escape hatch'],
   ['toDataURL', 'banned: would break the privacy guarantee'],
   ['toBlob', 'banned: would break the privacy guarantee'],
@@ -100,6 +101,16 @@ for (const folder of await readdir(GAMES, { withFileTypes: true })) {
       .replace(/`(?:[^`\\]|\\.)*`/g, '``');
     for (const [tok, why] of BANNED_TOKENS) {
       if (code.includes(tok)) errs.push(`${rel}: "${tok}" is banned — ${why}`);
+    }
+
+    // Emoji anywhere in a game file. They render as three different artworks
+    // across macOS, Windows and Android and cannot be recoloured, so a single
+    // one breaks the visual unity the whole sprite system exists to provide.
+    // Checked on the RAW source, because an emoji in a comment or a Korean
+    // string is just as visible to a child as one in a draw call.
+    const emoji = src.match(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu);
+    if (emoji) {
+      errs.push(`${rel}: contains emoji ${[...new Set(emoji)].slice(0, 5).join(' ')} — use a sprite id instead (see docs/GAME_AUTHORING.md)`);
     }
   }
 }

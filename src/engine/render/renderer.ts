@@ -1,6 +1,6 @@
 // ══ FROZEN CONTRACT ══ imported by 58 game modules.
 //
-// Shapes, text and emoji. That is the whole drawing vocabulary.
+// Shapes, text and vector sprites. That is the whole drawing vocabulary.
 //
 // There is deliberately NO `ctx` getter. Two things follow from that, and both
 // are the point:
@@ -8,9 +8,15 @@
 //      jam entries.
 //   2. There are no image/audio/font files in src/games/**, so the merge
 //      surface between parallel authors is literally zero.
+//
+// Sprites are SVG path strings compiled to Path2D — identical on every OS,
+// recoloured from our own palette. (This replaced emoji, which render as three
+// different artworks on macOS, Windows and Android and cannot be recoloured at
+// all, making a unified style impossible by construction.)
 // If you think you need raw canvas access, you need an engine feature. Write a
 // NEEDS.md instead of reaching through.
 import type { PlayerPose } from '../types';
+import type { SpriteId, SpriteOpts } from './sprite';
 
 export interface Paint {
   /** CSS color. Prefer the palette helpers in `./palette`. */
@@ -94,8 +100,16 @@ export interface Renderer {
   text(s: string, x: number, y: number, o?: TextOpts): void;
   /** Measured width in px, for layout. */
   measure(s: string, o?: TextOpts): number;
-  /** All "art" is emoji + shapes. No sprite sheets, no image files. */
-  emoji(s: string, x: number, y: number, size: number, rot?: number): void;
+
+  /**
+   * Draw a vector sprite centred on (x, y) at `size` px across.
+   *
+   * Sprites are authored in a 100x100 box and scaled here, so one definition
+   * is crisp at every size and on every display. Colours come from palette
+   * ROLES rather than literals, which is what lets the same star be gold in
+   * one game and the game's own hue in another without redefining it.
+   */
+  sprite(id: SpriteId, x: number, y: number, size: number, o?: SpriteOpts): void;
 
   /** The engine owns mirroring, slot color and the dark outline. */
   skeleton(p: PlayerPose, o?: SkeletonOpts): void;

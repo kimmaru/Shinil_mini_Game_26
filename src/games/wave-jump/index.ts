@@ -176,7 +176,7 @@ class WaveJump implements MiniGame {
       if (this.combo > this.bestCombo) this.bestCombo = this.combo;
       this.score += 4 + Math.floor(this.combo / 3);
       this.ctx.fx.burst(this.ctx.view.w / 2, y, {
-        count: 16, color: hue(manifest.theme!.hue), emoji: '💦', speed: 380, gravity: 500,
+        count: 16, color: hue(manifest.theme!.hue), sprite: 'droplet', speed: 380, gravity: 500,
       });
       this.ctx.fx.popText(this.ctx.view.w / 2, y - 40, `+${4 + Math.floor(this.combo / 3)}`);
       this.ctx.audio.playLadder('splash', this.combo);
@@ -221,10 +221,10 @@ class WaveJump implements MiniGame {
         : inWindow ? C.accent : hue(200, 85, 62);
       g.line(g.w / 2 - halfW, y, g.w / 2 + halfW, y, thick, { stroke: col, glow: w.foam ? 0 : 10 });
       if (!w.foam && w.p > 0.45) {
-        g.emoji('🌊', g.w / 2, y - thick, lerp(30, 90, w.p) * g.s);
+        g.sprite('wave', g.w / 2, y - thick, lerp(34, 100, w.p) * g.s, { hue: 200 });
       }
       if (w.foam && w.p > 0.45) {
-        g.emoji('🫧', g.w / 2, y - thick, lerp(24, 60, w.p) * g.s);
+        g.sprite('bubble', g.w / 2, y - thick, lerp(26, 64, w.p) * g.s);
       }
     }
 

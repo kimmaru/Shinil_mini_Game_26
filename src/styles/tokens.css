@@ -223,6 +223,18 @@
   --press-depth: 6px;
 
   /* motion */
+  /* Game-feel durations. These exist so a canvas author picks a SITUATION
+     rather than a number — 58 authors choosing their own milliseconds is how
+     a catalogue stops feeling like one product. Mirrored in
+     src/engine/motion/tokens.ts, and a test fails if the two drift. */
+  --dur-tick: 50ms;        /* one counter step, one beat pulse */
+  --dur-impact: 60ms;      /* hitstop, hit squash attack */
+  --dur-anticipate: 110ms; /* the wind-up before a move */
+  --dur-squash: 260ms;     /* squash decay */
+  --dur-count: 450ms;      /* score count-up */
+  --dur-telegraph: 420ms;  /* "get ready" warning — 1.7x the adult figure,
+                              because a whole-body reaction needs a weight
+                              shift first */
   --dur-instant: 80ms;
   --dur-fast: 140ms;
   --dur-base: 220ms;
@@ -237,6 +249,10 @@
   --ease-in-quint: cubic-bezier(0.64, 0, 0.78, 0);
   --ease-spring: cubic-bezier(0.16, 1.1, 0.3, 1);
   --ease-wheel: cubic-bezier(0.12, 0.76, 0.06, 1);
+  --ease-in-back: cubic-bezier(0.36, 0, 0.66, -0.56);   /* anticipation */
+  --ease-out-cubic: cubic-bezier(0.33, 1, 0.68, 1);     /* squash decay */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);      /* counter values */
+  --ease-prod-std: cubic-bezier(0.2, 0, 0.38, 0.9);     /* settings/lobby UI */
   --stagger: 60ms;
 
   /* layout */

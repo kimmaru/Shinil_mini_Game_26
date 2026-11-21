@@ -8,6 +8,7 @@ import { Button } from '../components/Button';
 import { Screen } from '../components/Screen';
 import { StarRow } from '../components/StarRow';
 import { describeGame } from '../useSession';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 export interface PartySummaryProps {
   history: GameResult[];
@@ -66,7 +67,7 @@ export function PartySummary({
                 style={{ ['--hue' as string]: g.hue }}
               >
                 <span className="label row summary__name">
-                  <span aria-hidden="true">{g.icon}</span>
+                  <SpriteIcon id={g.icon} size={34} hue={g.hue} on="dark" />
                   <span>{g.nameKo}</span>
                 </span>
                 <span className="row">

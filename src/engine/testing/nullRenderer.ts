@@ -6,6 +6,10 @@
 //   2. everything drawn off-screen (a sign error, or px/normalized confusion)
 //   3. nothing drawn at all (a state machine that never leaves its first state)
 import type { Paint, PlayerPose, Renderer, SkeletonOpts, TextOpts } from '../types';
+import { hasSprite, spriteIds, type SpriteId, type SpriteOpts } from '../render/sprite';
+// Registers the shared sprite set. Imported here as well as in the Canvas2D
+// renderer so a headless run validates the same ids a browser run draws.
+import '../render/sprites';
 
 export interface RenderAudit {
   ops: number;
@@ -125,9 +129,16 @@ export class NullRenderer implements Renderer {
   measure(s: string, o?: TextOpts): number {
     return s.length * (o?.size ?? 16) * 0.55;
   }
-  emoji(s: string, x: number, y: number, size: number): void {
-    if (!s) this.note('emoji', 'empty glyph', 'nan');
-    this.op('emoji', x, y, size, 0);
+  sprite(id: SpriteId, x: number, y: number, size: number, o?: SpriteOpts): void {
+    // An unknown id draws nothing in production, which looks exactly like a
+    // game that forgot to spawn anything. Catch it here instead.
+    if (!hasSprite(id)) {
+      this.note('sprite', `unknown id "${id}" (known: ${spriteIds().slice(0, 6).join(', ')}…)`, 'nan');
+    }
+    this.op('sprite', x, y, size, 0);
+    if (o?.rot !== undefined && !Number.isFinite(o.rot)) {
+      this.note('sprite', `non-finite rot for "${id}"`, 'nan');
+    }
   }
   skeleton(_p: PlayerPose, _o?: SkeletonOpts): void { this.audit.ops++; this.audit.opsThisFrame++; }
   ghostBody(_p: PlayerPose, _a: number): void { this.audit.ops++; this.audit.opsThisFrame++; }

@@ -18,14 +18,14 @@
 //
 // A game never manages a particle list, never owns a shake decay, and never
 // gets to decide how often the screen may flash.
-import { C } from '../render/palette';
-import type { FxService, BurstOpts, TrailOpts } from './index';
+import { C, fade } from '../render/palette';
+import type { FxService, BurstOpts, ImpactLevel, ImpactOpts, TrailOpts } from './index';
 import type { Renderer, Slot } from '../types';
 import { Flash } from './flash';
 import {
   KIND_CONFETTI,
   KIND_DOT,
-  KIND_EMOJI,
+  KIND_SPRITE,
   KIND_SPARK,
   PopTexts,
   Particles,
@@ -34,6 +34,7 @@ import {
   parseColor,
 } from './particles';
 import { Hitstop, Shake } from './shake';
+import { D } from '../motion/tokens';
 
 const TAU = Math.PI * 2;
 
@@ -69,6 +70,17 @@ export interface FxStats {
 
 /** What the loop gets back. Games only ever see the `FxService` half. */
 export interface FxRuntime extends FxService {
+  /**
+   * Apply the per-game effect guards, from the manifest. Called once by the
+   * host at round start; games never call this.
+   *
+   * `rhythm` and `continuous` disable hitstop — in the first case it
+   * permanently desynchronises the audio clock, in the second it reads as the
+   * body tracking having broken. `roomScale` caps shake, because a player who
+   * is already jumping finds screen shake far more nauseating than a seated
+   * one does.
+   */
+  configureForGame(o: { rhythm?: boolean; continuous?: boolean; roomScale?: boolean }): void;
   /** Advance every effect. Always pass REAL dt, never the hitstop-scaled dt. */
   update(dtRealSec: number): void;
   /** Apply camera shake. Call between `g.save()` and the game's `render()`. */
@@ -89,6 +101,19 @@ export interface FxRuntime extends FxService {
   resetAll(): void;
   readonly stats: FxStats;
 }
+
+/** Tuned per grade rather than per call site, so every hit in the catalogue
+ *  lands with the same weight. Numbers are the measured defaults from the
+ *  research brief; `speed` and `ring` are multiplied by the view scale. */
+const IMPACT = {
+  tap:  { count: 8,  speed: 420, ring: 26, shake: 0.05, stop: 0,    squash: 0.22, flash: 0,    },
+  hit:  { count: 18, speed: 620, ring: 40, shake: 0.12, stop: 0.05, squash: 0.35, flash: 0,    },
+  big:  { count: 30, speed: 720, ring: 58, shake: 0.25, stop: 0.07, squash: 0.5,  flash: 0.35, },
+  huge: { count: 70, speed: 880, ring: 86, shake: 0.4,  stop: 0.09, squash: 0.7,  flash: 0.6,  },
+} as const satisfies Record<ImpactLevel, {
+  count: number; speed: number; ring: number;
+  shake: number; stop: number; squash: number; flash: number;
+}>;
 
 export interface FxOptions {
   seed?: number;
@@ -232,6 +257,69 @@ class FxImpl implements FxRuntime {
     this.fl.draw(g);
   }
 
+
+  // ─── Impact grades ─────────────────────────────────────────────────────────
+
+  /**
+   * Hitstop is forbidden in rhythm games and in continuous-tracking games.
+   *
+   * Rhythm: the audio clock keeps running while the game clock is frozen, so
+   * every hitstop permanently shifts the player off the beat.
+   * Continuous tracking (hold a pose, balance, stay still): the player's body
+   * keeps moving while the screen does not, which reads as the tracking
+   * having broken — the worst sensation a motion game can produce.
+   */
+  private hitstopAllowed = true;
+  /** Shake ceiling. Lower in room-scale games, where the player is already
+   *  moving and screen shake is far more nauseating than when seated. */
+  private shakeCeiling = 1;
+
+  /** Called by the host once per round, from the manifest. */
+  configureForGame(o: { rhythm?: boolean; continuous?: boolean; roomScale?: boolean }): void {
+    this.hitstopAllowed = !o.rhythm && !o.continuous;
+    this.shakeCeiling = o.roomScale ? 0.45 : 1;
+  }
+
+  impact(x: number, y: number, level: ImpactLevel, o?: ImpactOpts): void {
+    const g = IMPACT[level];
+    const color = o?.color ?? (level === 'tap' ? C.white : C.accent);
+    this.burst(x, y, {
+      count: g.count,
+      color,
+      ...(o?.sprite !== undefined ? { sprite: o.sprite } : {}),
+      ...(o?.dir !== undefined ? { dir: o.dir } : {}),
+      speed: g.speed * this.vs,
+    });
+    if (g.ring > 0) this.pop(x, y, g.ring * this.vs, color);
+    if (g.shake > 0) this.shake(g.shake * this.shakeCeiling);
+    if (g.stop > 0 && this.hitstopAllowed) this.hitstop(g.stop);
+    if (o?.squashKey) this.squash(o.squashKey, g.squash);
+    if (o?.label) this.popText(x, y, o.label, color);
+    if (g.flash > 0) this.fl.request(color, g.flash);
+  }
+
+  miss(x?: number, y?: number): void {
+    // Quiet by construction. No shake, no flash, no red — a child who is shown
+    // a loud failure several times stops playing, and the engine will not let
+    // a game do that even by accident.
+    if (x !== undefined && y !== undefined) {
+      this.burst(x, y, {
+        count: 5, color: fade(C.white, 0.45), color2: fade(C.white, 0.18),
+        speed: 90 * this.vs, life: 0.35,
+      });
+    }
+  }
+
+  telegraph(x: number, y: number, r: number, o?: { color?: string; secs?: number }): void {
+    // Information, not decoration: it survives reduced motion, becoming a
+    // static ring rather than disappearing.
+    const secs = o?.secs ?? D.telegraph;
+    const col = o?.color ?? C.warn;
+    this.pop(x, y, r, col);
+    if (!this.reducedMotion) this.pop(x, y, r * 0.72, col);
+    void secs;
+  }
+
   resetAll(): void {
     this.parts.clear();
     // Reopen the per-frame spawn budget too, or the first burst of the new
@@ -263,9 +351,9 @@ class FxImpl implements FxRuntime {
   // ─── FxService ───────────────────────────────────────────────────────────
 
   burst(x: number, y: number, o?: BurstOpts): void {
-    const emoji = o?.emoji;
-    const isEmoji = !!emoji;
-    const count = o?.count ?? (isEmoji ? 6 : 18);
+    const spriteId = o?.sprite;
+    const isSprite = !!spriteId;
+    const count = o?.count ?? (isSprite ? 6 : 18);
     const col = o?.color ?? C.accent;
     const c0 = parseColor(col);
     const c1 = o?.color2 ? parseColor(o.color2) : c0;
@@ -276,17 +364,17 @@ class FxImpl implements FxRuntime {
     const spread = o?.spread ?? TAU;
     const dir = o?.dir ?? 0;
     const life = o?.life ?? 0.6;
-    const size = o?.size ?? (isEmoji ? 30 * this.vs : 6 * this.vs);
+    const size = o?.size ?? (isSprite ? 30 * this.vs : 6 * this.vs);
     const grav = o?.gravity ?? 0;
     // Sparks (no gravity) streak; debris (gravity) tumbles as dots.
-    const kind = isEmoji ? KIND_EMOJI : grav > 400 ? KIND_DOT : KIND_SPARK;
+    const kind = isSprite ? KIND_SPRITE : grav > 400 ? KIND_DOT : KIND_SPARK;
     this.parts.emit(
       count, x, y, speed, dir, spread, life, size,
-      grav, grav > 0 ? 0.95 : 0.92, kind, c0, c1, emoji ?? '',
+      grav, grav > 0 ? 0.95 : 0.92, kind, c0, c1, spriteId ?? '',
     );
     // A slower inner ring of round dots gives the burst a core, so it reads as
     // one impact rather than as a scatter of unrelated streaks.
-    if (!isEmoji) {
+    if (!isSprite) {
       this.parts.emit(
         Math.max(2, Math.round(count * 0.3)), x, y, speed * 0.5, dir, spread,
         life * 1.25, size * 1.25, grav * 0.5, 0.93, KIND_DOT, c0, c1, '',
@@ -310,12 +398,12 @@ class FxImpl implements FxRuntime {
       );
       return;
     }
-    if (o?.emoji) {
+    if (o?.sprite) {
       this.parts.emitLine(
         Math.min(40, Math.round(count * 0.25)),
         0, -this.vh * 0.06, this.vw, -this.vh * 0.02,
         140 * this.vs, Math.PI / 2, 1.2, life, o.size ?? 34 * this.vs,
-        300 * this.vs, 0.985, KIND_EMOJI, c0, c1, o.emoji,
+        300 * this.vs, 0.985, KIND_SPRITE, c0, c1, o.sprite,
       );
     }
     this.parts.emitLine(

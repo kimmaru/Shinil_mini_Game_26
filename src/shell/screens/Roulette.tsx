@@ -16,6 +16,7 @@ import type { PoolFilter } from '@/engine/registry';
 import { Button } from '../components/Button';
 import { Wheel } from '../components/Wheel';
 import { WHEEL_SIZE, type WheelItem } from '../useSession';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 // Round selection lives in ../rounds.ts, which wraps RoundScheduler — the one
 // implementation of the no-repeat bag, mechanic variety and the child-safety
@@ -82,7 +83,7 @@ export function Roulette({
         {landed ? (
           <div className="card card--tinted slam-in" style={{ ['--hue' as string]: winner.hue }}>
             <span className="display-2" aria-hidden="true">
-              {winner.icon}
+              <SpriteIcon id={winner.icon} size={96} hue={winner.hue} on="dark" />
             </span>
             <p className="h1">{winner.nameKo}</p>
           </div>

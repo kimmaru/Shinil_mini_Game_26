@@ -20,6 +20,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { WheelItem } from '../useSession';
 import { useServices } from '../useSession';
+import { SpriteIcon } from './SpriteIcon';
 
 export const TAU = Math.PI * 2;
 /** 12 o'clock. See the header. */
@@ -270,7 +271,7 @@ export function Wheel({
               onClick={() => onPick?.(i)}
             >
               <span className="wheel__icon" aria-hidden="true">
-                {it.icon}
+                <SpriteIcon id={it.icon} size={40} hue={it.hue} on="dark" />
               </span>
               <span className="wheel__name">{it.nameKo}</span>
             </button>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   KIND_DOT,
-  KIND_EMOJI,
+  KIND_SPRITE,
   MAX_PER_BURST,
   MAX_SPAWN_PER_FRAME,
   PARTICLE_CAP,
@@ -162,7 +162,7 @@ describe('Particles — drawing', () => {
     g.strict = true;
     p.beginFrame();
     emit(p, 200);
-    emit(p, 20, KIND_EMOJI, '🎉');
+    emit(p, 20, KIND_SPRITE, 'star');
     for (let f = 0; f < 20; f++) {
       p.update(1 / 60);
       g.beginFrame(f / 60);
@@ -173,11 +173,11 @@ describe('Particles — drawing', () => {
     expect(g.audit.ops).toBeGreaterThan(0);
   });
 
-  it('draws one op per emoji particle through the emoji pipeline', () => {
+  it('draws one op per sprite particle through the sprite pipeline', () => {
     const p = new Particles(rng(12));
     const g = new NullRenderer();
     p.beginFrame();
-    emit(p, 5, KIND_EMOJI, '🦟');
+    emit(p, 5, KIND_SPRITE, 'star');
     g.beginFrame(0);
     p.draw(g);
     g.endFrame();

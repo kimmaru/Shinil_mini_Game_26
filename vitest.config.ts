@@ -9,6 +9,7 @@ export default defineConfig({
     // Games must run headless in Node: no DOM, no canvas, no camera.
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    setupFiles: ['src/engine/testing/setup.ts'],
     testTimeout: 20_000,
   },
 });

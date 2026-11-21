@@ -11,6 +11,7 @@ import { preload } from '@/engine/registry';
 import { Button } from '../components/Button';
 import { describeGame, type GameInfo } from '../useSession';
 import type { GameId } from '@/engine/types';
+import { SpriteIcon } from '../components/SpriteIcon';
 
 export const INTRO_AUTO_MS = 4500;
 
@@ -83,7 +84,7 @@ export function Intro({
         {`${game.nameKo}. ${game.taglineKo}. ${game.howToKo.join('. ')}`}
       </p>
       <div className="intro__badge slam-in" aria-hidden="true">
-        {game.icon}
+        <SpriteIcon id={game.icon} size={128} hue={game.hue} on="dark" />
       </div>
       <h1 className="display-2 center slam-in">{game.nameKo}</h1>
       {game.taglineKo ? <p className="h3 center dim">{game.taglineKo}</p> : null}

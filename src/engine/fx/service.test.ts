@@ -56,7 +56,7 @@ describe('budget', () => {
   it('confetti stays inside the pool', () => {
     const fx = createFxService();
     fx.setView(1280, 720, 0.72);
-    fx.confetti({ emoji: '🎉' });
+    fx.confetti({ sprite: 'star' });
     expect(fx.stats.particles).toBeLessThanOrEqual(PARTICLE_CAP);
     expect(fx.stats.particles).toBeGreaterThan(0);
   });
@@ -208,7 +208,7 @@ describe('the whole pass', () => {
     for (let f = 0; f < 600; f++) {
       const t = f / 60;
       if (f % 7 === 0) fx.burst(300 + f % 400, 200, { count: 24, color: C.accent, color2: C.hot });
-      if (f % 11 === 0) fx.burst(600, 300, { count: 6, emoji: '✨', gravity: 600 });
+      if (f % 11 === 0) fx.burst(600, 300, { count: 6, sprite: 'star', gravity: 600 });
       if (f % 13 === 0) fx.pop(400, 400, 60, C.success);
       if (f % 3 === 0) fx.trail(f % 1200, 100, (f % 1200) + 40, 160, { color: C.primaryLo });
       if (f % 23 === 0) fx.popText(500, 300, '+10', C.accentHi);

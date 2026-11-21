@@ -67,6 +67,16 @@ export async function runRound(req: RoundRequest, deps: HostDeps): Promise<GameR
   const fx = deps.fx ?? createFxService({ reducedMotion: deps.reducedMotion ?? null });
   fx.resetAll();
   fx.setView(view.w, view.h, g.s);
+  // Guards the author cannot be expected to remember on every call:
+  // hitstop desynchronises a rhythm game's audio clock permanently, and
+  // freezing the screen during continuous tracking reads as the camera having
+  // broken. Screen shake is capped harder when the player is already moving.
+  fx.configureForGame({
+    rhythm: man.a11y.audioOptional === false,
+    continuous: man.gestures.some((k) =>
+      k === 'holdPose' || k === 'balance' || k === 'stillness' || k === 'poseMatch'),
+    roomScale: man.space === 'room',
+  });
   // `noFlashing: true` means the game promises not to flash; the limiter
   // stays on regardless, because the promise is the author's and the rule is ours.
   fx.setFlashEnabled(true);

@@ -177,8 +177,8 @@ class MosquitoClap implements MiniGame {
       this.ctx.hud.setCombo(0);
       this.ctx.hud.toast(t('bee'), { color: C.warn });
       this.ctx.audio.play('miss', { gain: 0.55 });
-      this.ctx.fx.burst(x, y, { count: 12, color: C.warn, emoji: '💢', speed: 300 });
-      this.ctx.fx.shake(0.08);
+      // Quiet by construction: the engine refuses to shake or flash here.
+      this.ctx.fx.miss(x, y);
       this.ctx.emit({ kind: 'miss' });
       return;
     }
@@ -189,15 +189,14 @@ class MosquitoClap implements MiniGame {
     const points = POINTS + Math.floor(this.combo / COMBO_STEP);
     this.score += points;
 
-    // Everything here lands inside 100ms. This is where the delight is.
-    this.ctx.fx.burst(x, y, {
-      count: 18, color: C.success, color2: C.accent, emoji: '✨',
-      speed: 420 + power * 60,
+    // One call, one grade. Particles, ring, shake, hitstop, squash and the
+    // floating score all land together at the catalogue's standard weight —
+    // and the engine, not this game, decides whether hitstop is safe here.
+    this.ctx.fx.impact(x, y, this.combo >= 8 ? 'big' : 'hit', {
+      color: C.success,
+      sprite: 'sparkle',
+      label: `+${points}`,
     });
-    this.ctx.fx.pop(x, y, this.bugs.r[best]! * 2.2, C.success);
-    this.ctx.fx.popText(x, y, `+${points}`, C.accent);
-    this.ctx.fx.shake(0.1 + Math.min(power, 6) * 0.01);
-    this.ctx.fx.hitstop(0.04);
     // Rising pitch per combo step: the cheapest strong reward signal there is.
     this.ctx.audio.playLadder('pop', this.combo);
     if (this.combo > 0 && this.combo % COMBO_STEP === 0) {
@@ -233,7 +232,7 @@ class MosquitoClap implements MiniGame {
         stroke: bee ? C.warn : fade(C.white, 0.35),
         sw: bee ? 4 * g.s : 2 * g.s,
       });
-      g.emoji(bee ? '🐝' : '🦟', x, y, r * 2 * grow, this.bugs.rot[i]!);
+      g.sprite(bee ? 'bee' : 'mosquito', x, y, r * 2.2 * grow, { rot: this.bugs.rot[i]! });
       g.restore();
     }
 

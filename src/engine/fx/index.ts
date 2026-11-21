@@ -23,8 +23,9 @@ export interface BurstOpts {
   size?: number;
   /** Downward acceleration, px/sec^2. 0 for sparks, high for debris. */
   gravity?: number;
-  /** Emoji instead of dots — the cheapest way to make a hit feel specific. */
-  emoji?: string;
+  /** A sprite instead of plain dots — the cheapest way to make a hit feel
+   *  specific to what was hit. */
+  sprite?: string;
 }
 
 export interface TrailOpts {
@@ -32,6 +33,34 @@ export interface TrailOpts {
   width?: number;
   /** Seconds the trail persists. Default 0.25. */
   life?: number;
+}
+
+/**
+ * Impact grades.
+ *
+ * This is the single most important API in the effects layer. Without it an
+ * author picks six numbers per hit — burst count, shake power, hitstop length,
+ * flash, squash, text — and 58 authors picking six numbers each is precisely
+ * how a catalogue stops feeling like one product.
+ *
+ *   'tap'   collecting, touching        no shake to speak of, no hitstop
+ *   'hit'   the normal hit              the default; what most games want
+ *   'big'   a break, a 10-combo         noticeable, still frequent
+ *   'huge'  a boss, a milestone         once or twice a round, never more
+ */
+export type ImpactLevel = 'tap' | 'hit' | 'big' | 'huge';
+
+export interface ImpactOpts {
+  color?: string;
+  /** A sprite for the particles, which is the cheapest way to make a hit feel
+   *  specific to the thing that was hit. */
+  sprite?: string;
+  /** Floating text, e.g. "+10". */
+  label?: string;
+  /** Key to squash, if the struck object draws itself through `squashAt`. */
+  squashKey?: string;
+  /** Cone direction in radians; omit for all directions. */
+  dir?: number;
 }
 
 export interface FxService {
@@ -67,6 +96,36 @@ export interface FxService {
   squashAt(key: string): number;
   /** Floating score text that drifts up and fades. */
   popText(x: number, y: number, text: string, color?: string): void;
+  /**
+   * One call for a hit: particles, shake, hitstop, squash and floating text,
+   * at a consistent grade. Prefer this over assembling the five by hand.
+   *
+   * The engine applies two guards an author cannot be expected to remember:
+   * hitstop is forced to zero in rhythm games (the audio clock keeps running,
+   * so freezing the game clock desynchronises it permanently), and shake is
+   * capped harder in `space: 'room'` games, where the player is already
+   * physically moving and screen shake is far more nauseating.
+   */
+  impact(x: number, y: number, level: ImpactLevel, o?: ImpactOpts): void;
+
+  /**
+   * A miss. Deliberately quiet: no shake, no flash, no red.
+   *
+   * Repeated failure indicators make this age group quit within a minute, so
+   * the engine refuses to make a miss loud even if a game asks. The combo
+   * break and the absence of a reward are the feedback.
+   */
+  miss(x?: number, y?: number): void;
+
+  /**
+   * A "get ready" warning, drawn `secs` before the thing happens.
+   *
+   * Not the same as anticipation: anticipation is style and is suppressed
+   * under reduced motion, a telegraph is INFORMATION and never is — removing
+   * it would make the game unfair rather than merely plainer.
+   */
+  telegraph(x: number, y: number, r: number, o?: { color?: string; secs?: number }): void;
+
   /** The canonical color for a player slot (= palette C.slot[slot]). */
   slotColor(slot: Slot): string;
   /** True when the player asked for reduced motion. Games may use this to

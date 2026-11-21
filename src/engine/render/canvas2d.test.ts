@@ -260,8 +260,8 @@ describe('NaN discipline', () => {
       g.star(b, 1, 10, 5, { fill: '#fff' });
       g.chevron(1, 1, 10, b, { fill: '#fff' });
       g.text('x', b, 1, { size: 30 });
-      g.emoji('🦟', b, 1, 40);
-      g.emoji('🦟', 1, 1, b);
+      g.sprite('star', b, 1, 40);
+      g.sprite('star', 1, 1, b);
       g.translate(b, 0);
       g.rotate(b);
       g.scale(b, 1);
@@ -393,26 +393,40 @@ describe('text', () => {
   });
 });
 
-describe('emoji', () => {
-  it('centres the glyph ink box on y rather than using the middle baseline', () => {
+describe('sprite', () => {
+  it('centres the 100x100 author box on the draw point', () => {
+    // The whole transform: move to (x,y), scale by size/100, then shift the
+    // author box back by half so its centre lands on the draw point. Get the
+    // last step wrong and every sprite sits down-and-right of what it marks.
     const f = fakeCanvas();
     const g = new Canvas2DRenderer(f.canvas, { dpr: 1 });
     f.log.length = 0;
-    g.emoji('🦟', 400, 300, 50);
-    const baseline = f.log.filter((r) => r.op === 'set:textBaseline').pop()?.args[0];
-    expect(baseline).toBe('alphabetic');
-    const ft = f.log.filter((r) => r.op === 'fillText').pop()!;
-    // The fake reports ascent 0.9em / descent 0.1em, so the centring offset is
-    // (0.9 - 0.1)/2 = 0.4em = 20px below y.
-    expect(ft.args[1]).toBe(400);
-    expect(ft.args[2]).toBe(320);
+    g.sprite('star', 400, 300, 50);
+    const translates = f.log.filter((r) => r.op === 'translate').map((r) => r.args);
+    expect(translates[0]).toEqual([400, 300]);
+    expect(translates.at(-1)).toEqual([-50, -50]);
+    const scale = f.log.find((r) => r.op === 'scale')!;
+    expect(scale.args[0]).toBeCloseTo(0.5, 6);
+    expect(scale.args[1]).toBeCloseTo(0.5, 6);
+  });
+
+  it('fails loudly on an unknown sprite id while developing', () => {
+    // A mistyped id would otherwise draw nothing, which looks exactly like a
+    // game that forgot to spawn anything — the single most expensive class of
+    // bug to find by eye. In a production build this degrades to drawing
+    // nothing rather than killing a child's round mid-party.
+    const f = fakeCanvas();
+    const g = new Canvas2DRenderer(f.canvas, { dpr: 1 });
+    f.log.length = 0;
+    expect(() => g.sprite('no-such-sprite', 10, 10, 20)).toThrow(/unknown sprite/);
+    expect(f.log.filter((r) => r.op === 'fill')).toHaveLength(0);
   });
 
   it('rotates about the draw point without leaking the transform', () => {
     const f = fakeCanvas();
     const g = new Canvas2DRenderer(f.canvas, { dpr: 1 });
     f.log.length = 0;
-    g.emoji('⭐', 10, 20, 30, 0.5);
+    g.sprite('star', 10, 20, 30, { rot: 0.5 });
     const ops = f.log.map((r) => r.op);
     expect(ops.filter((o) => o === 'save')).toHaveLength(1);
     expect(ops.filter((o) => o === 'restore')).toHaveLength(1);

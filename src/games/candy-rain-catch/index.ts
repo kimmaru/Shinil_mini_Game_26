@@ -165,7 +165,7 @@ class CandyRainCatch implements MiniGame {
         this.ctx.hud.setCombo(0);
         this.ctx.hud.toast(t('oops'), { color: C.warn });
         this.ctx.audio.play('thud', { gain: 0.6 });
-        this.ctx.fx.burst(x, y, { count: 10, color: C.warn, emoji: '💥', speed: 260 });
+        this.ctx.fx.burst(x, y, { count: 10, color: C.warn, sprite: 'cross', speed: 260 });
         this.ctx.fx.shake(0.12);
         this.ctx.emit({ kind: 'miss' });
         if (this.lives <= 0) this.ctx.emit({ kind: 'clearEarly' });
@@ -182,7 +182,7 @@ class CandyRainCatch implements MiniGame {
       this.ctx.fx.burst(x, y, {
         count: gold ? 22 : 12,
         color: gold ? C.accent : hue(manifest.theme!.hue),
-        emoji: gold ? '⭐' : '✨',
+        sprite: gold ? 'star' : 'sparkle',
         speed: 320,
         gravity: 400,
       });
@@ -238,7 +238,7 @@ class CandyRainCatch implements MiniGame {
         // A halo, so the valuable one is readable at a glance from 2m.
         g.circle(x, y, r * 1.7, { stroke: fade(C.accent, 0.5), sw: 3 * g.s, glow: 12 });
       }
-      g.emoji(kind === ROCK ? '🪨' : kind === GOLD ? '🍯' : '🍬', x, y, r * 2.2, Math.sin(spin) * 0.3);
+      g.sprite(kind === ROCK ? 'rock' : kind === GOLD ? 'honey' : 'candy', x, y, r * 2.4, { rot: Math.sin(spin) * 0.3 });
     }
 
     // The basket, with a squash when it catches.
@@ -247,7 +247,7 @@ class CandyRainCatch implements MiniGame {
     g.save();
     g.translate(this.basket.x, this.basket.y);
     g.scale(1 + pop * 0.12, 1 - pop * 0.1);
-    g.emoji('🧺', 0, 0, br * 2.1);
+    g.sprite('basket', 0, 0, br * 2.3);
     g.restore();
 
     // Hands glow only while they are moving fast enough to catch. Without

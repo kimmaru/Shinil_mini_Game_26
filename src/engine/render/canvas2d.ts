@@ -22,7 +22,12 @@
 import { TAU } from '../math';
 import { L, MIN_VIS, POSE_EDGES } from '../pose/landmarks';
 import type { Paint, PlayerPose, Renderer, SkeletonOpts, TextOpts } from '../types';
-import { C, fade } from './palette';
+import { C, fade, hue, KEYLINE_ON_DARK } from './palette';
+import {
+  compiledPath, getSprite, type PaintRole, type SpriteId, type SpriteOpts,
+} from './sprite';
+// Side-effect import: registers the shared sprite set.
+import './sprites';
 import {
   DIGITS,
   applyTracking,
@@ -104,6 +109,9 @@ export class Canvas2DRenderer implements Renderer {
   private _h = 1;
   private _s = 1;
   private _dpr = 1;
+  /** Last hue passed to clear(), so sprites default to the game's own accent
+   *  and a game never has to thread its hue through every draw call. */
+  private themeHue = 210;
   private maxDpr: number;
   private dprForced: number | undefined;
   private manageStyle: boolean;
@@ -262,6 +270,7 @@ export class Canvas2DRenderer implements Renderer {
     const w = this._w;
     const h = this._h;
     const hd = fin(hueDeg as number) ? Math.round(((hueDeg as number) % 360 + 360) % 360) : -1;
+    if (hd >= 0) this.themeHue = hd;
     c.save();
     c.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
     c.globalAlpha = 1;
@@ -621,54 +630,85 @@ export class Canvas2DRenderer implements Renderer {
   }
 
   /**
-   * The entire art pipeline.
+   * Draw a vector sprite centred on (x, y).
    *
-   * Centring matters more than it sounds: `textBaseline = 'middle'` puts the
-   * x-height midpoint at `y`, and emoji glyphs fill the em box, so every emoji
-   * in the game sits ~8% of its size too low — enough that a hit marker misses
-   * the thing it is marking. We measure the glyph's real ink box once and cache
-   * the baseline offset as a ratio of the size.
+   * Sprites are authored in a 100x100 box, so the transform here is the whole
+   * trick: translate to the centre, rotate, scale by size/100, then shift the
+   * author box so its centre lands on the origin. Stroke widths are in author
+   * units and therefore scale with the sprite — an outline written as `4`
+   * stays 4% of the sprite at every size, which is what keeps 58 games'
+   * line weights consistent.
    */
-  emoji(s: string, x: number, y: number, size: number, rot?: number): void {
-    if (!s || !fin2(x, y) || !fin(size) || size <= 0) return;
-    const c = this.c;
-    const turned = rot !== undefined && rot !== 0 && fin(rot);
-    // Integer px with no rotation keeps the colour bitmap crisp instead of
-    // resampled; a rotating emoji is resampled regardless.
-    const px = turned ? Math.max(8, size) : Math.max(8, Math.round(size));
-    c.font = emojiFontString(px);
-    c.textAlign = 'center';
-    c.textBaseline = 'alphabetic';
-    c.fillStyle = C.text; // only used by a monochrome fallback glyph
-    const off = this.emojiOffset(s, px) * px;
-    if (turned) {
-      c.save();
-      c.translate(x, y);
-      c.rotate(rot!);
-      c.fillText(s, 0, off);
-      c.restore();
-    } else {
-      c.fillText(s, Math.round(x), Math.round(y + off));
+  sprite(id: SpriteId, x: number, y: number, size: number, o?: SpriteOpts): void {
+    if (!fin2(x, y) || !fin(size) || size <= 0) return;
+    const sp = getSprite(id);
+    if (!sp) {
+      // Loud in dev, invisible in production: a typo should stop an author
+      // immediately, but must never blank a child's screen mid-party.
+      if (import.meta.env?.DEV) throw new Error(`[renderer] unknown sprite "${id}"`);
+      return;
     }
+    const c = this.c;
+    c.save();
+    if (o?.alpha !== undefined && fin(o.alpha)) c.globalAlpha *= clamp01(o.alpha);
+    c.translate(x, y);
+    if (o?.rot && fin(o.rot)) c.rotate(o.rot);
+    const k = size / 100;
+    c.scale(k * (o?.scaleX ?? 1), k * (o?.scaleY ?? 1));
+    c.translate(-50, -50);
+
+    let glowed = false;
+    if (o?.glow && o.glow > 0 && this.glowLeft > 0) {
+      // shadowBlur ignores the CTM, so it must be pre-divided by our scale or
+      // a small sprite gets an enormous halo.
+      c.shadowBlur = (o.glow * this._dpr) / Math.max(k, 1e-3);
+      c.shadowColor = o.tint ?? C.white;
+      this.glowLeft--;
+      glowed = true;
+    } else if (o?.glow && o.glow > 0) {
+      this.glowsDropped++;
+    }
+
+    for (const layer of sp.layers) {
+      const path = compiledPath(layer.d);
+      const fill = o?.flatten ?? this.role(layer.fill, o);
+      if (fill) {
+        c.fillStyle = fill;
+        c.fill(path);
+        if (glowed) { c.shadowBlur = 0; glowed = false; }
+      }
+      // A flattened sprite is a silhouette: drawing its outline would put a
+      // seam through a solid shape.
+      const stroke = o?.flatten ? undefined : this.role(layer.stroke, o);
+      if (stroke) {
+        c.lineWidth = Math.max(0.4, layer.sw ?? 4);
+        c.lineJoin = 'round';
+        c.lineCap = 'round';
+        c.strokeStyle = stroke;
+        c.stroke(path);
+      }
+    }
+    c.restore();
   }
 
-  /** Baseline offset, as a fraction of the font size, that centres this glyph's
-   *  ink box on `y`. Cached per glyph. ~0.37 for most emoji. */
-  private emojiOffset(s: string, px: number): number {
-    let r = this.emojiOffCache.get(s);
-    if (r === undefined) {
-      const m = this.c.measureText(s) as TextMetrics;
-      const asc = m.actualBoundingBoxAscent;
-      const desc = m.actualBoundingBoxDescent;
-      r =
-        fin2(asc, desc) && asc + desc > 0 && px > 0
-          ? (asc - desc) / 2 / px
-          : 0.37;
-      if (!fin(r) || Math.abs(r) > 1) r = 0.37;
-      if (this.emojiOffCache.size > 256) this.emojiOffCache.clear();
-      this.emojiOffCache.set(s, r);
+  /** Resolve a sprite layer's palette role to a concrete colour. */
+  private role(r: PaintRole | string | undefined, o?: SpriteOpts): string | undefined {
+    if (r === undefined) return undefined;
+    const h = o?.hue ?? this.themeHue;
+    switch (r) {
+      case 'theme': return hue(h, 78, 62);
+      case 'themeLight': return hue(h, 82, 76);
+      case 'themeDark': return hue(h, 70, 40);
+      case 'ink': return C.ink;
+      case 'keyline': return KEYLINE_ON_DARK;
+      case 'white': return C.white;
+      case 'accent': return C.accent;
+      case 'success': return C.success;
+      case 'warn': return C.warn;
+      case 'danger': return C.danger;
+      case 'tint': return o?.tint ?? hue(h, 78, 62);
+      default: return r; // already a CSS colour
     }
-    return r;
   }
 
   // ─── Body ──────────────────────────────────────────────────────────────────

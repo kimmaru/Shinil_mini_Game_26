@@ -30,7 +30,7 @@ const PRESSURE_FROM = 0.7;
 export const KIND_DOT = 0;
 export const KIND_SPARK = 1;
 export const KIND_CONFETTI = 2;
-export const KIND_EMOJI = 3;
+export const KIND_SPRITE = 3;
 
 export type Rng = () => number;
 
@@ -404,8 +404,8 @@ export class Particles {
       const y = this.y[i]!;
       const sz = this.size[i]!;
 
-      if (k === KIND_EMOJI) {
-        g.emoji(this.glyph[i]!, x, y, sz * (0.6 + t * 0.4), this.rot[i]!);
+      if (k === KIND_SPRITE) {
+        g.sprite(this.glyph[i]!, x, y, sz * (0.6 + t * 0.4), { rot: this.rot[i]! });
         continue;
       }
       if (k === KIND_SPARK) {

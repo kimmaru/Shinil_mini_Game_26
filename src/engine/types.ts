@@ -65,7 +65,13 @@ export interface MiniGameManifest {
   taglineKo: string;
   /** 1-3 imperative lines, shown on the intro screen and read aloud. */
   howToKo: string[];
-  /** Emoji. All "art" in this project is emoji + shapes; there are no image files. */
+  /**
+   * A sprite id from `src/engine/render/sprites.ts`.
+   *
+   * NOT an emoji: emoji render as a different artwork on every OS and cannot
+   * be recoloured, so a lobby of 58 emoji icons can never look like one
+   * product. The same id is drawn on the canvas and in the DOM.
+   */
   icon: string;
   /** 0-360. Tints the card and the in-game accents. This is how 58 games feel
    *  distinct without 58 palettes. */

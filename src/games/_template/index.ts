@@ -114,7 +114,7 @@ class TemplateGame implements MiniGame {
       this.score += 1 + Math.floor(this.combo / 5);
 
       // Everything below lands within 100ms. This is where the delight is.
-      this.ctx.fx.burst(x, y, { count: 16, color: C.accent, emoji: '✨' });
+      this.ctx.fx.burst(x, y, { count: 16, color: C.accent, sprite: 'sparkle' });
       this.ctx.fx.pop(x, y, this.targets.r[i]! * 1.6, C.accent);
       this.ctx.fx.shake(0.1);
       this.ctx.fx.hitstop(0.04);
@@ -135,8 +135,8 @@ class TemplateGame implements MiniGame {
       // Everything enters with a scale pop and leaves with a fade. Nothing cuts.
       const grow = age < 0.12 ? age / 0.12 : 1;
       const r = this.targets.r[i]! * (0.6 + 0.4 * grow);
-      g.emoji(
-        this.targets.kind[i] === BAD ? '💣' : '⭐',
+      g.sprite(
+        this.targets.kind[i] === BAD ? 'rock' : 'star',
         this.targets.x[i]!, this.targets.y[i]!, r * 2,
       );
     }

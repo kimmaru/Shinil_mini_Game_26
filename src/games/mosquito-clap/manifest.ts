@@ -5,7 +5,8 @@ export const manifest: MiniGameManifest = {
   nameKo: '모기 박수',
   taglineKo: '모기를 박수로 잡아요!',
   howToKo: ['모기가 두 손 사이로 오면', '손뼉을 짝! 치세요'],
-  icon: '🦟',
+  /** A sprite id from src/engine/render/sprites.ts — never an emoji. */
+  icon: 'mosquito',
   theme: { hue: 142 },
 
   difficulty: 1,
