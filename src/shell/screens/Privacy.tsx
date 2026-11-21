@@ -62,7 +62,7 @@ export function Privacy({ onClose, onSettings }: PrivacyProps): React.ReactEleme
           {GLANCE.map((line) => (
             <li key={line} className="legal">
               <span className="mark">
-                <SpriteIcon id="ui-check-circle" size={22} on="dark" />
+                <SpriteIcon id="ui-check-circle" size={22} />
               </span>
               <span>{line}</span>
             </li>

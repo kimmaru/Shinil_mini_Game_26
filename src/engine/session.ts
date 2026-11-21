@@ -34,7 +34,13 @@ export type Overlay = 'none' | 'settings' | 'privacy';
 
 export type InputMode = 'camera' | 'keyboard';
 
-export type CameraErrorKind = 'denied' | 'notFound' | 'inUse' | 'insecure' | 'unknown';
+export type CameraErrorKind =
+  | 'denied' | 'notFound' | 'inUse' | 'insecure'
+  /** The camera opened, but the pose engine failed to start. A different
+   *  problem with a different fix, and telling the player "we could not turn
+   *  the camera on" after they just granted permission is a dead end. */
+  | 'engine'
+  | 'unknown';
 
 export type PauseReason = 'hidden' | 'user' | 'trackingLost' | 'cameraLost';
 
@@ -80,6 +86,7 @@ export function cameraErrorKind(e: unknown): CameraErrorKind {
   // getUserMedia is absent entirely: not a secure context (http://192.168.x.x
   // is the usual cause, and it is the single most common support question).
   if (name === 'TypeError') return 'insecure';
+  if (name === 'EngineStartError') return 'engine';
   return 'unknown';
 }
 

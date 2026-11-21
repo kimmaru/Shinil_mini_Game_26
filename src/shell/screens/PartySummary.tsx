@@ -67,7 +67,7 @@ export function PartySummary({
                 style={{ ['--hue' as string]: g.hue }}
               >
                 <span className="label row summary__name">
-                  <SpriteIcon id={g.icon} size={34} hue={g.hue} on="dark" />
+                  <SpriteIcon id={g.icon} size={34} hue={g.hue} />
                   <span>{g.nameKo}</span>
                 </span>
                 <span className="row">

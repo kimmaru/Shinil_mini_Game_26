@@ -83,7 +83,7 @@ export function Roulette({
         {landed ? (
           <div className="card card--tinted slam-in" style={{ ['--hue' as string]: winner.hue }}>
             <span className="display-2" aria-hidden="true">
-              <SpriteIcon id={winner.icon} size={96} hue={winner.hue} on="dark" />
+              <SpriteIcon id={winner.icon} size={96} hue={winner.hue} />
             </span>
             <p className="h1">{winner.nameKo}</p>
           </div>

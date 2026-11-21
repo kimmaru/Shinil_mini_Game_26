@@ -49,7 +49,7 @@ export type InputMode = 'camera' | 'keyboard';
 
 /** Distinct copy per kind — see screens/CameraHelp.tsx. Mapped from the
  *  DOMException name by `cameraErrorKind`. */
-export type CameraErrorKind = 'denied' | 'notFound' | 'inUse' | 'insecure' | 'unknown';
+export type CameraErrorKind = 'denied' | 'notFound' | 'inUse' | 'insecure' | 'engine' | 'unknown';
 
 export function cameraErrorKind(e: unknown): CameraErrorKind {
   const name = (e as { name?: string } | null)?.name ?? '';
@@ -57,6 +57,7 @@ export function cameraErrorKind(e: unknown): CameraErrorKind {
   if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'notFound';
   if (name === 'NotReadableError' || name === 'AbortError') return 'inUse';
   if (name === 'TypeError') return 'insecure'; // getUserMedia missing: not https
+  if (name === 'EngineStartError') return 'engine';
   return 'unknown';
 }
 
@@ -173,6 +174,8 @@ export interface SessionState {
   /** True only while a MediaStream track is live. Drives the 카메라 켜짐 chip. */
   cameraLive: boolean;
   cameraError: CameraErrorKind | null;
+  /** The raw error text, for the small print on the help screen. */
+  cameraErrorDetail: string | null;
   /** 0..1 plus a Korean label, for both warmup stages. */
   loading: { progress: number; labelKo: string };
   calib: CalibrationProfile | null;
@@ -202,7 +205,7 @@ export type SessionAction =
   | { type: 'chooseKeyboard' }
   | { type: 'promptNow' }
   | { type: 'cameraGranted' }
-  | { type: 'cameraFailed'; error: CameraErrorKind }
+  | { type: 'cameraFailed'; error: CameraErrorKind; detail?: string }
   | { type: 'retryCamera' }
   | { type: 'progress'; progress: number; labelKo?: string }
   | { type: 'warmupDone' }
@@ -240,6 +243,7 @@ export function initialSession(o: {
     inputMode: o.inputMode ?? 'camera',
     cameraLive: false,
     cameraError: null,
+    cameraErrorDetail: null,
     loading: { progress: 0, labelKo: '준비하고 있어요' },
     calib: null,
     calibHintKo: null,
@@ -288,6 +292,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
         inputMode: 'keyboard',
         cameraLive: false,
         cameraError: null,
+    cameraErrorDetail: null,
       };
 
     case 'promptNow':
@@ -297,7 +302,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       return { ...s, phase: 'warmup', cameraLive: true, cameraError: null };
 
     case 'cameraFailed':
-      return { ...s, phase: 'cameraHelp', cameraLive: false, cameraError: a.error };
+      return { ...s, phase: 'cameraHelp', cameraLive: false, cameraError: a.error, cameraErrorDetail: a.detail ?? null };
 
     case 'retryCamera':
       return { ...s, phase: 'prePrompt', cameraError: null };
@@ -531,8 +536,10 @@ export function loadSettings(): Settings {
 /** Maps settings onto the <html> attributes tokens.css switches on. */
 export function applySettings(s: Settings, systemReduced: boolean): void {
   const r = document.documentElement;
-  if (s.theme === 'system') r.removeAttribute('data-theme');
-  else r.setAttribute('data-theme', s.theme);
+  // No theme attribute: the product is light-only by design. A dark mode read
+  // as drab for a children's party game, and the sprite keyline (near-black
+  // ink) assumes a light ground.
+  r.removeAttribute('data-theme');
 
   if (s.motion === 'reduced') r.setAttribute('data-motion', 'reduced');
   else if (s.motion === 'full') r.setAttribute('data-motion', 'full');

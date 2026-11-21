@@ -168,21 +168,42 @@ export class MediaPipePoseSource implements PoseSource {
       // Autoplay can still be blocked; the shell shows a tap-to-start button.
       this.warn('카메라를 시작하려면 화면을 한 번 눌러 주세요.');
     });
-    await waitForVideo(video);
+    // A slow first frame is not a reason to refuse to start. The pump below
+    // waits for real frames anyway, and a camera that is merely slow to warm
+    // up must not look to the player like a camera that failed.
+    try {
+      await waitForVideo(video);
+    } catch (e) {
+      this.o.onWarning?.(
+        `[pose] 카메라 영상이 늦게 와요 (${e instanceof Error ? e.message : String(e)})`,
+      );
+    }
 
     this.landmarker = await this.createLandmarker();
 
     if (this.o.warmup !== false) {
       // Shader compile: the landmark subgraph only compiles when a body first
       // appears, and that pass has been measured at ~20s on a cold cache.
-      this.warmupResult = await warmupLandmarker(this.landmarker as unknown as {
-        detectForVideo: (i: unknown, t: number) => PoseLandmarkerResult;
-      }, { startTimestampMs: this.lastTimestampMs + 1 });
-      this.lastTimestampMs = Math.max(this.lastTimestampMs, this.warmupResult.lastTimestampMs);
-      if (!this.warmupResult.poseFound) {
-        // Honest: the stall has not been paid for. The caller should keep the
-        // calibration screen up, where a real body IS in frame.
-        this.o.onWarning?.(`[pose] ${this.warmupResult.message}`);
+      //
+      // NON-FATAL, deliberately. Warmup is an optimisation — it pre-pays a
+      // stall that would otherwise land mid-round. If it throws (no
+      // OffscreenCanvas, a GPU that rejects the synthetic frame, a timeout),
+      // the game still works; the stall simply gets paid later, behind the
+      // calibration screen where a real body is in frame. Letting it fail the
+      // whole start told a player who had just granted camera permission that
+      // their camera did not work, which is both wrong and unactionable.
+      try {
+        this.warmupResult = await warmupLandmarker(this.landmarker as unknown as {
+          detectForVideo: (i: unknown, t: number) => PoseLandmarkerResult;
+        }, { startTimestampMs: this.lastTimestampMs + 1 });
+        this.lastTimestampMs = Math.max(this.lastTimestampMs, this.warmupResult.lastTimestampMs);
+        if (!this.warmupResult.poseFound) {
+          this.o.onWarning?.(`[pose] ${this.warmupResult.message}`);
+        }
+      } catch (e) {
+        this.o.onWarning?.(
+          `[pose] 미리 준비를 건너뛰었어요 (${e instanceof Error ? e.message : String(e)})`,
+        );
       }
     }
 

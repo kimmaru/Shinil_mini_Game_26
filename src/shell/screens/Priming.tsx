@@ -66,7 +66,7 @@ export function Priming({
         {POINTS.map(([mark, strong, rest]) => (
           <li key={mark}>
             <span className="mark">
-              <SpriteIcon id={mark} size={30} on="dark" />
+              <SpriteIcon id={mark} size={30} />
             </span>
             <span>
               <strong>{strong}</strong>

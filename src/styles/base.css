@@ -16,7 +16,7 @@
 }
 html {
   height: 100%;
-  color-scheme: light dark;
+  color-scheme: light;
   -webkit-text-size-adjust: 100%;
 }
 /* min-height, not height: a short laptop in landscape must be able to scroll a
@@ -976,22 +976,22 @@ table.legal-table th {
 .hud__scoreNum {
   font-size: var(--fs-display-2);
   font-weight: 800;
-  color: var(--slot, #fff);
-  text-shadow: 0 3px 0 rgb(0 0 0 / 0.5);
+  color: var(--slot, var(--c-text));
+  text-shadow: 0 0 5px #fff, 0 0 10px rgb(255 255 255 / 0.9), 1.5px 1.5px 0 rgb(255 255 255 / 0.95), -1.5px 1.5px 0 rgb(255 255 255 / 0.95), 1.5px -1.5px 0 rgb(255 255 255 / 0.95), -1.5px -1.5px 0 rgb(255 255 255 / 0.95);
 }
 .hud__combo {
   font-size: var(--fs-heading);
   font-weight: 800;
-  color: var(--c-accent2-500);
-  text-shadow: 0 2px 0 rgb(0 0 0 / 0.5);
+  color: var(--c-accent2-600);
+  text-shadow: 0 0 5px #fff, 0 0 10px rgb(255 255 255 / 0.9), 1.5px 1.5px 0 rgb(255 255 255 / 0.95), -1.5px 1.5px 0 rgb(255 255 255 / 0.95), 1.5px -1.5px 0 rgb(255 255 255 / 0.95), -1.5px -1.5px 0 rgb(255 255 255 / 0.95);
 }
 .hud__goal {
   flex: 1;
   font-size: var(--fs-heading);
   font-weight: 700;
-  color: #fff;
+  color: var(--c-text);
   text-align: center;
-  text-shadow: 0 2px 0 rgb(0 0 0 / 0.6);
+  text-shadow: 0 0 5px #fff, 0 0 10px rgb(255 255 255 / 0.9), 1.5px 1.5px 0 rgb(255 255 255 / 0.95), -1.5px 1.5px 0 rgb(255 255 255 / 0.95), 1.5px -1.5px 0 rgb(255 255 255 / 0.95), -1.5px -1.5px 0 rgb(255 255 255 / 0.95);
 }
 .hud__right {
   display: flex;
@@ -1001,8 +1001,8 @@ table.legal-table th {
 .hud__timer {
   font-size: var(--fs-display-2);
   font-weight: 800;
-  color: #fff;
-  text-shadow: 0 3px 0 rgb(0 0 0 / 0.5);
+  color: var(--c-text);
+  text-shadow: 0 0 5px #fff, 0 0 10px rgb(255 255 255 / 0.9), 1.5px 1.5px 0 rgb(255 255 255 / 0.95), -1.5px 1.5px 0 rgb(255 255 255 / 0.95), 1.5px -1.5px 0 rgb(255 255 255 / 0.95), -1.5px -1.5px 0 rgb(255 255 255 / 0.95);
 }
 .hud__timer.is-urgent {
   color: var(--c-danger-500);
@@ -1022,8 +1022,8 @@ table.legal-table th {
 .hud__barLabel {
   font-size: var(--fs-caption);
   font-weight: 700;
-  color: #fff;
-  text-shadow: 0 1px 0 rgb(0 0 0 / 0.6);
+  color: var(--c-text);
+  text-shadow: 0 0 5px #fff, 1.5px 1.5px 0 rgb(255 255 255 / 0.95), -1.5px 1.5px 0 rgb(255 255 255 / 0.95), 1.5px -1.5px 0 rgb(255 255 255 / 0.95), -1.5px -1.5px 0 rgb(255 255 255 / 0.95);
 }
 .hud__beat {
   position: absolute;
@@ -1043,8 +1043,8 @@ table.legal-table th {
   font-family: var(--font-display);
   font-size: var(--fs-title-1);
   font-weight: 800;
-  color: var(--c-success-500);
-  text-shadow: 0 3px 0 rgb(0 0 0 / 0.5);
+  color: var(--c-success-600);
+  text-shadow: 0 0 5px #fff, 1.5px 1.5px 0 rgb(255 255 255 / 0.95), -1.5px 1.5px 0 rgb(255 255 255 / 0.95), 1.5px -1.5px 0 rgb(255 255 255 / 0.95), -1.5px -1.5px 0 rgb(255 255 255 / 0.95);
   transform: translateX(-50%);
 }
 .hud__toast.is-big {
@@ -1057,9 +1057,9 @@ table.legal-table th {
   max-width: 80vw;
   font-size: var(--fs-body-lg);
   font-weight: 600;
-  color: #fff;
+  color: var(--c-text);
   text-align: center;
-  text-shadow: 0 2px 0 rgb(0 0 0 / 0.7);
+  text-shadow: 0 0 5px #fff, 1.5px 1.5px 0 rgb(255 255 255 / 0.95), -1.5px 1.5px 0 rgb(255 255 255 / 0.95), 1.5px -1.5px 0 rgb(255 255 255 / 0.95), -1.5px -1.5px 0 rgb(255 255 255 / 0.95);
   transform: translateX(-50%);
 }
 

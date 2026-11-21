@@ -21,7 +21,8 @@
     "freeze": "node scripts/check-frozen.mjs --write",
     "gate": "npm run preflight && npm run typecheck && npm run check:boundaries && npm run check:frozen && npm run check:assets && vitest run",
     "shot": "node scripts/shot.mjs",
-    "preflight": "node scripts/preflight.mjs"
+    "preflight": "node scripts/preflight.mjs",
+    "play": "node scripts/play.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "1.2.3",

@@ -84,7 +84,7 @@ export function Intro({
         {`${game.nameKo}. ${game.taglineKo}. ${game.howToKo.join('. ')}`}
       </p>
       <div className="intro__badge slam-in" aria-hidden="true">
-        <SpriteIcon id={game.icon} size={128} hue={game.hue} on="dark" />
+        <SpriteIcon id={game.icon} size={128} hue={game.hue} />
       </div>
       <h1 className="display-2 center slam-in">{game.nameKo}</h1>
       {game.taglineKo ? <p className="h3 center dim">{game.taglineKo}</p> : null}
@@ -109,7 +109,7 @@ export function Intro({
           if (!hint) return null;
           return (
             <span key={g} className="chip breathe">
-              <SpriteIcon id={hint[0]} size={28} on="dark" /> {hint[1]}
+              <SpriteIcon id={hint[0]} size={28} /> {hint[1]}
             </span>
           );
         })}

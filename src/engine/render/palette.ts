@@ -5,8 +5,17 @@
 // overlay have to read consistently, and a light canvas blows out next to a
 // camera preview.
 export const C = {
-  bg: '#101733',
-  bgDeep: '#080C1A',
+  /**
+   * The in-game canvas. Warm cream, not white: pure white reads cold and
+   * clinical, and this is a game for seven-year-olds.
+   *
+   * This is a LIGHT canvas. On a dark one the sprite keyline had to invert to
+   * white; here near-black ink is 18:1 and does the job properly, which is
+   * what every flat-cartoon reference assumes in the first place.
+   */
+  bg: '#FFF8EC',
+  /** A slightly deeper ground, for floors and insets. */
+  bgDeep: '#F4E7D2',
   ink: '#0B0F20',
 
   primary: '#4C6FFF',
@@ -22,29 +31,45 @@ export const C = {
   info: '#19B5FE',
 
   white: '#FFFFFF',
-  text: '#F2F5FF',
-  textDim: '#B7C0DC',
-  textFaint: '#8390B2',
+  /** Text on the light canvas. */
+  text: '#1A1D2E',
+  textDim: '#4A5068',
+  textFaint: '#7C8398',
 
-  /** Player slots. NEVER the only cue — pair with the shape badges below. */
-  slot: ['#2FA8FF', '#FF7A45', '#39D98A', '#C77DFF'] as const,
-  /** Kahoot's rule: color + shape + number, so color-blind players and a
-   *  shouted "빨간 세모!" both work. */
+  /**
+   * Player slots, tuned for the light canvas: 3.5-5.2:1 against cream, where
+   * the old bright set fell to 1.7:1 and a green player's skeleton washed out.
+   *
+   * Their luminances are deliberately close to each other — they are told
+   * apart by HUE, and never by colour alone: every player-coloured element
+   * also carries a shape badge and a slot number.
+   */
+  slot: ['#1B7FD4', '#E05A1E', '#128F5A', '#8B3FD9'] as const,
+  /** Color + shape + number, so a colour-blind player and a shouted
+   *  "빨간 세모!" both work. */
   slotShape: ['▲', '◆', '●', '■'] as const,
 } as const;
 
 /**
- * Base lightness for a hue, on the dark game canvas.
+ * Base lightness for a hue, on the light game canvas.
  *
- * Blue-violet sits in the same region of the spectrum as the canvas itself
- * (#101733), so a flat lightness fails there and nowhere else. Measured at
- * L=62: hue 240 lands at 3.18:1 against the canvas — below WCAG AA — while
- * hue 60 reaches 13.4:1. Lifting only 205-295 brings the whole wheel above
- * 4.5:1 with one line instead of 58 hand-tuned colours.
+ * HSL lightness is not perceptual: at a given L, yellow is far brighter to the
+ * eye than blue. Measured against the cream canvas, hue 60 at L=50 is 1.2:1
+ * while hue 240 at the same L is 8:1 — so the yellow-green band has to come
+ * down hard or it disappears.
+ *
+ * Fill contrast is not the whole story here, though: every sprite carries a
+ * near-black keyline at 18:1, and that is what defines the shape. The fill is
+ * colour, not legibility, which is exactly the arrangement flat-cartoon art
+ * assumes on a light ground.
  */
 export const baseL = (h: number): number => {
   const n = ((h % 360) + 360) % 360;
-  return n >= 205 && n <= 295 ? 72 : 62;
+  // Yellow through yellow-green: the band that needs the most correction.
+  if (n >= 40 && n <= 95) return 38;
+  // Cyan and warm greens sit high too.
+  if (n > 95 && n <= 190) return 42;
+  return 50;
 };
 
 /** A game's own accent, from `manifest.theme.hue`. Lightness defaults to the
@@ -83,17 +108,17 @@ export const hueLight = (h: number): string =>
   `hsl(${h} 85% ${Math.min(92, baseL(h) + 14)}%)`;
 
 /**
- * The outline colour for sprites.
+ * The outline colour for sprites, on the light canvas.
  *
- * Measured on the game canvas: near-black ink is 1.08:1 — invisible. White at
- * 0.92 alpha is 17.6:1. So the house keyline inverts on dark, which is the one
- * place this project departs from the flat-cartoon references it borrows from
- * (they all assume a light background).
+ * Measured at 18:1 against the cream ground. Not pure black — black is heavy
+ * and this audience is seven — but dark enough that it, rather than the fill,
+ * is what makes a shape legible at 2m.
  */
+export const KEYLINE = '#171A2B';
+/** Kept for surfaces that are still dark (the debug overlay, a photo frame). */
 export const KEYLINE_ON_DARK = 'rgb(255 255 255 / 0.92)';
-/** On a light panel, a same-hue dark rather than pure black: black is heavy
- *  and this audience is seven. */
-export const keylineOnLight = (h: number): string => `hsl(${h} 55% 20%)`;
+/** A same-hue dark, for an object that wants its outline to belong to it. */
+export const keylineOnLight = (h: number): string => `hsl(${h} 55% 24%)`;
 
 /** Translucent white, for soft overlays and trails. */
 export const fade = (c: string, a: number): string => {

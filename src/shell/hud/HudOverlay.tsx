@@ -285,7 +285,7 @@ export function HudOverlay({
         <div className="hud__lives" aria-label={`남은 기회 ${s.lives}개`}>
           {Array.from({ length: Math.max(s.livesMax, s.lives) }, (_, i) => (
             <span key={i} aria-hidden="true">
-              <SpriteIcon id={i < s.lives ? 'heart' : 'ui-heart-empty'} size={26} on="dark" />
+              <SpriteIcon id={i < s.lives ? 'heart' : 'ui-heart-empty'} size={26} />
             </span>
           ))}
         </div>

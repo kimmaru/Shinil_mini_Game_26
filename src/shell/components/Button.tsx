@@ -60,7 +60,7 @@ export function Button({
         <SpriteIcon
           id={icon}
           size={size === 'huge' ? 34 : size === 'sm' ? 20 : 26}
-          on="dark"
+         
           className="btn__icon"
         />
       ) : null}

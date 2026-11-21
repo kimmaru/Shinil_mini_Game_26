@@ -58,7 +58,7 @@ export function Screen({
       ) : null}
       {icon ? (
         <div className="screen__icon pop-in">
-          <SpriteIcon id={icon} size={92} on="dark" />
+          <SpriteIcon id={icon} size={92} />
         </div>
       ) : null}
       {kickerKo ? <p className="label dim center">{kickerKo}</p> : null}

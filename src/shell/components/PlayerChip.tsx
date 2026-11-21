@@ -46,7 +46,7 @@ export function PlayerChip({
       {score !== undefined ? <span className="pchip__score num">{score}</span> : null}
       {mvp ? (
         <span className="pchip__mvp" aria-hidden="true">
-          <SpriteIcon id="ui-crown" size={22} on="dark" />
+          <SpriteIcon id="ui-crown" size={22} />
         </span>
       ) : null}
     </div>

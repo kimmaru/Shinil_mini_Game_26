@@ -48,7 +48,7 @@ export function StarRow({ stars, animate = true, size = 'lg' }: StarRowProps): R
           className={`stars__one${i <= shown ? ' is-on' : ''}`}
           aria-hidden="true"
         >
-          <SpriteIcon id="star" size={28} on="dark" />
+          <SpriteIcon id="star" size={28} />
         </span>
       ))}
     </div>

@@ -56,7 +56,7 @@ export function Warmup({ progress, labelKo, onKeyboard }: WarmupProps): React.Re
         labelKo="준비 중"
       >
         <span className="display-2" aria-hidden="true">
-          <SpriteIcon id={FACES[tick % FACES.length]!} size={64} on="dark" />
+          <SpriteIcon id={FACES[tick % FACES.length]!} size={64} />
         </span>
       </ProgressRing>
       <p className="body-lg center dim">{labelKo}</p>

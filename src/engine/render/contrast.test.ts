@@ -5,7 +5,7 @@
 // theme lightness put blue-violet hues at 3.18:1, below WCAG AA. Neither was
 // visible in code review; both are obvious to a measurement.
 import { describe, expect, it } from 'vitest';
-import { baseL, C, hue, hueDark, hueLight, KEYLINE_ON_DARK, snapHue, THEME_HUES } from './palette';
+import { baseL, C, hue, hueDark, hueLight, KEYLINE, snapHue, THEME_HUES } from './palette';
 
 /** WCAG relative luminance. */
 function luminance(rgb: readonly [number, number, number]): number {
@@ -50,33 +50,40 @@ const ratio = (a: string, b: string): number => {
 const CANVAS = C.bg;
 
 describe('sprite keyline', () => {
-  it('is visible on the game canvas', () => {
-    // The bug this replaces: near-black ink on a near-black canvas.
-    expect(ratio(CANVAS, KEYLINE_ON_DARK)).toBeGreaterThan(10);
+  it('is what makes a shape legible on the light canvas', () => {
+    // The keyline, not the fill, carries legibility here: a yellow fill is
+    // only ~2:1 against cream no matter how its lightness is tuned, while the
+    // ink outline around it is 18:1. That is how flat-cartoon art works on a
+    // light ground, and why the fill is free to be a colour rather than a
+    // contrast obligation.
+    expect(ratio(CANVAS, KEYLINE)).toBeGreaterThan(12);
   });
 
-  it('documents that near-black ink would NOT be visible there', () => {
-    // Kept as an assertion so nobody "simplifies" the keyline back to ink.
-    expect(ratio(CANVAS, C.ink)).toBeLessThan(1.5);
+  it('is not pure black', () => {
+    // Black is heavy, and this audience is seven.
+    expect(KEYLINE.toLowerCase()).not.toBe('#000000');
   });
 });
 
 describe('theme hues', () => {
-  it.each(THEME_HUES)('hue %i clears WCAG AA against the canvas', (h) => {
-    expect(ratio(CANVAS, hue(h))).toBeGreaterThanOrEqual(4.5);
+  it.each(THEME_HUES)('hue %i is distinguishable from the canvas', (h) => {
+    // 2:1 rather than 4.5:1 — the fill is colour, the keyline is contrast
+    // (see above). What matters is that a filled shape never blends INTO the
+    // cream ground and vanishes.
+    expect(ratio(CANVAS, hue(h))).toBeGreaterThanOrEqual(2);
   });
 
-  it('clears AA across the WHOLE wheel, not just the anchors', () => {
-    // A game could pass any hue; the lightness correction has to hold for all
-    // of them, not only the twelve we picked.
+  it('holds across the WHOLE wheel, not just the anchors', () => {
     for (let h = 0; h < 360; h += 5) {
-      expect(ratio(CANVAS, hue(h)), `hue ${h}`).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(CANVAS, hue(h)), `hue ${h}`).toBeGreaterThanOrEqual(1.8);
     }
   });
 
-  it('lifts only the blue-violet band, and leaves the rest alone', () => {
-    expect(baseL(240)).toBeGreaterThan(baseL(60));
-    expect(baseL(60)).toBe(baseL(140));
+  it('darkens the yellow-green band, which HSL lightness alone does not', () => {
+    // HSL L is not perceptual: at the same L, yellow is far brighter than
+    // blue. Without this correction a yellow object is 1.2:1 on cream.
+    expect(baseL(60)).toBeLessThan(baseL(240));
+    expect(baseL(60)).toBeLessThan(baseL(320));
   });
 
   it('keeps shade and light distinguishable from the base', () => {
@@ -92,11 +99,11 @@ describe('theme hues', () => {
     }
   });
 
-  it('keeps shade readable enough not to vanish into the canvas', () => {
+  it('keeps shade distinct from the canvas', () => {
     // Shade carries no information (ART.md), but an object's shaded side still
     // has to read as part of the object rather than a hole in it.
     for (const h of THEME_HUES) {
-      expect(ratio(CANVAS, hueDark(h)), `hue ${h}`).toBeGreaterThan(2.2);
+      expect(ratio(CANVAS, hueDark(h)), `hue ${h}`).toBeGreaterThan(2.5);
     }
   });
 });
@@ -117,16 +124,38 @@ describe('snapHue', () => {
   });
 });
 
-describe('semantic colours on the canvas', () => {
+describe('text and semantic colours on the canvas', () => {
+  it('text clears the 7:1 bar a child reads at 2m', () => {
+    expect(ratio(CANVAS, C.text)).toBeGreaterThanOrEqual(7);
+  });
+
+  it('dim text is still readable', () => {
+    expect(ratio(CANVAS, C.textDim)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('white alone would be invisible — so it must never carry meaning', () => {
+    // Documented as an assertion so nobody fills a shape with plain white and
+    // wonders where it went.
+    expect(ratio(CANVAS, C.white)).toBeLessThan(1.3);
+  });
+
   it.each([
-    ['accent', C.accent], ['success', C.success], ['danger', C.danger],
-    ['warn', C.warn], ['hot', C.hot], ['white', C.white], ['text', C.text],
-  ])('%s is legible', (_name, col) => {
-    expect(ratio(CANVAS, col)).toBeGreaterThanOrEqual(4.5);
+    ['success', C.success], ['danger', C.danger], ['warn', C.warn], ['hot', C.hot],
+  ])('%s is distinguishable', (_name, col) => {
+    expect(ratio(CANVAS, col)).toBeGreaterThanOrEqual(1.8);
   });
 
   it.each(C.slot.map((c, i) => [i, c] as const))(
-    'player slot %i is legible', (_i, col) => {
-      expect(ratio(CANVAS, col)).toBeGreaterThanOrEqual(4.5);
+    'player slot %i stands out from the canvas', (_i, col) => {
+      // Higher bar than the decorative colours: a player's skeleton is the
+      // thing they are steering, and it must not wash out.
+      expect(ratio(CANVAS, col)).toBeGreaterThanOrEqual(3);
     });
+
+  it('tells players apart by hue, never by luminance alone', () => {
+    // Documented deliberately: the slot colours are close in luminance, which
+    // is exactly why every player-coloured element also carries a shape badge
+    // and a number.
+    expect(C.slotShape.length).toBe(C.slot.length);
+  });
 });

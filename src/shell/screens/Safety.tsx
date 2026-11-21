@@ -55,7 +55,7 @@ export function Safety({ onAck }: SafetyProps): React.ReactElement {
         {RULES.map(([mark, text]) => (
           <li key={mark}>
             <span className="mark">
-              <SpriteIcon id={mark} size={30} on="dark" />
+              <SpriteIcon id={mark} size={30} />
             </span>
             <span>{text}</span>
           </li>

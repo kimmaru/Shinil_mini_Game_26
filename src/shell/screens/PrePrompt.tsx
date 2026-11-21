@@ -39,7 +39,7 @@ export function PrePrompt({ onReady, onKeyboard }: PrePromptProps): React.ReactE
           라고 물어봐요.
         </p>
         <p className="h2 breathe">
-          <strong>[허용]</strong> 을 눌러 주세요! <SpriteIcon id="ui-point-up" size={22} on="dark" />
+          <strong>[허용]</strong> 을 눌러 주세요! <SpriteIcon id="ui-point-up" size={22} />
         </p>
       </div>
     </Screen>

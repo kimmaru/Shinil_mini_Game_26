@@ -8,7 +8,11 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   worker: { format: 'es' },
-  server: { port: 5173, host: '127.0.0.1' },
+  // Listen on both loopback families. Pinning to 127.0.0.1 alone breaks
+  // Chrome when it resolves `localhost` to ::1 first, which looks exactly
+  // like the server being down.
+  server: { port: 5173, host: 'localhost', strictPort: true },
+  preview: { port: 4173, host: 'localhost', strictPort: true },
   build: {
     target: 'es2022',
     sourcemap: true,

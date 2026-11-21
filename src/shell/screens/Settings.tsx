@@ -129,17 +129,6 @@ export function Settings({
         />
 
         <Group
-          labelKo="화면 밝기 / 색"
-          value={settings.theme}
-          options={[
-            ['system', '기기 설정'],
-            ['light', '밝게'],
-            ['dark', '어둡게'],
-          ]}
-          onChange={(v) => set('theme', v)}
-        />
-
-        <Group
           labelKo="진하게 보기"
           hintKo="글자와 선을 더 또렷하게 해요."
           value={settings.contrast}

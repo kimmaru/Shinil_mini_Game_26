@@ -10,9 +10,7 @@
      2. :root            the COMPLETE light palette — no colour's only
                          definition may live inside a media query
      3. dark             applied twice, deliberately:
-                           @media (prefers-color-scheme: dark)
                              :root:not([data-theme="light"])   → system dark
-                           :root[data-theme="dark"]            → explicit toggle
                          so an in-app toggle wins in BOTH directions. The two
                          blocks MUST stay in sync.
      4. metrics          spacing / radius / shadow / hit targets / motion
@@ -20,6 +18,10 @@
    ════════════════════════════════════════════════════════════════════════════ */
 
 /* ─── 1. brand / semantic ─────────────────────────────────────────────────── */
+/* LIGHT ONLY. A dark mode was removed deliberately: this runs on one machine
+   in a lit room for children, and the dark palette read as drab. The sprite
+   keyline is near-black ink on warm cream, which is what flat-cartoon art
+   assumes in the first place. */
 :root {
   /* primary — electric blue: actions, focus, progress */
   --c-primary-50: #eef2ff;
@@ -93,13 +95,13 @@
 
 /* ─── 2. light (complete palette, bare :root) ─────────────────────────────── */
 :root {
-  --c-canvas: #f5f7fd;
+  --c-canvas: #FFF3DC;
   --c-surface: #ffffff;
-  --c-surface-2: #edf0f9;
-  --c-surface-3: #e2e7f4;
-  --c-game-bg: #101733; /* the GAME canvas stays dark in BOTH modes */
-  --c-border: #d5dbea;
-  --c-border-strong: #aeb8d0;
+  --c-surface-2: #FFF8EC;
+  --c-surface-3: #FFEBC9;
+  --c-game-bg: #FFF8EC; /* the GAME canvas stays dark in BOTH modes */
+  --c-border: #E8D8BB;
+  --c-border-strong: #CBB48C;
   --c-text: #131a33; /* 16.1:1 on surface */
   --c-text-2: #4a5678; /* 7.4:1 */
   --c-text-3: #7a86a8; /* 3.9:1 — large/decorative only */
@@ -115,71 +117,8 @@
 }
 
 /* ─── 3a. dark — system preference (explicit light opt-out respected) ─────── */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --c-canvas: #0b0f20;
-    --c-surface: #151b33;
-    --c-surface-2: #1e2641;
-    --c-surface-3: #28314f;
-    --c-game-bg: #080c1a;
-    --c-border: #333d5e;
-    --c-border-strong: #4a5679;
-    --c-text: #f2f5ff; /* 15.8:1 on surface */
-    --c-text-2: #b7c0dc; /* 8.9:1 */
-    --c-text-3: #8390b2; /* 4.6:1 */
-    --c-on-primary: #0b0f20;
-    --c-on-accent: #2a1b00;
-    --c-link: var(--c-primary-300);
-    --c-overlay: rgb(4 6 14 / 0.68);
-    --c-focus: #ffc53d;
-    /* lift brand lightness, trim saturation so it does not bloom on OLED */
-    --c-primary-500: #6b8aff;
-    --c-primary-600: #8fa6ff;
-    --c-primary-50: #1b2550;
-    --c-secondary-500: #b983ff;
-    --c-accent-500: #ffc53d;
-    --c-accent2-500: #ff6fa3;
-    --c-success-500: #2ee39b;
-    --c-warn-500: #ffb454;
-    --c-danger-500: #ff6b6b;
-    --sh-1: 0 1px 2px rgb(0 0 0 / 0.4), inset 0 1px 0 rgb(255 255 255 / 0.05);
-    --sh-2: 0 4px 10px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.06);
-    --sh-3: 0 12px 24px rgb(0 0 0 / 0.5), inset 0 1px 0 rgb(255 255 255 / 0.07);
-    --sh-4: 0 24px 48px rgb(0 0 0 / 0.6), inset 0 1px 0 rgb(255 255 255 / 0.08);
-  }
-}
 
 /* ─── 3b. dark — explicit in-app toggle. KEEP IN SYNC WITH 3a. ────────────── */
-:root[data-theme='dark'] {
-  --c-canvas: #0b0f20;
-  --c-surface: #151b33;
-  --c-surface-2: #1e2641;
-  --c-surface-3: #28314f;
-  --c-game-bg: #080c1a;
-  --c-border: #333d5e;
-  --c-border-strong: #4a5679;
-  --c-text: #f2f5ff;
-  --c-text-2: #b7c0dc;
-  --c-text-3: #8390b2;
-  --c-on-primary: #0b0f20;
-  --c-on-accent: #2a1b00;
-  --c-link: var(--c-primary-300);
-  --c-overlay: rgb(4 6 14 / 0.68);
-  --c-focus: #ffc53d;
-  --c-primary-500: #6b8aff;
-  --c-primary-600: #8fa6ff;
-  --c-primary-50: #1b2550;
-  --c-secondary-500: #b983ff;
-  --c-accent-500: #ffc53d;
-  --c-accent2-500: #ff6fa3;
-  --c-success-500: #2ee39b;
-  --c-warn-500: #ffb454;
-  --c-danger-500: #ff6b6b;
-  --sh-1: 0 1px 2px rgb(0 0 0 / 0.4), inset 0 1px 0 rgb(255 255 255 / 0.05);
-  --sh-2: 0 4px 10px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.06);
-  --sh-3: 0 12px 24px rgb(0 0 0 / 0.5), inset 0 1px 0 rgb(255 255 255 / 0.07);
-  --sh-4: 0 24px 48px rgb(0 0 0 / 0.6), inset 0 1px 0 rgb(255 255 255 / 0.08);
-}
 
 /* ─── 4. metrics ──────────────────────────────────────────────────────────── */
 :root {

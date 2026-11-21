@@ -6,7 +6,11 @@
 // with two systems is how a product starts looking like two products.
 import { useMemo } from 'react';
 import { hasSprite, spriteToSvg } from '@/engine/render/sprite';
+// BOTH sprite tables. Importing only the first made every ui-* and g-* id
+// unknown, and SpriteIcon renders a blank placeholder for an unknown id — so
+// the icons silently vanished rather than erroring.
 import '@/engine/render/sprites';
+import '@/engine/render/sprites-ui';
 
 export interface SpriteIconProps {
   /** A sprite id, e.g. the game's `manifest.icon`. */
@@ -16,8 +20,9 @@ export interface SpriteIconProps {
   /** The game's hue, so the icon matches its card. */
   hue?: number;
   /**
-   * Which background it sits on. A lobby card is a white panel, where the
-   * white keyline would be invisible, so it flips to a same-hue dark.
+   * Which background it sits on. Light is the default: the product is
+   * light-only, and the sprite keyline is near-black ink. Pass `'dark'` only
+   * for the few surfaces that are still dark, such as the debug overlay.
    */
   on?: 'dark' | 'light';
   className?: string;

@@ -78,7 +78,7 @@ export function Results({
         <p className="display-1 num">{shown}</p>
         {isBest ? (
           <p className="chip results__best pop-in">
-            <SpriteIcon id="ui-trophy" size={22} on="dark" /> 최고 기록!
+            <SpriteIcon id="ui-trophy" size={22} /> 최고 기록!
           </p>
         ) : null}
       </div>
@@ -88,7 +88,7 @@ export function Results({
           {result.highlightsKo.map((h) => (
             <li key={h}>
               <span className="mark">
-                <SpriteIcon id="sparkle" size={20} on="dark" />
+                <SpriteIcon id="sparkle" size={20} />
               </span>
               <span>{h}</span>
             </li>

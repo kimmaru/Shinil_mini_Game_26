@@ -271,7 +271,7 @@ export function Wheel({
               onClick={() => onPick?.(i)}
             >
               <span className="wheel__icon" aria-hidden="true">
-                <SpriteIcon id={it.icon} size={40} hue={it.hue} on="dark" />
+                <SpriteIcon id={it.icon} size={40} hue={it.hue} />
               </span>
               <span className="wheel__name">{it.nameKo}</span>
             </button>
@@ -280,7 +280,7 @@ export function Wheel({
         })}
       </ul>
       <div className="wheel__hub" aria-hidden="true">
-        <SpriteIcon id="ui-dice" size={40} on="dark" />
+        <SpriteIcon id="ui-dice" size={40} />
       </div>
     </div>
   );

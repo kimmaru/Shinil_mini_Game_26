@@ -208,7 +208,13 @@ export function App({ services = {} }: AppProps): React.ReactElement {
     }
     open()
       .then(() => alive && dispatch({ type: 'cameraGranted' }))
-      .catch((e: unknown) => alive && dispatch({ type: 'cameraFailed', error: cameraErrorKind(e) }));
+      .catch((e: unknown) => {
+        if (!alive) return;
+        // Carry the real error text through. Without it the help screen is a
+        // dead end for whoever has to fix the problem.
+        const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        dispatch({ type: 'cameraFailed', error: cameraErrorKind(e), detail });
+      });
     return () => {
       alive = false;
     };
@@ -441,6 +447,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
       screen = (
         <CameraHelp
           error={state.cameraError}
+          detailKo={state.cameraErrorDetail}
           onKeyboard={goKeyboard}
           onRetry={() => dispatch({ type: 'retryCamera' })}
         />

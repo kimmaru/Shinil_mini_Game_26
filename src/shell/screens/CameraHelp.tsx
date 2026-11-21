@@ -12,6 +12,9 @@ import { SpriteIcon } from '../components/SpriteIcon';
 
 export interface CameraHelpProps {
   error: CameraErrorKind | null;
+  /** The underlying error, shown in small print. Not for the child — for
+   *  whoever has to fix it, who otherwise has nothing to go on. */
+  detailKo?: string | null;
   onKeyboard: () => void;
   onRetry: () => void;
 }
@@ -69,6 +72,16 @@ const COPY: Record<CameraErrorKind, Copy> = {
     ],
     retry: false,
   },
+  engine: {
+    icon: 'ui-warn',
+    titleKo: '카메라는 켜졌는데, 준비에 실패했어요',
+    leadKo: '카메라 문제가 아니에요. 게임 엔진을 켜지 못했어요.',
+    howKo: [
+      '창을 닫고 다시 열어 보세요.',
+      '그래도 안 되면 키보드로 놀 수 있어요.',
+    ],
+    retry: true,
+  },
   unknown: {
     icon: 'ui-camera',
     titleKo: '카메라를 켜지 못했어요',
@@ -78,7 +91,9 @@ const COPY: Record<CameraErrorKind, Copy> = {
   },
 };
 
-export function CameraHelp({ error, onKeyboard, onRetry }: CameraHelpProps): React.ReactElement {
+export function CameraHelp({
+  error, detailKo, onKeyboard, onRetry,
+}: CameraHelpProps): React.ReactElement {
   const c = COPY[error ?? 'unknown'];
   const [open, setOpen] = useState(false);
 
@@ -117,6 +132,11 @@ export function CameraHelp({ error, onKeyboard, onRetry }: CameraHelpProps): Rea
             </li>
           ))}
         </ol>
+      ) : null}
+      {detailKo ? (
+        <p className="legal dim center" style={{ marginTop: 'var(--sp-5)', opacity: 0.55 }}>
+          {detailKo}
+        </p>
       ) : null}
     </Screen>
   );

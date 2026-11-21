@@ -180,7 +180,7 @@ export function resolveRole(
     case 'theme': return `hsl(${h} 78% ${roleL(h)}%)`;
     case 'themeLight': return `hsl(${h} 85% ${Math.min(92, roleL(h) + 14)}%)`;
     case 'themeDark': return `hsl(${h} 72% ${roleL(h) - 14}%)`;
-    case 'keyline': return 'rgb(255 255 255 / 0.92)';
+    case 'keyline': return '#171A2B';
     case 'ink': return '#0B0F20';
     case 'white': return '#FFFFFF';
     case 'accent': return '#FFB300';
@@ -192,11 +192,13 @@ export function resolveRole(
   }
 }
 
-/** Blue-violet shares the canvas's own hue family, so it alone needs lifting
- *  to stay legible. Mirrors `palette.baseL`. */
+/** Mirrors `palette.baseL`: HSL lightness is not perceptual, so the
+ *  yellow-green band must come down to stay visible on a light ground. */
 const roleL = (h: number): number => {
   const n = ((h % 360) + 360) % 360;
-  return n >= 205 && n <= 295 ? 72 : 62;
+  if (n >= 40 && n <= 95) return 38;
+  if (n > 95 && n <= 190) return 42;
+  return 50;
 };
 
 /**
@@ -215,9 +217,9 @@ export function spriteToSvg(
 ): string {
   const sp = registry.get(id);
   if (!sp) return '';
-  const keyline = o.on === 'light'
-    ? `hsl(${o.hue ?? 210} 55% 20%)`
-    : 'rgb(255 255 255 / 0.92)';
+  // The canvas is light, so ink is the default keyline. `on: 'dark'` is for
+  // the few surfaces that are still dark — the debug overlay, for instance.
+  const keyline = o.on === 'dark' ? 'rgb(255 255 255 / 0.92)' : '#171A2B';
   const paints = o.on === 'light' ? { ...o, keyline } : o;
   const body = sp.layers.map((l) => {
     const fill = resolveRole(l.fill, paints) ?? 'none';

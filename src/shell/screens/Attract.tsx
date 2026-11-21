@@ -193,7 +193,7 @@ export function Attract({
 
         {showHint ? (
           <p className="chip pop-in attract__kbd">
-            <SpriteIcon id="ui-keyboard" size={20} on="dark" /> 스페이스바를 눌러도 돼요
+            <SpriteIcon id="ui-keyboard" size={20} /> 스페이스바를 눌러도 돼요
           </p>
         ) : null}
 
@@ -209,7 +209,7 @@ export function Attract({
       <div className="attract__foot">
         {cameraMode ? (
           <p className="caption attract__honest">
-            <SpriteIcon id="ui-joints" size={20} on="dark" /> 카메라가 보는 건 이 점과 선뿐이에요. 녹화하지 않아요.
+            <SpriteIcon id="ui-joints" size={20} /> 카메라가 보는 건 이 점과 선뿐이에요. 녹화하지 않아요.
           </p>
         ) : null}
         <div className="row">

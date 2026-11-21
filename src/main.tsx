@@ -45,7 +45,12 @@ const video = document.createElement('video');
 video.playsInline = true;
 video.muted = true;
 video.autoplay = true;
-video.style.display = 'none';
+// NOT `display: none`. A hidden video element is allowed to stop decoding
+// frames entirely, which strands `waitForVideo()` and surfaces as "the camera
+// would not start" even though permission was granted. Keep it in the layout,
+// one pixel, invisible and untouchable.
+video.style.cssText =
+  'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1';
 document.body.appendChild(video);
 
 let pose: PoseSource | null = null;
@@ -101,17 +106,44 @@ const services: ShellServices = {
 
   async openCamera() {
     if (forceVirtual) { pose = virtual(); return; }
-    camera = new MediaPipePoseSource({
-      video,
-      view: () => ({ w: view.w, h: view.h }),
-      config: detectCapability({ maxPlayers: 1 }),
-      warmup: true,
-    });
-    // Rejects with the original DOMException, which the shell maps to the
-    // right Korean copy — "press 허용" is useless advice to someone whose
-    // laptop has no camera.
-    await camera.start();
-    pose = camera;
+
+    // Two distinct failures, two distinct messages.
+    //
+    // Asking for the camera and starting the pose engine were one call, so a
+    // model that failed to load reported itself as "we could not turn the
+    // camera on" — to someone who had just granted permission. That is a dead
+    // end: nothing they can do fixes it, and the message points them at the
+    // wrong thing.
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 540 } },
+        audio: false,
+      });
+    } catch (e) {
+      throw e; // a real permission/device problem: the shell knows these
+    }
+    video.srcObject = stream;
+
+    try {
+      camera = new MediaPipePoseSource({
+        video,
+        view: () => ({ w: view.w, h: view.h }),
+        config: detectCapability({ maxPlayers: 1 }),
+        warmup: true,
+      });
+      await camera.start();
+      pose = camera;
+    } catch (e) {
+      // The camera is fine; the engine is not. Say so, and say what broke.
+      for (const t of stream.getTracks()) t.stop();
+      video.srcObject = null;
+      camera = null;
+      const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      const err = new Error(detail);
+      err.name = 'EngineStartError';
+      throw err;
+    }
   },
 
   async warmup(onProgress) {

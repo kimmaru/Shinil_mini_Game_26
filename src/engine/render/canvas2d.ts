@@ -22,7 +22,7 @@
 import { TAU } from '../math';
 import { L, MIN_VIS, POSE_EDGES } from '../pose/landmarks';
 import type { Paint, PlayerPose, Renderer, SkeletonOpts, TextOpts } from '../types';
-import { C, fade, hue, KEYLINE_ON_DARK } from './palette';
+import { C, fade, hue, KEYLINE } from './palette';
 import {
   compiledPath, getSprite, type PaintRole, type SpriteId, type SpriteOpts,
 } from './sprite';
@@ -293,19 +293,23 @@ export class Canvas2DRenderer implements Renderer {
         g.addColorStop(0, C.bg);
         g.addColorStop(1, C.bgDeep);
       } else {
-        // A tint, not a repaint: the game is recognisably the same product.
-        g.addColorStop(0, `hsl(${hd} 44% 18%)`);
-        g.addColorStop(0.52, C.bg);
+        // A wash of the game's own colour from the top, settling into the warm
+        // ground. A tint, not a repaint: every game is recognisably the same
+        // product, and the sky reads as "this one is the green game".
+        g.addColorStop(0, `hsl(${hd} 62% 88%)`);
+        g.addColorStop(0.46, `hsl(${hd} 48% 94%)`);
         g.addColorStop(1, C.bgDeep);
       }
       this.bgGrad = g;
+      // A soft ground shadow rather than a dark vignette: on a light canvas a
+      // darkened frame reads as grime, while a warm floor reads as a room.
       const r = c.createRadialGradient(
-        w / 2, h * 0.4, Math.min(w, h) * 0.12,
-        w / 2, h * 0.5, Math.max(w, h) * 0.8,
+        w / 2, h * 1.05, Math.min(w, h) * 0.1,
+        w / 2, h * 0.95, Math.max(w, h) * 0.9,
       );
-      r.addColorStop(0, 'rgb(255 255 255 / 0.055)');
-      r.addColorStop(0.58, 'rgb(0 0 0 / 0)');
-      r.addColorStop(1, 'rgb(0 0 0 / 0.4)');
+      r.addColorStop(0, 'rgb(120 90 40 / 0.1)');
+      r.addColorStop(0.5, 'rgb(120 90 40 / 0.035)');
+      r.addColorStop(1, 'rgb(120 90 40 / 0)');
       this.vigGrad = r;
     }
     c.fillStyle = this.bgGrad;
@@ -708,7 +712,7 @@ export class Canvas2DRenderer implements Renderer {
       case 'themeLight': return hue(h, 82, 76);
       case 'themeDark': return hue(h, 70, 40);
       case 'ink': return C.ink;
-      case 'keyline': return KEYLINE_ON_DARK;
+      case 'keyline': return KEYLINE;
       case 'white': return C.white;
       case 'accent': return C.accent;
       case 'success': return C.success;
@@ -749,9 +753,15 @@ export class Canvas2DRenderer implements Renderer {
     c.lineJoin = 'round';
 
     if (outline) {
+      // A pale halo first, so the body separates from the sky wash, then the
+      // ink edge that actually draws the limb. On a dark canvas this was a
+      // single dark outline under a bright core; on a light one the order and
+      // the colours both invert.
+      c.strokeStyle = 'rgb(255 255 255 / 0.85)';
+      this.strokeEdges(p, lw, ow * 3);
       c.strokeStyle = C.ink;
-      this.strokeEdges(p, lw, ow * 2);
-      this.strokeHead(p, jr, lw + ow * 2, true);
+      this.strokeEdges(p, lw, ow * 1.4);
+      this.strokeHead(p, jr, lw + ow * 1.4, true);
     }
     c.strokeStyle = col;
     this.strokeEdges(p, lw, 0);
