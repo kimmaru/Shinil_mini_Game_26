@@ -28,9 +28,20 @@ export interface OneEuroConfig {
   dCutoff: number;
 }
 
-/** Most games. Tuned for ~25-30Hz input in shoulder-width units. */
+/** Most games. Tuned for ~25-30Hz input in shoulder-width units.
+ *
+ *  beta 0.2, was 0.08. Resting jitter is set by minCutoff alone (a still
+ *  joint's filtered speed is ~0.3-0.7 SW/s of noise, worth +0.1Hz of
+ *  cutoff), so beta is the cheap lever on lag. Measured at 25Hz through the
+ *  median+One Euro bank: lag on a 1 SW 1Hz hand move 117 -> 107ms with
+ *  amplitude 0.82 -> 0.86; on a 2 SW 1.5Hz swing 100 -> 88ms, 0.75 -> 0.83;
+ *  still-joint jitter at 1.2m / 2m / 4m framings 0.0066 / 0.0126 / 0.0229 ->
+ *  0.0066 / 0.0126 / 0.0230 SW. Velocities do not depend on beta.
+ *  Not higher: at 0.25+ the dwell-to-aim games (connect-dots-order,
+ *  wrist-aim-target, web-cut), which have no steady preset to ask for, drop
+ *  below their own star cuts on their dev clips. */
 export const DEFAULT_FILTER: OneEuroConfig = {
-  freq: 30, minCutoff: 1.5, beta: 0.08, dCutoff: 1.0,
+  freq: 30, minCutoff: 1.5, beta: 0.2, dCutoff: 1.0,
 };
 /** Aim / trace / hold-pose games: a hand parked on a target must not wobble.
  *  Lower beta means it lags a fast swing, which those games do not care about. */

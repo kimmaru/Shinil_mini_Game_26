@@ -224,9 +224,16 @@ export interface Canvas2DOpts {
   dpr?: number;
   /** Default 2. The quality ladder drops this to 1 on a weak GPU. */
   maxDpr?: number;
-  /** Opaque canvas by default: the compositor skips a blend per frame, and the
-   *  in-game canvas is never transparent anyway. */
+  /** Opaque canvas by default: the compositor skips a blend per frame. Turned
+   *  on automatically when `skyAlpha` < 1. */
   alpha?: boolean;
+  /**
+   * Opacity of the sky `clear()` paints, 0..1. Default 1: today's opaque
+   * sky. Below 1 the canvas gets an alpha channel and whatever is behind it
+   * (the camera backdrop, see render/sky.ts BACKDROP_SKY_ALPHA) shows through
+   * the sky only; everything drawn after `clear()` is unaffected.
+   */
+  skyAlpha?: number;
   /**
    * Write `canvas.style.width/height` on every resize. Default FALSE, and that
    * default was paid for: setting an inline style pins the element's layout
@@ -256,6 +263,7 @@ export class Canvas2DRenderer implements Renderer {
   private maxDpr: number;
   private dprForced: number | undefined;
   private manageStyle: boolean;
+  private readonly skyAlpha: number;
 
   /** Seconds since the round started. Set by `beginFrame`. */
   t = 0;
@@ -284,8 +292,10 @@ export class Canvas2DRenderer implements Renderer {
 
   constructor(canvas: HTMLCanvasElement, o?: Canvas2DOpts) {
     this.canvas = canvas;
+    const sa = o?.skyAlpha;
+    this.skyAlpha = sa !== undefined && fin(sa) ? clamp01(sa) : 1;
     const ctx = canvas.getContext('2d', {
-      alpha: o?.alpha ?? false,
+      alpha: o?.alpha ?? this.skyAlpha < 1,
       desynchronized: true,
     }) as CanvasRenderingContext2D | null;
     if (!ctx) throw new Error('[Canvas2DRenderer] 2D context unavailable');
@@ -438,6 +448,12 @@ export class Canvas2DRenderer implements Renderer {
         this.dots[i * 3 + 1] = SKY_DOTS[i * 3 + 1]! * h;
         this.dots[i * 3 + 2] = SKY_DOTS[i * 3 + 2]! * m;
       }
+    }
+    // A translucent sky must not accumulate over last frame's pixels: wipe
+    // to transparent first, then paint the sky at its opacity.
+    if (this.skyAlpha < 1) {
+      c.clearRect(0, 0, w, h);
+      c.globalAlpha = this.skyAlpha;
     }
     // Two draws: the gradient, then every dot in one path.
     c.fillStyle = this.bgGrad;

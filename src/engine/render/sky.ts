@@ -66,3 +66,12 @@ export const SKY_DOTS: readonly number[] = [
   0.92, 0.62, 0.045,
 ];
 export const SKY_DOT_FILL = 'rgb(255 255 255 / 0.3)';
+
+/**
+ * Sky opacity while the camera backdrop is on (설정 → 배경에 내 모습 보이기):
+ * the child's camera image shows through the sky, washed in the game's hue,
+ * so the avatar sits on their own body. Only the sky — everything a game
+ * draws on top stays fully opaque. Everywhere else (`npm run shot`, the
+ * attract reel, a keyboard round) the sky is opaque: alpha 1.
+ */
+export const BACKDROP_SKY_ALPHA = 0.62;

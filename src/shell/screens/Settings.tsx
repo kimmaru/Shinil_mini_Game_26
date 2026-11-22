@@ -1,7 +1,8 @@
 // 설정 — the operator's / guardian's panel, opened from the gear on attract.
 //
 // Kiosk-sized: only what one booth actually needs. Sound, 화면 효과 줄이기,
-// 글자 크게, 진하게 보기, the privacy notice, and wiping the stored records.
+// 글자 크게, 배경에 내 모습 보이기, 진하게 보기, the privacy notice, and
+// wiping the stored records.
 // (별명 / 인원 / 말로 읽어주기 / 자동 넘기기 belonged to the classroom flow:
 // one stranger plays one round, nobody types a nickname, and nothing in the
 // kiosk flow read the other two.)
@@ -24,6 +25,7 @@ export const PRIVACY_UPDATED = '2026-11-21';
 const GLANCE: readonly string[] = [
   '이 사이트는 회원가입이 없습니다. 이름, 이메일, 전화번호를 묻지 않습니다.',
   '카메라 영상은 기기 안(브라우저 내부)에서만 처리되며, 서버로 전송되거나 저장되지 않습니다.',
+  '"배경에 내 모습 보이기"를 켜면 카메라 화면이 이 컴퓨터 화면에만 흐리게 보입니다. 화면에 보여 주기만 할 뿐, 저장하거나 보내지 않습니다.',
   '영상을 녹화·캡처하지 않으며, 얼굴을 인식하거나 누구인지 알아내지 않습니다.',
   '게임은 영상에서 관절 위치 좌표(숫자)만 실시간으로 계산해 바로 사용하고 즉시 버립니다.',
   '이 모든 계산은 여러분의 기기에서 동작하는 자세 인식 모델(MediaPipe)이 수행합니다. 인터넷 연결이 끊겨도 게임은 동작합니다.',
@@ -131,6 +133,17 @@ export function Settings({
               ['large', '크게'],
             ]}
             onChange={(v) => set('textSize', v)}
+          />
+
+          <Group
+            labelKo="배경에 내 모습 보이기"
+            hintKo="카메라 화면을 흐리게 깔아 줘요. 이 컴퓨터 화면에만 보이고, 저장하거나 보내지 않아요."
+            value={settings.cameraBackdrop ? 'on' : 'off'}
+            options={[
+              ['on', '보이기'],
+              ['off', '숨기기'],
+            ]}
+            onChange={(v) => set('cameraBackdrop', v === 'on')}
           />
 
           <Group

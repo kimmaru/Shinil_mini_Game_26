@@ -23,6 +23,11 @@
 // wrist position independent of where the player stands. Whole-body motion
 // lives in `v` (absolute, shoulder-widths/sec), in `px`, and in `box`. A jump
 // detector reads `v` and `px`, never `n`.
+//
+// With the hips out of frame (a child close to a laptop) the origin is the hip
+// centre ESTIMATED from the shoulders instead — see HIP_ENTER_VIS. `n` is then
+// shoulder-anchored, which arm games cannot tell apart; games that need real
+// hip motion are kept out of the pool by `lowerBodyVisible`.
 import type { CalibrationProfile, PlayerPose } from '../types';
 import { DEG, clamp } from '../math';
 import { L, LANDMARK_COUNT, MIN_VIS } from './landmarks';
@@ -67,6 +72,32 @@ export const STALE_VIS_SEC = 0.3;
 const TORSO_ANCHORS = [L.LEFT_SHOULDER, L.RIGHT_SHOULDER, L.LEFT_HIP, L.RIGHT_HIP] as const;
 
 /**
+ * The origin of `n` when the hips are out of frame.
+ *
+ * A child 1.2m from a laptop is in frame from the head to about the waist, and
+ * a MacBook lid tilted back pushes the hips off the bottom edge entirely. The
+ * hips are then either held at a stale position (the gate in feed()) or
+ * flickering around MIN_VIS at the edge, and an origin that follows them
+ * teleports every `n` in every game. So the origin is a blend of the measured
+ * hip centre and one estimated from the shoulders — shoulder centre plus this
+ * body's own shoulder-to-hip vector, learned while its hips were visible
+ * (default: straight down by 1 / TORSO_TO_SHOULDER).
+ *
+ * Hysteresis on the (stale-graced) hip visibility picks the side: trust the
+ * hips once both reach HIP_ENTER_VIS, stop below MIN_VIS. Hips at the frame
+ * edge wobble around 0.5, and a single threshold there would flip the origin
+ * every few frames. The switch itself is a ramp at HIP_BLEND_RATE, never a
+ * step: with a learned torso vector the two origins differ by a few hundredths
+ * of a shoulder width, and the ramp spreads even an unlearned 0.3 over 0.4s.
+ * Velocities (`v`) come from the joints themselves and never see any of this.
+ */
+export const HIP_ENTER_VIS = 0.7;
+/** Origin weight moved between measured and estimated hips, per second. */
+export const HIP_BLEND_RATE = 2.5;
+/** Time constant for learning this body's shoulder-to-hip vector, seconds. */
+export const TORSO_LEARN_SEC = 1;
+
+/**
  * Per-body normalization state. One of these per player slot, reused forever.
  *
  * `feed()` runs at inference rate (~25Hz) and does the expensive work.
@@ -92,7 +123,14 @@ export class PoseNormalizer {
   lastT = -1;
   /** True once at least one body has been fed. */
   primed = false;
+  /** Weight of the MEASURED hip centre in the origin of `n`, 0..1. The rest
+   *  is the shoulder-based estimate. See HIP_ENTER_VIS. */
+  hipWeight = 1;
+  /** This body's shoulder-centre -> hip-centre vector, shoulder widths. */
+  torsoX = 0;
+  torsoY = 1 / TORSO_TO_SHOULDER;
 
+  private hipTrusted = true;
   private bank: PoseFilterBank;
   /** Whether each landmark's RAW visibility passed this frame. */
   private rawOk = new Uint8Array(N);
@@ -205,7 +243,39 @@ export class PoseNormalizer {
       v[i + 1] = bank.velocity(i + 1);
     }
 
-    // ── 4. Derived scalars ─────────────────────────────────────────────────
+    // ── 4. Origin: measured hips, or hips estimated from the shoulders ──────
+    const hipVis = Math.min(vis[L.LEFT_HIP]!, vis[L.RIGHT_HIP]!);
+    if (!this.primed) this.hipTrusted = hipVis >= HIP_ENTER_VIS;
+    else if (this.hipTrusted) this.hipTrusted = hipVis >= MIN_VIS;
+    else this.hipTrusted = hipVis >= HIP_ENTER_VIS;
+    // Without both shoulders there is nothing to estimate from, so whatever
+    // the hips are (held or not) is the best origin there is.
+    const shOk = vis[L.LEFT_SHOULDER]! >= MIN_VIS && vis[L.RIGHT_SHOULDER]! >= MIN_VIS;
+    const target = this.hipTrusted || !shOk ? 1 : 0;
+    const dtSec = this.lastT < 0 ? -1 : t - this.lastT;
+    if (!this.primed || dtSec < 0) this.hipWeight = target;
+    else {
+      const step = HIP_BLEND_RATE * Math.min(dtSec, 0.25);
+      this.hipWeight = clamp(this.hipWeight + clamp(target - this.hipWeight, -step, step), 0, 1);
+    }
+    // Learn this body's torso vector while BOTH ends are really measured this
+    // frame (not held), so the estimate lands where the hips actually were.
+    if (
+      this.hipWeight === 1 && this.hipTrusted && dtSec > 0 &&
+      ok[L.LEFT_HIP] && ok[L.RIGHT_HIP] && ok[L.LEFT_SHOULDER] && ok[L.RIGHT_SHOULDER]
+    ) {
+      const tx = (w[L.LEFT_HIP * 2]! + w[L.RIGHT_HIP * 2]! - w[L.LEFT_SHOULDER * 2]! - w[L.RIGHT_SHOULDER * 2]!) / 2;
+      const ty = (w[L.LEFT_HIP * 2 + 1]! + w[L.RIGHT_HIP * 2 + 1]! - w[L.LEFT_SHOULDER * 2 + 1]! - w[L.RIGHT_SHOULDER * 2 + 1]!) / 2;
+      // Only a plausible upright torso teaches anything: a bow or a mis-detected
+      // hip must not become the origin of the next minute of play.
+      if (ty > 0.8 && ty < 2.2 && Math.abs(tx) < 0.6 * ty) {
+        const k = 1 - Math.exp(-dtSec / TORSO_LEARN_SEC);
+        this.torsoX += k * (tx - this.torsoX);
+        this.torsoY += k * (ty - this.torsoY);
+      }
+    }
+
+    // ── 5. Derived scalars ─────────────────────────────────────────────────
     let c = 0;
     for (const j of TORSO_ANCHORS) c += vis[j]!;
     this.conf = c / TORSO_ANCHORS.length;
@@ -242,15 +312,28 @@ export class PoseNormalizer {
     const vis = this.vis;
 
     // Hip centre of the EXTRAPOLATED body, so n stays exactly hip-centred.
-    const hx =
+    let hx =
       (w[L.LEFT_HIP * 2]! + v[L.LEFT_HIP * 2]! * a + w[L.RIGHT_HIP * 2]! + v[L.RIGHT_HIP * 2]! * a) /
       2;
-    const hy =
+    let hy =
       (w[L.LEFT_HIP * 2 + 1]! +
         v[L.LEFT_HIP * 2 + 1]! * a +
         w[L.RIGHT_HIP * 2 + 1]! +
         v[L.RIGHT_HIP * 2 + 1]! * a) /
       2;
+    // Hips out of frame: blend toward the shoulder-based estimate. Skipped at
+    // weight 1 so a fully visible body keeps the exact hip centre.
+    const k = this.hipWeight;
+    if (k < 1) {
+      const ex =
+        (w[L.LEFT_SHOULDER * 2]! + v[L.LEFT_SHOULDER * 2]! * a +
+          w[L.RIGHT_SHOULDER * 2]! + v[L.RIGHT_SHOULDER * 2]! * a) / 2 + this.torsoX;
+      const ey =
+        (w[L.LEFT_SHOULDER * 2 + 1]! + v[L.LEFT_SHOULDER * 2 + 1]! * a +
+          w[L.RIGHT_SHOULDER * 2 + 1]! + v[L.RIGHT_SHOULDER * 2 + 1]! * a) / 2 + this.torsoY;
+      hx = k * hx + (1 - k) * ex;
+      hy = k * hy + (1 - k) * ey;
+    }
 
     let minX = Infinity;
     let minY = Infinity;
@@ -313,5 +396,9 @@ export class PoseNormalizer {
     this.conf = 0;
     this.rollDeg = 0;
     this.primed = false;
+    this.hipWeight = 1;
+    this.hipTrusted = true;
+    this.torsoX = 0;
+    this.torsoY = 1 / TORSO_TO_SHOULDER;
   }
 }

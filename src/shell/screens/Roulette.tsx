@@ -3,17 +3,17 @@
 //
 // `decideRound()` picks the winner BEFORE this screen ever mounts: unbiased
 // `secureInt` (rejection sampling, not `% n`) wrapped in a shuffle bag so
-// nothing repeats until the bag empties. The board then plays a hop schedule
-// computed from that index (../hops.ts). The animation is cosmetic and cannot
+// nothing repeats until the bag empties. The slot reel then plays a journey
+// computed from that index (../reel.ts). The animation is cosmetic and cannot
 // disagree with the result.
 //
-// Eight tiles, never 58: a guest who sees 58 options starts shopping instead
+// Eight games, never 58: a guest who sees 58 options starts shopping instead
 // of playing. No "near miss" theatre either — the plan forbids teasing a child
 // with the game they almost got.
 // ════════════════════════════════════════════════════════════════════════════
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../components/Button';
-import { RouletteBoard } from '../components/RouletteBoard';
+import { SlotReel } from '../components/SlotReel';
 import type { WheelItem } from '../useSession';
 
 // Round selection lives in ../rounds.ts, which wraps RoundScheduler — the one
@@ -70,7 +70,7 @@ export function Roulette({
         {landed ? '이거 하자!' : '어떤 게임일까?'}
       </h1>
 
-      <RouletteBoard
+      <SlotReel
         items={shortlist}
         chosenIndex={chosenIndex}
         reducedMotion={reducedMotion}
@@ -78,7 +78,7 @@ export function Roulette({
         onLanded={onLanded}
       />
 
-      {/* polite, not assertive: the board is already shouting visually. */}
+      {/* polite, not assertive: the reel is already shouting visually. */}
       <p className="sr-only" aria-live="polite" aria-atomic="true">
         {landed ? `${winner.nameKo}! 이 게임을 해요.` : ''}
       </p>

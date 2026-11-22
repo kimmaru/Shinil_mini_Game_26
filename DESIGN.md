@@ -27,7 +27,7 @@ text stroke and drop shadow. That single shared line is what makes a dozen
 saturated hues read as one product instead of a flea market.
 
 Each game gets exactly one hue (`manifest.theme.hue`) that tints its roulette
-tile, its countdown title and its results card. That is how 58 games feel
+card, its countdown title and its results card. That is how 58 games feel
 distinct without 58 palettes, and it is the only colour decision a game author
 makes.
 
@@ -35,7 +35,8 @@ makes.
 
 | Source | What we took |
 |---|---|
-| **Mario Party** | The board: upright tiles in a ring, a highlight that hops tile to tile and decelerates, the winner popping and flying to the centre. Results stars on an arc, middle one raised. |
+| **Mario Party** | Results stars on an arc, middle one raised. (The roulette is now a slot reel: below.) |
+| **A casino slot machine** | The roulette: one chunky reel window with chasing marquee bulbs and a gold centre band; upright game cards rattle past, slow to single ticks, bounce onto the winner. |
 | **미니게임천국 / WarioWare** | One command word per game, shouted ("짝!", "점프!"), white-with-black-outline lettering over a loud backdrop. |
 | **Duolingo** | Chunky display weights; a solid bottom edge on every interactive element so it reads as a 3D slab waiting to be pressed. |
 | **Kahoot** | Colour paired with **shape**: ▲ ◆ ● ■ plus a slot number. Colour-blind players get the same information. |
@@ -52,7 +53,7 @@ makes.
 | `--c-ink` | `#1D1442` | every outline, slab edge, text stroke, drop shadow; body text |
 | `--c-sun` `--c-tangerine` `--c-bubblegum` | `#FFD23F` `#FF8A3D` `#FF5C9A` | the attract backdrop; `.btn--go` |
 | `--c-sky` `--c-grape` `--c-mint` | `#35C6FF` `#7B5CFF` `#2FD8A5` | roulette/countdown backdrops, logo ribbon, timer ring, "시작!" |
-| `--c-gold` | `#FFC21A` | the roulette highlight frame, the record banner |
+| `--c-gold` | `#FFC21A` | the roulette centre band, pointers and bulbs; the record banner |
 | `--bg-1/2/3` | per phase | the 3-stop backdrop gradient, set on `.app[data-phase]` |
 | `--bg-pattern` | `rgb(255 255 255 / .18)` | the drifting dots (stripes on the roulette) |
 
@@ -62,6 +63,20 @@ orange → pink; setup/help blue → violet. `play` has no backdrop (the game
 canvas owns the screen). There is **no white screen anywhere**: running text
 that has to sit on a backdrop sits on a white slab (`.card`, `.panel`,
 `.slab-note`, `.screen__lead`).
+
+**The camera backdrop** (설정 → 배경에 내 모습 보이기, on by default, only
+while a real camera is live): one fixed `<video>` on the pose engine's own
+stream, between the gradient and the pattern (`.cam-backdrop`,
+`components/CameraBackdrop.tsx`). It is mapped exactly like the pose
+coordinates — 100vw × 100vh, `object-fit: fill`, mirrored — so the avatar
+sits on the child's real body. It reads as a backdrop, not a webcam app:
+on shell screens the video is at 30 % over the phase gradient (the dim and
+the party-colour wash in one layer); in a round it is at 100 % and the game's
+sky is painted at `BACKDROP_SKY_ALPHA` 0.62 (render/sky.ts) over it, so the
+sky is the wash. Opacity only — never `filter: blur()` or a blend mode, each
+a full-screen pass on the 2015 GPU. The attract reel and `npm run shot` keep
+the opaque sky. Games that paint their own full-screen fill over `clear()`
+(arm-pump-inflate, bike-pedal, cheer-combo) hide the backdrop in play.
 
 ### Brand / semantic (hue-stable; mirrored in render/palette.ts)
 
@@ -114,7 +129,7 @@ rule 5 below) but keep the party look: they only deepen the backdrop with
 
 ```css
 .card { --hue-tint: hsl(var(--hue, 230) 90% 60% / .12); }
-.tile { background: linear-gradient(hsl(var(--hue) 95% 72%), hsl(var(--hue) 80% 54%)); }
+.slot__card { background: linear-gradient(hsl(var(--hue) 95% 72%), hsl(var(--hue) 80% 54%)); }
 ```
 Set `--hue` from `manifest.theme.hue` on the card, tile or screen root. Games
 without a declared hue get a stable one hashed from their id, so two cards never
@@ -178,7 +193,7 @@ html[data-text-size="large"] { font-size: clamp(20px, 0.7vw + 0.6vh + 11px, 34px
 | `--fs-display-2` | 4.5 (72) | 900 | 룰렛 제목, 기록 |
 | `--fs-title-1` | 3.5 (56) | 800 | 화면 제목, 게임 이름 slam-in |
 | `--fs-title-2` | 2.75 (44) | 800 | START 라벨 |
-| `--fs-heading` | 2.125 (34) | 800 | **the 2 m reaction floor**: tile names, command caption, HUD goal |
+| `--fs-heading` | 2.125 (34) | 800 | **the 2 m reaction floor**: roulette card names, command caption, HUD goal |
 | `--fs-body-lg` | 1.75 (28) | 500 | default body on game screens |
 | `--fs-body` | 1.5 (24) | 500 | **the 2 m reading floor** |
 | `--fs-label` | 1.25 (20) | 600 | buttons, chips |
@@ -196,7 +211,7 @@ a child reacts to is additionally written `max(34px, …)` so a viewport-relativ
 size can never take it under the floor.
 
 The old exception (roulette slice labels at 18 px) is gone with the wheel:
-roulette tile names are upright and `max(34px, …)` at every size.
+roulette card names are upright and `max(40px, …)` at every size.
 
 ---
 
@@ -269,16 +284,24 @@ completely still (the backdrop drifts, the logo breathes, START pulses).
 (composited, no repaint): a 96 px dot tile (stripes on the roulette) drifting
 exactly one tile per `--t-drift`, so the loop is seamless.
 
-**The roulette** (`components/RouletteBoard.tsx`, schedule in `shell/hops.ts`,
-tested in `roulette.test.ts`): the winner is decided first; the highlight then
-hops tile to tile, clockwise, never skipping one, for 3 full laps plus the
-offset that ends on the winner (24–31 hops on 8 tiles). Intervals grow
-geometrically ×4.5 from first to last regular hop, then the last three stretch
-×1.5, ×2.2, ×3.0; the whole run is scaled to land at exactly 4000 ms (first hop
-≈ 42–50 ms, last ≈ 680 ms). `ui.tick` on every hop. Then 380 ms of silence,
-then the pop (1.15×, an 80 ms white flash on that one tile, `fanfare`), then
-the winner card flies from its tile to the centre (ease-out-back, 560 ms) and
-holds 1.5 s. 건너뛰기 jumps straight to the pop on the same winner.
+**The roulette** is a slot reel (`components/SlotReel.tsx`, motion in
+`shell/reel.ts`, tested in `roulette.test.ts`). The winner is decided first;
+the reel then travels 5 laps of the 8 games plus the offset that ends on the
+winner (40–47 cards), cards moving down past a gold centre band. Speed falls
+as 1.6 + (v0 − 1.6)·(1 − t/3.7 s)² cards/s, with v0 (29–35 cards/s) solved
+so the winner reaches the centre line at exactly 3700 ms; the last cards take
+≈ 170, 200, 260, 370, 550 ms (탁…탁……탁). It arrives still moving, overshoots
+≈ 0.1 card and settles back over 450 ms: at rest at 4150 ms. `ui.tick` per
+card crossing the centre line, capped at 22/s (the start is one rattle, the
+end single ticks), pitch rising ×1 → ×1.22. Then 380 ms of silence, then the
+pop (the winner card lifted out of the window, 1.15× with overshoot, an 80 ms
+white flash on that one card, its name slamming in, `fanfare`) and a 1.5 s
+hold. 건너뛰기 jumps straight to the reel at rest and the pop, same winner.
+Speed is faked without blur: above 4 cards/s the strip stretches up to 1.45×
+about the centre line and fades to 70 %, and static speed streaks fade in.
+The strip is one lap plus 2 wrap cards each end, painted once and moved only
+by `transform`; the marquee bulbs are two checkerboard layers blinking in
+opposite phase on `opacity` (2.9 Hz, tiny area).
 
 **The countdown**: 2.4 s intro (icon + name slam-in, the command word, the
 demo loop, `whoosh`), then 3 · 2 · 1 at 700 ms each (1.6 → 1 scale with
@@ -299,7 +322,7 @@ clamp — a fade is not vestibular motion) straight to the same winner.
 
 **WCAG 2.3.1**: at most 3 full-viewport flashes per second, flashing region
 under 25 % of the viewport, never a saturated red. The engine's `fx.flash()`
-enforces it in games; the shell's only flash is the roulette pop (one tile,
+enforces it in games; the shell's only flash is the roulette pop (one card,
 once, white). The urgent timer pulses in scale, never in colour.
 
 ---
@@ -317,7 +340,7 @@ once, white). The urgent timer pulses in scale, never in colour.
   borders thickened, `--c-text-3` folded into `--c-text-2`.
 - **"글자 크게"** raises the root clamp ceiling to 34 px.
 - 설정 (the gear on attract) holds exactly: 소리, 화면 효과 줄이기, 글자 크게,
-  진하게 보기, 개인정보 안내, and 기록 지우기 (two presses). The classroom-era
+  배경에 내 모습 보이기, 진하게 보기, 개인정보 안내, and 기록 지우기 (two presses). The classroom-era
   rows (별명, 인원, 말로 읽어주기, 자동 넘기기) are gone: a kiosk guest plays
   one round, and nothing in the kiosk flow read the last two.
 - While 설정 is open nothing behind it can start a round (Space, Enter and the
@@ -336,8 +359,9 @@ Three things on screen are load-bearing promises, not decoration:
 1. **`🔴 카메라 켜짐 · [끄기]`** — fixed, always visible while a track is live,
    with a one-press off switch. A camera indicator you cannot find does not count.
 2. **The live skeleton in the "나" mirror on attract** (and in the countdown) —
-   the honest "the camera sees only this" demonstration, captioned
-   "카메라는 점과 선만 봐요. 녹화하지 않아요." Face-mesh points are deliberately
+   captioned "카메라 화면은 이 컴퓨터에서만 보여요. 녹화하지 않아요." (It was
+   "카메라는 점과 선만 봐요", which stopped being true the day the camera
+   backdrop shipped.) Face-mesh points are deliberately
    absent (`POSE_EDGES` omits them): eleven dots on a child's face looks like
    surveillance. Drawn at 1× backing store, ~30 Hz.
 3. **개인정보 안내** — inside 설정 (the separate screen is gone).
@@ -389,10 +413,11 @@ anything; the whole point is that fifteen screens look like one product.
 | a11y | `.sr-only` |
 
 Components live in `src/shell/components/`: `Button`, `Screen`,
-`RouletteBoard` (replaced `Wheel`), `GameReel`, `StarRow`, `PlayerChip`,
-`CameraChip`, `ProgressRing`, `DwellRing`, `SkeletonPreview`, `Toast`.
+`SlotReel` (replaced `RouletteBoard`, which replaced `Wheel`), `GameReel`,
+`StarRow`, `PlayerChip`, `CameraChip`, `CameraBackdrop`, `ProgressRing`,
+`DwellRing`, `SkeletonPreview`, `Toast`.
 Screen-specific blocks in base.css: `.attract__*` `.logo__*` `.me` `.reel*`
-`.parade*`, `.board*` `.tile*`, `.cd__*` `.demo--<gesture>`, `.hud__*`,
+`.parade*`, `.slot*`, `.cam-backdrop`, `.cd__*` `.demo--<gesture>`, `.hud__*`,
 `.results__*` `.confetti`, `.setup__*`, `.setrow*`.
 
 A legacy block at the end of base.css (`.calib`, `.intro__*`, `.promise*`,

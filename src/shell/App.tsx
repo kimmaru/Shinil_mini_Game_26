@@ -29,6 +29,7 @@ import { ABANDON_SEC, RESULTS_AUTO_HOME_SEC } from '@/engine/session';
 import { defaultCalibration } from '@/engine/pose/source';
 import { hashSeed } from '@/engine/rng';
 
+import { CameraBackdrop } from './components/CameraBackdrop';
 import { CameraChip } from './components/CameraChip';
 import { ToastHost, useToasts } from './components/Toast';
 import { createHudService, HudOverlay } from './hud/HudOverlay';
@@ -132,6 +133,14 @@ export function App({ services = {} }: AppProps): React.ReactElement {
 
   const pose = services.pose ?? null;
   const game = state.currentGame ? describeGame(state.currentGame) : null;
+
+  // The dimmed camera backdrop: on when the setting is on AND a real stream
+  // is live (never in keyboard mode). Read through a ref by the round effect,
+  // so a re-render cannot restart a round.
+  const camStream =
+    state.cameraLive && settings.cameraBackdrop ? (services.cameraStream?.() ?? null) : null;
+  const backdropRef = useRef(false);
+  backdropRef.current = camStream !== null;
 
   /** The games the attract reel cycles through. Real playable games, because
    *  there are no video files anywhere in this project and there is no reason
@@ -330,6 +339,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
       hud: hud.service,
       seed: state.seed,
       signal: ac.signal,
+      backdrop: backdropRef.current,
     })
       .then((result: GameResult) => {
         // Feeds the scheduler's "not the same kind of game twice running".
@@ -592,6 +602,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
   return (
     <ServicesContext.Provider value={ctxValue}>
       <div className="app" data-phase={state.phase}>
+        {camStream ? <CameraBackdrop stream={camStream} /> : null}
         {screen}
 
         {/* The camera runs all day on a kiosk, so this chip is the honest

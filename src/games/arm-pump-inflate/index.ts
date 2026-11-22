@@ -16,7 +16,7 @@ import type {
 } from '@/engine/types';
 import { L, ny } from '@/engine/pose/landmarks';
 import { approach, clamp01, easeOutBack, lerp, pulse } from '@/engine/math';
-import { C, fade, hue as hsl } from '@/engine/render/palette';
+import { C, fade } from '@/engine/render/palette';
 import { manifest } from './manifest';
 import { t } from './locale';
 
@@ -34,7 +34,6 @@ const LEAK_AFTER = 0.9;
 /** Pumps of air lost per second while resting. */
 const LEAK_RATE = 0.4;
 const HUES = [322, 42, 140, 266, 8] as const;
-const SKY = hsl(205, 80, 85);
 const HANDS = [L.LEFT_WRIST, L.RIGHT_WRIST] as const;
 const NEEDS = [L.LEFT_WRIST, L.RIGHT_WRIST, L.LEFT_SHOULDER, L.RIGHT_SHOULDER] as const;
 
@@ -141,8 +140,9 @@ class ArmPumpInflate implements MiniGame {
   }
 
   render(g: Renderer, _interp: number): void {
+    // No full-screen fill of our own: the engine sky (translucent over the
+    // camera backdrop when that is on) is the background.
     g.clear(manifest.theme?.hue);
-    g.rect(0, 0, g.w, g.h, { fill: SKY });
     const s = g.s;
     const groundY = g.h * 0.86;
     g.rect(0, groundY, g.w, g.h - groundY, { fill: C.bgDeep });

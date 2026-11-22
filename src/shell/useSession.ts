@@ -357,6 +357,9 @@ export interface RoundRequest {
   seed: number;
   /** Aborted by the camera chip, by 처음으로, and on unmount. */
   signal: AbortSignal;
+  /** The camera image is showing behind the stage: paint the game's sky
+   *  translucent so the child sees themselves under their avatar. */
+  backdrop?: boolean;
 }
 
 /**
@@ -386,6 +389,10 @@ export interface ShellServices {
   warmup?: (onProgress: (p: number, labelKo: string) => void) => Promise<void>;
   /** track.stop() on every path. */
   closeCamera?: () => void;
+  /** The live camera stream behind the pose engine, for the dimmed backdrop.
+   *  The SAME stream — never a second getUserMedia. Null in keyboard mode and
+   *  whenever the camera is closed. */
+  cameraStream?: () => MediaStream | null;
   /** Mount canvas + fixed-step loop, run one round, resolve with the result. */
   runRound?: (r: RoundRequest) => Promise<GameResult>;
 }
@@ -438,6 +445,8 @@ export interface Settings {
   autoAdvance: boolean;
   nickname: string;
   players: number;
+  /** 배경에 내 모습 보이기: the camera image, dimmed, behind every screen. */
+  cameraBackdrop: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -446,6 +455,7 @@ export const DEFAULT_SETTINGS: Settings = {
   textSize: 'normal',
   contrast: 'system',
   sound: true,
+  cameraBackdrop: true,
   speak: false,
   autoAdvance: true,
   nickname: '',

@@ -19,6 +19,7 @@ import { createGestureService } from './engine/gestures/service';
 import { createAudioService } from './engine/audio/service';
 import { createFxService } from './engine/fx/service';
 import { runRound } from './engine/host';
+import { BACKDROP_SKY_ALPHA } from './engine/render/sky';
 
 const params = new URLSearchParams(location.search);
 /** `?pose=virtual` forces the keyboard-driven body — how every game is
@@ -57,6 +58,17 @@ video.autoplay = true;
 video.style.cssText =
   'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1';
 document.body.appendChild(video);
+
+// Body-only play never touches the keyboard or mouse, so the OS would dim and
+// sleep the display mid-game (Windows after a few minutes). Hold a screen wake
+// lock while the game is visible; the browser drops it when hidden, so take
+// it again on return. (On macOS play.mjs also runs `caffeinate`.)
+const holdScreenAwake = (): void => {
+  if (document.visibilityState !== 'visible' || !('wakeLock' in navigator)) return;
+  navigator.wakeLock.request('screen').catch(() => { /* refused: harmless */ });
+};
+document.addEventListener('visibilitychange', holdScreenAwake);
+holdScreenAwake();
 
 let pose: PoseSource | null = null;
 let camera: MediaPipePoseSource | null = null;
@@ -203,9 +215,19 @@ const services: ShellServices & {
     }
   },
 
+  // The same stream the pose engine reads, for the shell's dimmed backdrop:
+  // one getUserMedia for the life of the page. Null in keyboard mode (no
+  // stream was ever attached) and after closeCamera() detaches it.
+  cameraStream: () => (video.srcObject instanceof MediaStream ? video.srcObject : null),
+
   runRound: (r) => {
     if (!pose) pose = virtual();
-    return runRound(r, { pose, audio, fx });
+    return runRound(r, {
+      pose,
+      audio,
+      fx,
+      ...(r.backdrop ? { skyAlpha: BACKDROP_SKY_ALPHA } : {}),
+    });
   },
 };
 

@@ -17,9 +17,11 @@ export const manifest: MiniGameManifest = {
   space: 'standing',
   players: { min: 1, max: 1, mode: 'solo' },
 
-  // Hips only: ankles/feet are deliberately NOT required, or the game would
-  // hide itself for every laptop player whose feet are cropped out of frame.
-  requiredLandmarks: ['torso'],
+  // The zones read the HIPS, so 'legs': a child close to a laptop has them off
+  // the bottom of the frame and could never answer. The pool has one
+  // lower-body switch, so this also hides the game when only the feet are
+  // cropped — the price of never serving it to a body it cannot see.
+  requiredLandmarks: ['torso', 'legs'],
   gestures: ['zone'],
 
   durationMs: 50_000,

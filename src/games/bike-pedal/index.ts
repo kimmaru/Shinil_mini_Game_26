@@ -16,7 +16,7 @@ import type {
 } from '@/engine/types';
 import { L, ny } from '@/engine/pose/landmarks';
 import { approach, pulse, TAU } from '@/engine/math';
-import { C, fade, hue } from '@/engine/render/palette';
+import { C, fade } from '@/engine/render/palette';
 import { manifest } from './manifest';
 import { t } from './locale';
 
@@ -32,7 +32,6 @@ const CLOUDS = 4;
 const RING = fade(C.primaryHi, 0.5);
 const WHEEL_FILL = fade(C.white, 0.5);
 const SPOKE = fade(C.ink, 0.45);
-const SKY = hue(200, 85, 80);
 
 const sigL = (p: PlayerPose): number => ny(p, L.LEFT_ELBOW) - ny(p, L.LEFT_WRIST);
 const sigR = (p: PlayerPose): number => ny(p, L.RIGHT_ELBOW) - ny(p, L.RIGHT_WRIST);
@@ -152,8 +151,8 @@ class BikePedal implements MiniGame {
     const unitPx = g.w * 0.09;
     const bikeX = g.w * 0.28;
 
-    // Sun and clouds.
-    g.rect(0, 0, g.w, g.h, { fill: SKY });
+    // Sun and clouds, on the engine sky (no full-screen fill of our own, so the
+    // camera backdrop shows through when it is on).
     g.circle(g.w * 0.84, g.h * 0.16, 58 * s, { fill: C.accentHi, stroke: C.ink, sw: 4 * s });
     for (let i = 0; i < CLOUDS; i++) {
       const x = (((this.cloudX[i]! - this.dist * 0.004) % 1) + 1) % 1;

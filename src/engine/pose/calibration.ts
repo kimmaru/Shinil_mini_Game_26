@@ -72,6 +72,28 @@ export function motionEnergy(p: PlayerPose): number {
   return n === 0 ? 0 : sum / n;
 }
 
+/**
+ * Good enough to measure: confident torso anchors, OR both shoulders.
+ *
+ * `conf` averages shoulders AND hips, so a child close to a laptop — hips off
+ * the bottom of the frame — reads ~0.5 however clearly they are seen, and was
+ * thrown away frame after frame. The shoulders are what the scale is measured
+ * from in the first place.
+ */
+function measurable(p: PlayerPose): boolean {
+  return (
+    p.present &&
+    (p.conf >= MIN_VIS ||
+      (p.vis[L.LEFT_SHOULDER]! >= MIN_VIS && p.vis[L.RIGHT_SHOULDER]! >= MIN_VIS))
+  );
+}
+
+/** Both hips visible: `lowerBodyVisible` needs them as well as the ankles,
+ *  because hip-driven games (zones, dodges, jumps) read the hips, and an
+ *  origin estimated from the shoulders cannot move like real hips do. */
+const hipsVisible = (p: PlayerPose): boolean =>
+  p.vis[L.LEFT_HIP]! >= MIN_VIS && p.vis[L.RIGHT_HIP]! >= MIN_VIS;
+
 export interface CalibrateOpts {
   /** Capture window. 4s is long enough for a median and short enough that a
    *  7-year-old does not wander off. */
@@ -147,6 +169,7 @@ export class CalibrationCapture {
   private wristY: number[] = [];
   private ankleY: number[] = [];
   private ankleVis: number[] = [];
+  private hipsSeen = 0;
   private energy: number[] = [];
   private t0 = -1;
   private tLast = 0;
@@ -184,7 +207,7 @@ export class CalibrationCapture {
   feed(p: PlayerPose, tSec: number, viewH: number): void {
     if (this.t0 < 0) this.t0 = tSec;
     this.tLast = tSec;
-    if (!p.present || p.conf < MIN_VIS) return;
+    if (!measurable(p)) return;
     if (this.skipped < this.o.skipFrames) {
       this.skipped++;
       return;
@@ -237,6 +260,7 @@ export class CalibrationCapture {
             : p.px[L.RIGHT_ANKLE * 2 + 1]!;
       this.ankleY.push(ay / viewH);
     }
+    if (hipsVisible(p)) this.hipsSeen++;
 
     this.energy.push(motionEnergy(p));
   }
@@ -284,6 +308,8 @@ export class CalibrationCapture {
 
     const ankleOk = this.ankleVis.length > 0 && median(this.ankleVis) > MIN_VIS;
     const floorY = ankleOk && this.ankleY.length ? median(this.ankleY) : 1.0;
+    // Hips in at least half the frames, like the ankle median.
+    const hipsOk = this.hipsSeen * 2 > this.shoulderW.length;
 
     // Resting energy: the MEDIAN of the per-frame energies, with a floor so a
     // suspiciously still capture (a photo held up to the camera, or a player
@@ -299,7 +325,7 @@ export class CalibrationCapture {
       reachUpY: clamp(reachUpY, -0.5, 0.9),
       floorY: clamp(floorY, 0.2, 1.0),
       idleEnergy,
-      lowerBodyVisible: ankleOk,
+      lowerBodyVisible: ankleOk && hipsOk,
       mirrored: this.o.mirrored,
       capturedAt: nowMs,
     };
@@ -314,6 +340,7 @@ export class CalibrationCapture {
     this.wristY.length = 0;
     this.ankleY.length = 0;
     this.ankleVis.length = 0;
+    this.hipsSeen = 0;
     this.energy.length = 0;
     this.t0 = -1;
     this.tLast = 0;
@@ -549,6 +576,8 @@ export class AutoCalibrator {
   private rHip: Ring;
   private rAnkleVis: Ring;
   private rAnkleY: Ring;
+  private rHipVis: Ring;
+  private hipsOk = false;
   private rSpan: Ring;
   private rArmLen: Ring;
   private rWrist: Ring;
@@ -591,6 +620,7 @@ export class AutoCalibrator {
     this.rHip = new Ring(win);
     this.rAnkleVis = new Ring(win);
     this.rAnkleY = new Ring(win);
+    this.rHipVis = new Ring(win);
     this.rSpan = new Ring(hold);
     this.rArmLen = new Ring(hold);
     this.rWrist = new Ring(hold);
@@ -640,9 +670,11 @@ export class AutoCalibrator {
   }
 
   /** Honest: at a kiosk or on a laptop the ankles are usually out of frame.
-   *  `floorY` stays at the 1.0 sentinel in that case — it is never guessed. */
+   *  `floorY` stays at the 1.0 sentinel in that case — it is never guessed.
+   *  Also false while the hips are out of frame (the close laptop framing),
+   *  so hip-driven games leave the pool along with the leg games. */
   get lowerBodyVisible(): boolean {
-    return this.flags.floorY;
+    return this.flags.floorY && this.hipsOk;
   }
 
   get frozen(): boolean {
@@ -680,7 +712,7 @@ export class AutoCalibrator {
     const dt = this.lastT < 0 ? 0 : tSec - this.lastT;
     this.lastT = tSec;
 
-    const usable = p !== undefined && p.present && p.conf >= MIN_VIS;
+    const usable = p !== undefined && measurable(p);
 
     // ── customer swap, before anything is measured ──────────────────────────
     // `present` already lags the departure: the tracker holds an unmatched
@@ -782,6 +814,8 @@ export class AutoCalibrator {
     this.rHip.clear();
     this.rAnkleVis.clear();
     this.rAnkleY.clear();
+    this.rHipVis.clear();
+    this.hipsOk = false;
     this.rSpan.clear();
     this.rArmLen.clear();
     this.rWrist.clear();
@@ -938,7 +972,9 @@ export class AutoCalibrator {
       this.rAnkleY.push(ay / viewH);
     }
     const ankleOk = this.rAnkleVis.count > 0 && this.rAnkleVis.quantile(0.5) > MIN_VIS;
-    this.live.lowerBodyVisible = ankleOk;
+    this.rHipVis.push(Math.min(p.vis[L.LEFT_HIP]!, p.vis[L.RIGHT_HIP]!));
+    this.hipsOk = this.rHipVis.quantile(0.5) >= MIN_VIS;
+    this.live.lowerBodyVisible = ankleOk && this.hipsOk;
     this.flags.floorY = ankleOk && this.rAnkleY.count > 0;
     // 1.0 is the contract's "feet were never visible" sentinel.
     this.live.floorY = this.flags.floorY ? clamp(this.rAnkleY.quantile(0.5), 0.2, 1) : 1;

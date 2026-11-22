@@ -45,7 +45,6 @@ const COMBO_MULT_STEPS = 10;
 const CROWD_CAP = 14;
 const INK_18 = fade(C.ink, 0.18);
 const INK_15 = fade(C.ink, 0.15);
-const BACKDROP = hue(290, 75, 91);
 
 /** Precomputed "+N" labels: no string building while playing. */
 const LABELS: string[] = [];
@@ -219,8 +218,9 @@ class CheerCombo implements MiniGame {
   }
 
   render(g: Renderer, _interp: number): void {
+    // No full-screen fill of our own: the engine sky (translucent over the
+    // camera backdrop when that is on) is the background.
     g.clear(manifest.theme?.hue);
-    g.rect(0, 0, g.w, g.h, { fill: BACKDROP });
     const s = g.s;
     this.drawCrowd(g);
 

@@ -83,6 +83,75 @@ interface Track {
 
 const MAX_DETS = 8;
 
+/**
+ * Upper-body uprightness: a visible nose or ear this many shoulder widths
+ * above the shoulder line.
+ *
+ * The hip rule below cannot see a child standing 1.2m from a laptop — their
+ * hips are off the bottom of the frame — so before this a body only became a
+ * player once it had backed off far enough to show both hips. On this
+ * project's skeleton an upright head sits 0.64 shoulder widths above the
+ * shoulder line (0.67 for the ears); 0.3 leaves half of that for a head bowed
+ * toward the screen, and still rejects a body on its side, whose head is level
+ * with its shoulders, and anything without a face.
+ */
+export const HEAD_ABOVE_SHOULDERS = 0.3;
+/** Shoulder centre above the hip centre, shoulder widths, for the hip rule in
+ *  `isUprightPose` (the attract screen's "someone is standing here" ring). */
+export const UPRIGHT_HIP_N = 0.6;
+
+const HEAD_JOINTS = [L.NOSE, L.LEFT_EAR, L.RIGHT_EAR] as const;
+
+/**
+ * The upper-body half of the upright test, on any isotropic xy space.
+ *
+ * `kx`/`ky` scale the stored coordinates to that space (view px for raw
+ * landmarks, 1 for `n`) and `unit` is one shoulder width in it. Both shoulders
+ * must be visible and the shoulder line within 45 degrees of level — a body
+ * lying down has a near-vertical shoulder line whatever its head is doing.
+ */
+function headAboveShoulders(
+  xy: ArrayLike<number>,
+  vis: ArrayLike<number>,
+  kx: number,
+  ky: number,
+  unit: number,
+): boolean {
+  if (vis[L.LEFT_SHOULDER]! < MIN_VIS || vis[L.RIGHT_SHOULDER]! < MIN_VIS) return false;
+  const dx = (xy[L.LEFT_SHOULDER * 2]! - xy[L.RIGHT_SHOULDER * 2]!) * kx;
+  const dy = (xy[L.LEFT_SHOULDER * 2 + 1]! - xy[L.RIGHT_SHOULDER * 2 + 1]!) * ky;
+  if (Math.abs(dy) >= Math.abs(dx)) return false;
+  const lim =
+    ((xy[L.LEFT_SHOULDER * 2 + 1]! + xy[L.RIGHT_SHOULDER * 2 + 1]!) / 2) * ky -
+    HEAD_ABOVE_SHOULDERS * unit;
+  for (const j of HEAD_JOINTS) {
+    if (vis[j]! >= MIN_VIS && xy[j * 2 + 1]! * ky < lim) return true;
+  }
+  return false;
+}
+
+/**
+ * Is this tracked pose a person standing (or sitting) upright?
+ *
+ * Either rule is enough: hips visible with the shoulders well above them, or
+ * — for the close laptop framing with no hips in view — a head above a level
+ * shoulder line. The same upper-body rule gates probation in `readAnchor`.
+ */
+export function isUprightPose(p: PlayerPose): boolean {
+  if (!p.present) return false;
+  const n = p.n;
+  const vis = p.vis;
+  if (
+    vis[L.LEFT_SHOULDER]! >= MIN_VIS && vis[L.RIGHT_SHOULDER]! >= MIN_VIS &&
+    vis[L.LEFT_HIP]! >= MIN_VIS && vis[L.RIGHT_HIP]! >= MIN_VIS &&
+    (n[L.LEFT_SHOULDER * 2 + 1]! + n[L.RIGHT_SHOULDER * 2 + 1]!) / 2 <
+      (n[L.LEFT_HIP * 2 + 1]! + n[L.RIGHT_HIP * 2 + 1]!) / 2 - UPRIGHT_HIP_N
+  ) {
+    return true;
+  }
+  return headAboveShoulders(n, vis, 1, 1, 1);
+}
+
 interface Anchor {
   x: number;
   y: number;
@@ -127,9 +196,12 @@ export function readAnchor(
   out.x = cx;
   out.y = cy;
   out.s = s > 1e-3 ? s : viewH * 0.1;
-  // Upright: the chest sits a quarter of a shoulder width above the hips. A
-  // chair, a bag on the floor or someone lying down fails this.
-  out.upright = hipOk && cy < hy - out.s * 0.25;
+  // Upright: the chest sits a quarter of a shoulder width above the hips, or
+  // — hips out of frame, the close laptop framing — a head sits above a level
+  // shoulder line. A chair, a bag on the floor or someone lying down fails both.
+  out.upright =
+    (hipOk && cy < hy - out.s * 0.25) ||
+    (shOk && headAboveShoulders(lm, vis, viewW, viewH, out.s));
   out.ok = (shOk || hipOk) && s > 1e-3;
   return out;
 }

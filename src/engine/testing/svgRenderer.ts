@@ -58,6 +58,10 @@ export interface SvgShotOpts {
   /** Round times, in seconds, to keep a frame for. One run yields every shot,
    *  so a contact sheet of 21 games costs 21 runs rather than 21 x frames. */
   snapAt?: readonly number[];
+  /** Sky opacity, as Canvas2DOpts.skyAlpha. Default 1: shots show the opaque
+   *  sky; pass render/sky.ts BACKDROP_SKY_ALPHA to see the backdrop look
+   *  (the sky then shows `backdrop` through it). */
+  skyAlpha?: number;
 }
 
 export class SvgRenderer implements Renderer {
@@ -89,12 +93,16 @@ export class SvgRenderer implements Renderer {
   /** Unique ids for the skeleton's belly masks within one frame's document. */
   private maskN = 0;
   private readonly backdrop: string;
+  private readonly skyAlpha: number;
 
   constructor(w: number, h: number, o: SvgShotOpts = {}) {
     this.w = w;
     this.h = h;
     this.s = Math.min(w, h) / 1000;
     this.backdrop = o.backdrop ?? C.bg;
+    this.skyAlpha = o.skyAlpha !== undefined && Number.isFinite(o.skyAlpha)
+      ? Math.max(0, Math.min(1, o.skyAlpha))
+      : 1;
     this.snapAt = [...(o.snapAt ?? [])].sort((a, b) => a - b);
   }
 
@@ -230,9 +238,10 @@ export class SvgRenderer implements Renderer {
       }
       dots = `<g fill="${SKY_DOT_FILL}">${dots}</g>`;
     }
+    const sky = `<rect width="${this.w}" height="${this.h}" fill="url(#${id})"/>` + dots;
     this.push(
       `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1">${stops}</linearGradient></defs>` +
-      `<rect width="${this.w}" height="${this.h}" fill="url(#${id})"/>` + dots,
+      (this.skyAlpha < 1 ? `<g opacity="${n(this.skyAlpha)}">${sky}</g>` : sky),
     );
   }
 

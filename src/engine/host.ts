@@ -38,6 +38,10 @@ export interface HostDeps {
   /** Cap the render rate (the simulation still steps at 60). The attract
    *  reel is a backdrop and gets 30; a played round leaves this unset. */
   maxFps?: number;
+  /** Sky opacity (Canvas2DOpts.skyAlpha). Unset = 1, the opaque sky. The
+   *  shell lowers it only while the camera backdrop is showing behind the
+   *  stage; the attract reel never sets it. */
+  skyAlpha?: number;
 }
 
 /** One for the page, so every round (the attract reel's included) starts at
@@ -72,7 +76,11 @@ export async function runRound(req: RoundRequest, deps: HostDeps): Promise<GameR
   const deviceDpr = window.devicePixelRatio || 1;
   dprGovernor ??= new DprGovernor(Math.min(DPR_START, deviceDpr));
   const governor = dprGovernor;
-  const g = new Canvas2DRenderer(canvas, { dpr: deviceDpr, maxDpr: governor.cap });
+  const g = new Canvas2DRenderer(canvas, {
+    dpr: deviceDpr,
+    maxDpr: governor.cap,
+    ...(deps.skyAlpha !== undefined ? { skyAlpha: deps.skyAlpha } : {}),
+  });
   g.resize(view.w, view.h);
 
   const fx = deps.fx ?? createFxService({ reducedMotion: deps.reducedMotion ?? null });

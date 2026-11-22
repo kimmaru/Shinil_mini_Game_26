@@ -21,7 +21,9 @@ export const manifest: MiniGameManifest = {
   // one child against the snowmen.
   players: { min: 1, max: 1, mode: 'solo' },
 
-  requiredLandmarks: ['head', 'arms', 'hands', 'torso'],
+  // 'legs': hits and dodges are judged on the shoulder-to-hip torso, so with
+  // the hips out of frame nothing can hit or be dodged.
+  requiredLandmarks: ['head', 'arms', 'hands', 'torso', 'legs'],
   gestures: ['reach'],
 
   durationMs: 60_000,

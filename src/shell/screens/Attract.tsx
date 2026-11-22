@@ -26,7 +26,7 @@ import type { PoseSource } from '@/engine/pose/source';
 import type { AutoCalibrator } from '@/engine/pose/calibration';
 import type { Detector, GestureService, PlayerPose } from '@/engine/types';
 import { ATTRACT_JUMP_OPTS } from '@/engine/session';
-import { L, ny, visible } from '@/engine/pose/landmarks';
+import { isUprightPose } from '@/engine/pose/identity';
 import { SpriteIcon } from '../components/SpriteIcon';
 import type { GameInfo } from '../useSession';
 import { DISTANCE_KO, distanceOf, type Distance } from '../distance';
@@ -35,9 +35,6 @@ const ATTRACT_JUMPS = new WeakMap<GestureService, Detector<'jump'>>();
 
 /** After this long with no jump, tell them about the spacebar. */
 export const KEYBOARD_HINT_MS = 25_000;
-
-/** Shoulder centre at least this far above the hip, in shoulder widths. */
-const UPRIGHT_N = -0.6;
 
 export interface AttractProps {
   pose: PoseSource | null | undefined;
@@ -58,10 +55,11 @@ export interface AttractProps {
   fakePose?: boolean;
 }
 
+// Hips visible and below the shoulders, OR — a child close to the laptop with
+// the hips off the bottom edge — a head above level shoulders. Requiring hips
+// here kept the ring empty until the child backed off ~2m.
 function isUpright(p: PlayerPose | undefined): boolean {
-  if (!p || !p.present) return false;
-  if (!visible(p, L.LEFT_SHOULDER, L.RIGHT_SHOULDER, L.LEFT_HIP, L.RIGHT_HIP)) return false;
-  return (ny(p, L.LEFT_SHOULDER) + ny(p, L.RIGHT_SHOULDER)) / 2 < UPRIGHT_N;
+  return p !== undefined && isUprightPose(p);
 }
 
 export function Attract({
@@ -252,7 +250,7 @@ export function Attract({
 
       {cameraMode ? (
         <p className="attract__honest">
-          <SpriteIcon id="ui-joints" size={28} /> 카메라는 점과 선만 봐요. 녹화하지 않아요.
+          <SpriteIcon id="ui-joints" size={28} /> 카메라 화면은 이 컴퓨터에서만 보여요. 녹화하지 않아요.
         </p>
       ) : null}
     </main>

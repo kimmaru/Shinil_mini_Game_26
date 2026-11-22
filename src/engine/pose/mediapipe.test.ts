@@ -13,7 +13,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Script } from 'node:vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cameraConstraints, MediaPipePoseSource, waitForVideo, workerSupported } from './mediapipe';
+import {
+  cameraConstraints, INFER_SHORT_SIDE, inferResize, MediaPipePoseSource, waitForVideo, workerSupported,
+} from './mediapipe';
 import { TIER_CONFIG } from './capability';
 import { flattenPoses, LM_STRIDE, nextTimestamp, visionWasmPaths } from './poseWorkerProtocol';
 
@@ -54,6 +56,23 @@ describe('cameraConstraints', () => {
     });
     const v = soft.video as MediaTrackConstraints;
     expect(v.width).toEqual({ ideal: 480 });
+  });
+});
+
+describe('inferResize', () => {
+  const box = { resizeWidth: 0, resizeHeight: 0 };
+  it('shrinks the shorter side to INFER_SHORT_SIDE and keeps the aspect', () => {
+    for (const [w, h] of [[960, 540], [1280, 720], [640, 480], [1920, 1080], [720, 1280]] as const) {
+      const r = inferResize(w, h, box)!;
+      expect(Math.min(r.resizeWidth, r.resizeHeight)).toBe(INFER_SHORT_SIDE);
+      expect(Math.abs(r.resizeWidth / r.resizeHeight - w / h)).toBeLessThan(0.005);
+    }
+  });
+
+  it('leaves a frame that is already small (or not ready) alone', () => {
+    expect(inferResize(480, 360, box)).toBeNull();
+    expect(inferResize(0, 0, box)).toBeNull();
+    expect(inferResize(960, Number.NaN, box)).toBeNull();
   });
 });
 
@@ -282,6 +301,42 @@ describe('MediaPipePoseSource start-up fallbacks', () => {
 
     src.stop();
     expect(w.terminated).toBe(true);
+  });
+
+  it('sends the worker a downscaled copy, and full frames if the browser refuses', async () => {
+    stubWorkerEnv();
+    const calls: unknown[][] = [];
+    let refuse = false;
+    vi.stubGlobal('createImageBitmap', async (...args: unknown[]) => {
+      calls.push(args);
+      if (refuse && args.length > 1) throw new Error('resize unsupported');
+      return { close() {} };
+    });
+    const { video, cbs, raw } = fakeVideo();
+    Object.assign(raw, { videoHeight: 540 });
+    const warnings: string[] = [];
+    const src = source(video, warnings);
+    await src.start();
+    const w = FakeWorker.last!;
+    const frame = async (n: number): Promise<void> => {
+      raw.currentTime = n;
+      cbs.at(-1)!(0, { mediaTime: n });
+      await flush();
+      w.onmessage?.({ data: { type: 'result', n: 0, data: new Float32Array(0) } });
+    };
+
+    await frame(1);
+    // 960x540 -> 640x360: same aspect, so normalised landmarks do not move.
+    expect(calls[0]![1]).toMatchObject({ resizeWidth: 640, resizeHeight: 360 });
+
+    refuse = true;
+    await frame(2); // rejected: dropped, and resizing is switched off
+    await frame(3);
+    expect(calls).toHaveLength(3);
+    expect(calls[2]).toHaveLength(1);
+    expect(w.posted.filter((p) => p.msg.type === 'detect')).toHaveLength(2);
+    expect(warnings.some((m) => m.includes('downscale'))).toBe(true);
+    src.stop();
   });
 
   it('a worker that stops answering is replaced by the main thread', async () => {

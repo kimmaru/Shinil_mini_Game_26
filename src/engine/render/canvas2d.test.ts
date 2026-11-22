@@ -283,6 +283,44 @@ describe('clear', () => {
     }
   });
 
+  it('paints an opaque sky by default, and a translucent one over a wiped canvas with skyAlpha', () => {
+    const ctxOpts = (o?: { skyAlpha?: number }): { alpha?: boolean } => {
+      const f = fakeCanvas();
+      let seen: { alpha?: boolean } = {};
+      const get = f.raw.getContext;
+      f.raw.getContext = ((_k: string, opts: { alpha?: boolean }) => {
+        seen = opts;
+        return get();
+      }) as typeof f.raw.getContext;
+      new Canvas2DRenderer(f.canvas, { dpr: 1, ...o });
+      return seen;
+    };
+    expect(ctxOpts().alpha).toBe(false);
+    expect(ctxOpts({ skyAlpha: 0.6 }).alpha).toBe(true);
+
+    const opaque = fakeCanvas();
+    const g1 = new Canvas2DRenderer(opaque.canvas, { dpr: 1 });
+    opaque.log.length = 0;
+    g1.clear(210);
+    expect(opaque.log.some((r) => r.op === 'clearRect')).toBe(false);
+    expect(opaque.log.some((r) => r.op === 'set:globalAlpha' && r.args[0] !== 1)).toBe(false);
+
+    const f = fakeCanvas(1280, 720);
+    const g = new Canvas2DRenderer(f.canvas, { dpr: 1, skyAlpha: 0.6 });
+    f.log.length = 0;
+    g.clear(210);
+    const ops = f.log.map((r) => r.op);
+    // Wiped first (no accumulation), then the sky at 0.6, then alpha restored
+    // so the game's own drawing is opaque.
+    expect(f.log.find((r) => r.op === 'clearRect')!.args).toEqual([0, 0, 1280, 720]);
+    expect(ops.indexOf('clearRect')).toBeLessThan(ops.indexOf('fillRect'));
+    const a = f.log.filter((r) => r.op === 'set:globalAlpha').map((r) => r.args[0]);
+    expect(a).toContain(0.6);
+    // (the fake ctx does not model save/restore; the real one restores alpha)
+    expect(ops.indexOf('save')).toBeLessThan(ops.indexOf('set:globalAlpha'));
+    expect(ops.lastIndexOf('restore')).toBeGreaterThan(ops.indexOf('fillRect'));
+  });
+
   it('is dark in both themes and rebuilds the gradient only on change', () => {
     const f = fakeCanvas();
     const g = new Canvas2DRenderer(f.canvas, { dpr: 1 });

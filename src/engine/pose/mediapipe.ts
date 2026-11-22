@@ -94,6 +94,33 @@ const PLAY_TIMEOUT_MS = 3000;
 const WORKER_STALL_MS = 3000;
 /** Likewise for a worker that answers, but only with errors. */
 const WORKER_MAX_ERRORS = 10;
+/**
+ * Shorter side of the frame copied to the worker, px.
+ *
+ * The model never sees more than 256x256: the detector letterboxes the whole
+ * frame to 224, the landmark model crops the body to 256. A standing body's
+ * crop spans at least ~3/4 of the frame height even at 4m, so 360 rows still
+ * feed that crop >= 256 rows and nothing is upsampled — while a 960x540
+ * capture copies, transfers and uploads 2.25x fewer pixels per inference.
+ * Aspect is kept, so normalised landmarks are unchanged.
+ */
+export const INFER_SHORT_SIDE = 360;
+
+/** createImageBitmap resize for a `vw` x `vh` frame, or null when the frame
+ *  is already that small. Written into `out` so the per-frame path does not
+ *  allocate. */
+export function inferResize(
+  vw: number,
+  vh: number,
+  out: { resizeWidth: number; resizeHeight: number },
+): typeof out | null {
+  const short = Math.min(vw, vh);
+  if (!(short > INFER_SHORT_SIDE)) return null;
+  const k = INFER_SHORT_SIDE / short;
+  out.resizeWidth = Math.round(vw * k);
+  out.resizeHeight = Math.round(vh * k);
+  return out;
+}
 
 const clock = (): number => (typeof performance !== 'undefined' ? performance.now() : 0);
 const errText = (e: unknown): string => String((e as Error | undefined)?.message ?? e);
@@ -174,6 +201,11 @@ export class MediaPipePoseSource implements PoseSource {
   private watchSince = 0;
   private workerErrs = 0;
   private submitTs = 0;
+  /** Reused createImageBitmap options; null once a browser has rejected them. */
+  private resize: (ImageBitmapOptions & { resizeWidth: number; resizeHeight: number }) | null = {
+    resizeWidth: 0, resizeHeight: 0, resizeQuality: 'low',
+  };
+  private resizing = false;
   private reply:
     | { type: FromWorker['type']; resolve: (m: FromWorker) => void; reject: (e: Error) => void }
     | undefined;
@@ -581,8 +613,14 @@ export class MediaPipePoseSource implements PoseSource {
     w.postMessage(msg, [bmp]);
   };
 
-  private dropBitmap = (): void => {
+  private dropBitmap = (e?: unknown): void => {
     this.inFlight = false;
+    if (this.resizing && this.resize) {
+      // A browser that rejects the resize options would otherwise never infer
+      // again: fall back to full-size copies, which always worked.
+      this.resize = null;
+      this.o.onWarning?.(`[pose] frame downscale unavailable, sending full frames (${errText(e)})`);
+    }
   };
 
   // ── frames, internals ────────────────────────────────────────────────────
@@ -642,7 +680,12 @@ export class MediaPipePoseSource implements PoseSource {
         this.inFlightAt = nowMs;
         this.watchSince = nowMs;
         this.submitTs = ts;
-        createImageBitmap(video).then(this.sendBitmap, this.dropBitmap);
+        const opts = this.resize && inferResize(video.videoWidth, video.videoHeight, this.resize);
+        this.resizing = !!opts;
+        (opts ? createImageBitmap(video, opts) : createImageBitmap(video)).then(
+          this.sendBitmap,
+          this.dropBitmap,
+        );
       } else if (lm) {
         try {
           const res = lm.detectForVideo(video, ts);

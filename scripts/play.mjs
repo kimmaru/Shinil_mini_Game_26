@@ -191,6 +191,8 @@ async function openApp() {
   const bins = process.platform === 'win32'
     ? [
         join(process.env['PROGRAMFILES'] ?? 'C:\\Program Files', 'Google/Chrome/Application/chrome.exe'),
+        // Chrome installed "for this user only" lives here instead.
+        ...(process.env['LOCALAPPDATA'] ? [join(process.env['LOCALAPPDATA'], 'Google/Chrome/Application/chrome.exe')] : []),
         join(process.env['PROGRAMFILES(X86)'] ?? 'C:\\Program Files (x86)', 'Microsoft/Edge/Application/msedge.exe'),
       ]
     : ['google-chrome', 'chromium', 'chromium-browser'];

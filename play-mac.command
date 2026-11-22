@@ -19,10 +19,5 @@ if ! command -v node >/dev/null 2>&1; then
   pause_exit 1
 fi
 
-# node_modules가 없거나, 업데이트로 package-lock.json이 더 새로우면 설치해요.
-if [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
-  echo "• 처음 준비 중이에요. 1~2분 걸리고 인터넷이 필요해요…"
-  npm install || pause_exit 1
-fi
-
-npm run play || pause_exit 1
+# 필요하면 설치하고(처음, 또는 업데이트 뒤) 게임을 열어요. 윈도우 런처와 같은 스크립트.
+node scripts/launch.mjs || pause_exit 1

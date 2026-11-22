@@ -3,3 +3,5 @@
 #    checkout (core.autocrlf=true, Git for Windows' default) fails the gate.
 #  - the macOS launcher: a CRLF line makes bash fail with "$'\r': command not found".
 * text=auto eol=lf
+# ...except Windows batch files, which cmd.exe parses reliably only with CRLF.
+*.bat text eol=crlf
