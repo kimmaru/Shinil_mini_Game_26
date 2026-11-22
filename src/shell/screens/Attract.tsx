@@ -48,6 +48,8 @@ export interface AttractProps {
   reducedMotion: boolean;
   onStart: () => void;
   onSettings: () => void;
+  /** Opens the 전체 게임 list (top-left), to pick one game instead of spinning. */
+  onGames: () => void;
   /** True while 설정 is open over this screen: nothing behind a dialog may
    *  start a round (not Space, not a jump). */
   blocked?: boolean;
@@ -71,6 +73,7 @@ export function Attract({
   reducedMotion,
   onStart,
   onSettings,
+  onGames,
   blocked = false,
   fakePose,
 }: AttractProps): React.ReactElement {
@@ -189,6 +192,15 @@ export function Attract({
           <SpriteIcon id="sparkle" size={52} />
         </span>
       </h1>
+
+      <Button
+        variant="ghost"
+        icon="ui-party"
+        className="attract__games"
+        onClick={onGames}
+      >
+        전체 게임
+      </Button>
 
       <Button
         variant="ghost"

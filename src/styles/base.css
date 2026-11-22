@@ -985,6 +985,15 @@ table.legal-table th {
   padding: 0;
   border-radius: 50%;
 }
+/* 전체 게임 — the gear's mirror in the top-left corner. */
+.attract__games {
+  position: absolute;
+  top: var(--sp-4);
+  left: var(--sp-4);
+  z-index: 2;
+  min-height: var(--hit-primary);
+  border-radius: var(--r-pill);
+}
 .attract__stage {
   display: flex;
   gap: clamp(16px, 3vw, 56px);
@@ -2223,6 +2232,40 @@ table.legal-table th {
   gap: var(--sp-3);
   align-items: center;
   justify-content: center;
+}
+
+/* ─── 전체 게임 picker ──────────────────────────────────────────────────── */
+.overlay__panel.picker {
+  width: min(100%, 76rem);
+  gap: var(--sp-4);
+  padding-block: var(--sp-5);
+}
+.picker__grid {
+  display: grid;
+  /* 5 across at 1440 and 1280 wide, so all 24 fit without scrolling. */
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.btn.picker__tile {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: var(--hit-primary);
+  padding: var(--sp-1) var(--sp-3) var(--sp-1) var(--sp-2);
+  font-size: var(--fs-body);
+  font-weight: 800;
+  text-align: start;
+  color: var(--c-text);
+  background: hsl(var(--hue, 210) 90% 92%);
+}
+.picker__name {
+  word-break: keep-all;
+  line-height: 1.2;
 }
 .panel.legal p,
 .panel.legal td,

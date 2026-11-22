@@ -51,8 +51,9 @@ export type Phase =
 /** 설정 opens from the gear and returns where it was opened, so it is an
  *  overlay rather than a phase. The privacy copy lives inside it: a kiosk
  *  guest will not read a consent page, but it must still be one tap away for
- *  the person who asks. */
-export type Overlay = 'none' | 'settings';
+ *  the person who asks. `games` is the 전체 게임 list (top-left on attract),
+ *  for picking one game directly instead of spinning. */
+export type Overlay = 'none' | 'settings' | 'games';
 
 export type InputMode = 'camera' | 'keyboard';
 

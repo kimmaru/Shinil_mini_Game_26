@@ -51,9 +51,12 @@ import {
   poolItems,
   useSession,
   useSettings,
+  type GameInfo,
   type Phase,
   type ShellServices,
+  type WheelItem,
 } from './useSession';
+import { GamePicker } from './screens/GamePicker';
 
 const PHASES: readonly Phase[] = [
   'boot', 'setup', 'setupHelp', 'attract', 'roulette', 'countdown',
@@ -127,6 +130,8 @@ export function App({ services = {} }: AppProps): React.ReactElement {
   useEffect(() => () => hud.dispose(), [hud]);
 
   const pushRef = useRef<DebugPush>({});
+  /** The game chosen from 전체 게임, so 다시 하기 replays it instead of spinning. */
+  const lastPickedRef = useRef<WheelItem | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const [roundSecondsLeft, setRoundSecondsLeft] = useState<number | null>(null);
   const [setupStarted, setSetupStarted] = useState(false);
@@ -446,6 +451,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
 
   // ─── Transitions the shell owns ─────────────────────────────────────────
   const startRound = useCallback(() => {
+    lastPickedRef.current = null;
     // Read the calibrator live: `state.calib` is only republished on a new
     // guest, so it holds whatever the legs looked like in their first second.
     const cal = services.calibration;
@@ -479,9 +485,37 @@ export function App({ services = {} }: AppProps): React.ReactElement {
   // 다시 하기: same guest (calib kept by 'again'), straight back to the roulette
   // — pressing it IS pressing START again.
   const goAgain = useCallback(() => {
+    // A game picked from 전체 게임 is replayed as-is; a spun one spins again.
+    const picked = lastPickedRef.current;
+    if (picked) {
+      dispatch({ type: 'pick', item: picked });
+      return;
+    }
     dispatch({ type: 'again' });
     startRound();
   }, [dispatch, startRound]);
+
+  // ─── 전체 게임: pick one directly instead of spinning ───────────────────
+  const openGames = useCallback(
+    () => dispatch({ type: 'openOverlay', overlay: 'games' }),
+    [dispatch],
+  );
+  const pickGame = useCallback((g: GameInfo) => {
+    const item: WheelItem = { id: g.id, nameKo: g.nameKo, icon: g.icon, hue: g.hue };
+    lastPickedRef.current = item;
+    dispatch({ type: 'pick', item });
+  }, [dispatch]);
+  /** Every game this input mode can play (keyboard mode drops the few with no
+   *  keyboard fallback), in 가나다 order so a name is easy to find. */
+  const pickable = useMemo(
+    () => poolItems({
+      players: 1,
+      space: ['seated', 'standing', 'room'],
+      cameraOn: state.inputMode === 'camera',
+      ...(includeDisabled ? { includeDisabled: true } : {}),
+    }).sort((a, b) => a.nameKo.localeCompare(b.nameKo, 'ko')),
+    [state.inputMode, includeDisabled],
+  );
   const resetAll = useCallback(() => {
     reset();
     dispatch({ type: 'clearRecords' });
@@ -541,6 +575,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
           reducedMotion={reducedMotion}
           onStart={startRound}
           onSettings={openSettings}
+          onGames={openGames}
           blocked={state.overlay !== 'none'}
           {...(fakePose ? { fakePose: true } : {})}
         />
@@ -616,6 +651,10 @@ export function App({ services = {} }: AppProps): React.ReactElement {
             players={state.players}
             onPause={() => dispatch({ type: 'pause' })}
           />
+        )}
+
+        {state.overlay === 'games' && (
+          <GamePicker games={pickable} onPick={pickGame} onClose={closeOverlay} />
         )}
 
         {state.overlay === 'settings' && (

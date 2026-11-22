@@ -155,6 +155,8 @@ export type SessionAction =
   | { type: 'cameraOff' }
   /** attract → roulette. The winner is already decided here. */
   | { type: 'spin'; shortlist: WheelItem[]; chosenIndex: number }
+  /** attract → countdown: a game chosen from the 전체 게임 list, no roulette. */
+  | { type: 'pick'; item: WheelItem }
   /** roulette → countdown. There is no intro phase: a stranger does not read
    *  a how-to page, so the gesture demo plays inside the countdown. */
   | { type: 'spinDone' }
@@ -269,6 +271,18 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
         shortlist: a.shortlist,
         chosenIndex: a.chosenIndex,
         currentGame: a.shortlist[a.chosenIndex]?.id ?? null,
+        lastResult: null,
+        beatRecord: false,
+      };
+
+    case 'pick':
+      return {
+        ...s,
+        phase: 'countdown',
+        overlay: 'none',
+        shortlist: [a.item],
+        chosenIndex: 0,
+        currentGame: a.item.id,
         lastResult: null,
         beatRecord: false,
       };

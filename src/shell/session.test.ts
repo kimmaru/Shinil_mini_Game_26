@@ -80,6 +80,21 @@ describe('the guest loop', () => {
     expect(s.lastResult).toBeNull();
     expect(s.beatRecord).toBe(false);
   });
+
+  it('a game picked from 전체 게임 skips the roulette and closes the list', () => {
+    let s = sessionReducer(S({ phase: 'attract' }), { type: 'openOverlay', overlay: 'games' });
+    expect(s.overlay).toBe('games');
+    s = sessionReducer(
+      { ...s, lastResult: result(10), beatRecord: true },
+      { type: 'pick', item: WHEEL[5]! },
+    );
+    expect(s.phase).toBe('countdown');
+    expect(s.overlay).toBe('none');
+    expect(s.currentGame).toBe('g5');
+    expect(s.shortlist).toEqual([WHEEL[5]]);
+    expect(s.lastResult).toBeNull();
+    expect(s.beatRecord).toBe(false);
+  });
 });
 
 describe('기록', () => {
