@@ -20,7 +20,10 @@ export const manifest: MiniGameManifest = {
   durationMs: 40_000,
   // A star is worth 10 and arrives every 5 alternating strides, so the score
   // is distance ridden. See NEEDS.md for why cadence, not rotation, is read.
-  scoring: { kind: 'count', maxScore: 170, starCuts: [0.3, 0.55, 0.8] },
+  // Measured: alternating circles at 0.8 / 1.0 / 1.3 laps a second per hand
+  // score 100 / 130 / 170. swing-wide (both arms in phase, a lap every 2s)
+  // scores 50, which the first cut counts as playing.
+  scoring: { kind: 'count', maxScore: 170, starCuts: [0.25, 0.55, 0.8] },
 
   a11y: {
     keyboardFallback: true,

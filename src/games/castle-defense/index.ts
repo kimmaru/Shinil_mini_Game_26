@@ -97,11 +97,7 @@ class CastleDefense implements MiniGame {
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
-    const { w, h } = ctx.view;
-    this.wallTop = h * 0.8;
-    this.floorY = this.wallTop - h * 0.02;
-    this.fallG = Math.min(w, h) * 0.2;
-    this.vScale = h / 720;
+    this.onResize(ctx.view.w, ctx.view.h);
 
     this.swing = ctx.gestures.use('swing', { side: 'both' });
     this.spawner = new Spawner(
@@ -117,6 +113,14 @@ class CastleDefense implements MiniGame {
     this.ctx.audio.music({ bpm: 124 });
   }
 
+  /** Wall, floor and fall speed follow the live view. */
+  onResize(w: number, h: number): void {
+    this.wallTop = h * 0.8;
+    this.floorY = this.wallTop - h * 0.02;
+    this.fallG = Math.min(w, h) * 0.2;
+    this.vScale = h / 720;
+  }
+
   update(dt: number, f: PoseFrame): void {
     this.time += dt;
     if (this.footCd[0]! > 0) this.footCd[0] = this.footCd[0]! - dt;
@@ -126,6 +130,19 @@ class CastleDefense implements MiniGame {
 
     for (let i = 0, k = this.spawner.tick(dt); i < k; i++) this.spawnRock(p);
     this.rocks.step(dt, this.fallG);
+    // Bounce off the side edges: a rock knocked off-screen could never be
+    // hit again, yet would still "land" and break the combo.
+    const w = this.ctx.view.w;
+    for (let i = 0; i < this.rocks.n; i++) {
+      const r = this.rocks.r[i]!;
+      if (this.rocks.x[i]! < r) {
+        this.rocks.x[i] = r;
+        this.rocks.vx[i] = Math.abs(this.rocks.vx[i]!);
+      } else if (this.rocks.x[i]! > w - r) {
+        this.rocks.x[i] = w - r;
+        this.rocks.vx[i] = -Math.abs(this.rocks.vx[i]!);
+      }
+    }
 
     if (p) {
       const sw = this.swing.read(f);

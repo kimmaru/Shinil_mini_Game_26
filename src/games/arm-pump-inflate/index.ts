@@ -2,18 +2,24 @@
 //
 // Signal: average wrist height above the shoulder line, in shoulder-widths
 // (0 = wrists at shoulder height, about -1.5 = arms hanging). One rented `rep`
-// counts a pump on each rising crossing of `enter`, and only after the hands
-// fell below `exit` first. That 0.5 shoulder-width gap IS the amplitude floor:
-// vibrating the hands in place never crosses both lines, so it never counts.
+// counts a pump on each rising crossing of `enter` (just under the shoulders),
+// and only after the hands fell below `exit` (the belly) first. That 0.3
+// shoulder-width gap IS the amplitude floor: vibrating the hands in place never
+// crosses both lines, so it never counts. Both lines sit well inside a
+// waist-up 1.2 m frame: a hand that leaves the bottom (or, overhead, the top)
+// edge is frozen where it was last seen, lagging well short of the edge, so a
+// lower `exit` or higher `enter` stops counting fast pumps there. The copy
+// asks for "머리까지" (head height), not overhead, for the same reason.
 // The rep detector's own cooldown (250 ms) caps the pace at 4 pumps/s.
 //
 // Every pump inflates the balloon (loud: ladder pitch + sparkle); a full
 // balloon pops with a bang and a bonus. Resting only lets a little air out —
 // there is no failure state.
 import type {
-  Detector, EndReason, GameContext, GameResult, MiniGame,
-  PlayerPose, PoseFrame, Renderer,
+  Detector, EndReason, GameContext, GameEvent, GameResult, MiniGame,
+  PlayerPose, PlayOpts, PoseFrame, Renderer,
 } from '@/engine/types';
+import type { ImpactOpts } from '@/engine/fx/index';
 import { L, ny } from '@/engine/pose/landmarks';
 import { approach, clamp01, easeOutBack, lerp, pulse } from '@/engine/math';
 import { C, fade } from '@/engine/render/palette';
@@ -36,6 +42,16 @@ const LEAK_RATE = 0.4;
 const HUES = [322, 42, 140, 266, 8] as const;
 const HANDS = [L.LEFT_WRIST, L.RIGHT_WRIST] as const;
 const NEEDS = [L.LEFT_WRIST, L.RIGHT_WRIST, L.LEFT_SHOULDER, L.RIGHT_SHOULDER] as const;
+// Option objects, built once: onPump() runs inside update().
+const BAR: { labelKo: string; color: string } = { labelKo: t('fill'), color: C.hot };
+const IMPACT_PUMP: ImpactOpts = { color: C.hot, sprite: 'sparkle', label: LABEL_PUMP };
+const IMPACT_POP: ImpactOpts = { color: C.accent, sprite: 'sparkle', label: LABEL_POP };
+const PUMP_SFX: PlayOpts = { gain: 0.45 };
+const CRIT_SFX: PlayOpts = { gain: 0.7 };
+const SPARKLE_SFX: PlayOpts = { gain: 0.6 };
+const TOAST: { color: string; big: boolean } = { color: C.hot, big: true };
+const EV_PUMP: GameEvent = { kind: 'scored', points: PUMP_POINTS };
+const EV_POP: GameEvent = { kind: 'scored', points: POP_POINTS };
 
 /** Average wrist height above the shoulder line, shoulder-widths, +up.
  *  `n` is hip-centred with +y DOWN, so "above" is shoulderY minus wristY. */
@@ -64,13 +80,14 @@ class ArmPumpInflate implements MiniGame {
   private squash = 0;
   private popFlash = 0;
   private born = 1;
+  private barPct = 0;
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
     this.pump = ctx.gestures.use('rep', {
       signal: pumpSignal,
-      enter: -0.4,
-      exit: -0.9,
+      enter: -0.15,
+      exit: -0.45,
       needs: NEEDS,
       cooldownMs: 250,
     });
@@ -79,7 +96,15 @@ class ArmPumpInflate implements MiniGame {
 
   start(): void {
     this.ctx.hud.setScore(0);
-    this.ctx.hud.setBar('fill', 0, { labelKo: t('fill'), color: C.hot });
+    this.ctx.hud.setBar('fill', 0, BAR);
+  }
+
+  /** The bar is drawn in whole percent; only a change the child can see is sent. */
+  private setFill(v: number): void {
+    const pct = Math.round(v * 100);
+    if (pct === this.barPct) return;
+    this.barPct = pct;
+    this.ctx.hud.setBar('fill', pct / 100, BAR);
   }
 
   update(dt: number, f: PoseFrame): void {
@@ -91,7 +116,8 @@ class ArmPumpInflate implements MiniGame {
     const p = f.p1;
     this.player = p ?? null;
     if (p) {
-      this.handle = approach(this.handle, clamp01((pumpSignal(p) + 1.3) / 1.0), 22, dt);
+      // Belly-to-overhead travel (about -0.9..+0.3) spans the whole handle.
+      this.handle = approach(this.handle, clamp01((pumpSignal(p) + 0.9) / 1.2), 22, dt);
       const s = this.pump.read(f);
       if (s.ok && s.justCounted) this.onPump();
     }
@@ -100,7 +126,7 @@ class ArmPumpInflate implements MiniGame {
     if (this.time - this.lastPumpT > LEAK_AFTER) {
       if (this.air > 0) {
         this.air = Math.max(0, this.air - LEAK_RATE * dt);
-        this.ctx.hud.setBar('fill', this.air / this.need, { labelKo: t('fill'), color: C.hot });
+        this.setFill(this.air / this.need);
       }
       this.streak = 0;
     }
@@ -118,9 +144,9 @@ class ArmPumpInflate implements MiniGame {
     const { w, h } = this.ctx.view;
     const bx = w * 0.74;
     const by = h * 0.4;
-    this.ctx.fx.impact(bx, by, 'tap', { color: C.hot, sprite: 'sparkle', label: LABEL_PUMP });
-    this.ctx.audio.playLadder('boing', Math.min(this.streak, 12), { gain: 0.45 });
-    this.ctx.emit({ kind: 'scored', points: PUMP_POINTS });
+    this.ctx.fx.impact(bx, by, 'tap', IMPACT_PUMP);
+    this.ctx.audio.playLadder('boing', Math.min(this.streak, 12), PUMP_SFX);
+    this.ctx.emit(EV_PUMP);
 
     if (this.air >= this.need) {
       this.pops++;
@@ -129,14 +155,14 @@ class ArmPumpInflate implements MiniGame {
       this.need = Math.min(NEED_MAX, this.need + 1 - (this.pops % 2));
       this.popFlash = 1;
       this.born = 0;
-      this.ctx.fx.impact(bx, by, 'big', { color: C.accent, sprite: 'sparkle', label: LABEL_POP });
-      this.ctx.audio.play('hit.crit', { gain: 0.7 });
-      this.ctx.audio.play('sparkle', { gain: 0.6 });
-      this.ctx.hud.toast(this.pops % 2 === 0 ? t('nice') : t('pop'), { color: C.hot, big: true });
-      this.ctx.emit({ kind: 'scored', points: POP_POINTS });
+      this.ctx.fx.impact(bx, by, 'big', IMPACT_POP);
+      this.ctx.audio.play('hit.crit', CRIT_SFX);
+      this.ctx.audio.play('sparkle', SPARKLE_SFX);
+      this.ctx.hud.toast(this.pops % 2 === 0 ? t('nice') : t('pop'), TOAST);
+      this.ctx.emit(EV_POP);
     }
     this.ctx.hud.setScore(this.score);
-    this.ctx.hud.setBar('fill', this.air / this.need, { labelKo: t('fill'), color: C.hot });
+    this.setFill(this.air / this.need);
   }
 
   render(g: Renderer, _interp: number): void {
@@ -187,11 +213,12 @@ class ArmPumpInflate implements MiniGame {
 
     if (this.time - this.lastPumpT > 2) {
       const k = 0.92 + 0.08 * pulse((this.time * 1.5) % 1);
-      g.text(t('prompt'), g.w * 0.4, g.h * 0.12, {
+      // Below the DOM HUD: its top band, and the bar/combo column at the left.
+      g.text(t('prompt'), g.w * 0.36, g.h * 0.3, {
         size: 56 * s * k, weight: 800, display: true, align: 'center', baseline: 'middle',
         fill: C.hot, stroke: C.white, sw: 8 * s,
       });
-      g.text(t('promptSub'), g.w * 0.4, g.h * 0.2, {
+      g.text(t('promptSub'), g.w * 0.36, g.h * 0.38, {
         size: 38 * s, weight: 700, align: 'center', baseline: 'middle',
         fill: C.text, stroke: C.white, sw: 6 * s,
       });

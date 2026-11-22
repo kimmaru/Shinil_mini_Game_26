@@ -22,11 +22,11 @@ export const manifest: MiniGameManifest = {
   gestures: ['reach'],
 
   durationMs: 50_000,
-  // ~41 stars cross in a round. A catch is 10, a catch swept the way the star
-  // is going is 30. A competent 9-year-old catches ~28 with over half swept
-  // right (~600); maxScore sits below that so 3 stars is reachable. The dev
-  // clip, a blind arm-windmill, catches ~14 by luck and lands one star.
-  scoring: { kind: 'count', maxScore: 520, starCuts: [0.3, 0.55, 0.8] },
+  // ~43 stars cross in a round. A catch is 10, a catch swept the way the star
+  // is going is 30. A pointer oracle at the 1.2 m framing catches 21-34
+  // (430-720); a competent 9-year-old ~25 with half swept right (~500). The
+  // dev clip, a blind arm-windmill, catches up to 19 (390): 2 stars, not 3.
+  scoring: { kind: 'count', maxScore: 560, starCuts: [0.3, 0.55, 0.8] },
 
   a11y: {
     keyboardFallback: true,

@@ -6,9 +6,11 @@
 // the segment the palm travelled THIS frame, which is what `SwingSignal.from`
 // and `.to` are for.
 import type {
-  Detector, EndReason, GameContext, GameResult, MiniGame,
-  PlayerPose, PoseFrame, Renderer,
+  Detector, EndReason, GameContext, GameResult, MiniGame, Paint,
+  PlayerPose, PlayOpts, PoseFrame, Renderer,
 } from '@/engine/types';
+import type { ImpactOpts, TrailOpts } from '@/engine/fx/index';
+import type { SpriteOpts } from '@/engine/render/sprite';
 import { L, ny, visible } from '@/engine/pose/landmarks';
 import { clamp01, easeOutBack, hitSegCircle, lerp, TAU } from '@/engine/math';
 import { Entities } from '@/engine/entities';
@@ -60,6 +62,27 @@ const LANE_FOOT_R = 3;
 const KICK_WINDOW_SEC = 0.22;
 
 const HANDS = [L.LEFT_WRIST, L.RIGHT_WRIST] as const;
+const SKELETON = { alpha: 0.6, emphasize: HANDS };
+
+// Built once: update() and render() build no objects and no strings.
+const BLADE = hue(manifest.theme?.hue ?? 205, 82, 46);
+const FRUIT_COL = [hue(FRUIT_HUE[0], 82, 50), hue(FRUIT_HUE[1], 82, 50), hue(FRUIT_HUE[2], 82, 50)] as const;
+const LEAF = hue(125, 70, 38);
+const GLINT = fade(C.white, 0.7);
+const GROUND = fade(KEYLINE, 0.07);
+const GROUND_LINE = fade(KEYLINE, 0.22);
+const RIM_FRUIT = fade(KEYLINE, 0.34);
+const RIM_ROCK = fade(KEYLINE, 0.3);
+const FOOT_IDLE = fade(C.info, 0.4);
+const SFX_SWING: PlayOpts = { gain: 0.26 };
+const SFX_KICK: PlayOpts = { gain: 0.5 };
+const SFX_ROCK: PlayOpts = { gain: 0.42 };
+const TOAST_KICK = { color: C.info };
+const TOAST_DOUBLE = { color: C.accent };
+const TOAST_TRIPLE = { color: C.accent, big: true };
+const TOAST_FRENZY = { color: C.accent, big: true };
+const TOAST_ROCK = { color: C.textDim };
+const EV_MISS = { kind: 'miss' as const };
 
 class FruitSlash implements MiniGame {
   private ctx!: GameContext;
@@ -86,6 +109,14 @@ class FruitSlash implements MiniGame {
   private ankPrevOk = false;
   /** '+0'..'+63', so a hit never builds a string in the hot path. */
   private readonly labels: string[] = [];
+  private readonly trailHand: TrailOpts = { color: BLADE, width: 14, life: 0.22 };
+  private readonly trailKick: TrailOpts = { color: C.info, width: 9, life: 0.22 };
+  private readonly hitFx: ImpactOpts = { color: '', sprite: 'burst', label: '' };
+  private readonly evScored = { kind: 'scored' as const, points: 0 };
+  private readonly pt: Paint = {};
+  private readonly soHalf: SpriteOpts = { scaleY: 0.52 };
+  private readonly soFruit: SpriteOpts = {};
+  private readonly soRock: SpriteOpts = {};
   private player: PlayerPose | null = null;
 
   private score = 0;
@@ -144,7 +175,7 @@ class FruitSlash implements MiniGame {
     const frenzy = this.inFrenzy();
     if (frenzy && !this.frenzyShown) {
       this.frenzyShown = true;
-      this.ctx.hud.toast(t('frenzy'), { color: C.accent, big: true });
+      this.ctx.hud.toast(t('frenzy'), TOAST_FRENZY);
       this.ctx.audio.play('bonus');
       this.spawner.delay(0.1);
     }
@@ -187,15 +218,11 @@ class FruitSlash implements MiniGame {
     if (this.strokeOn[lane] === 0) {
       this.strokeOn[lane] = 1;
       this.strokeCuts[lane] = 0;
-      if (!kick) this.ctx.audio.play('swing', { gain: 0.26 });
+      if (!kick) this.ctx.audio.play('swing', SFX_SWING);
     }
     // The blade trail IS this game. Drawn by the engine on top of the game, so
     // it survives hitstop and never fights the skeleton overlay.
-    this.ctx.fx.trail(x0, y0, x1, y1, {
-      color: kick ? C.info : hue(manifest.theme?.hue ?? 205, 82, 46),
-      width: kick ? 9 : 14,
-      life: 0.22,
-    });
+    this.ctx.fx.trail(x0, y0, x1, y1, kick ? this.trailKick : this.trailHand);
     this.slice(lane, x0, y0, x1, y1, kick);
   }
 
@@ -245,25 +272,26 @@ class FruitSlash implements MiniGame {
     // One call, one grade: particles, ring, shake, hitstop, squash and the
     // floating score all land together at the catalogue's standard weight.
     const level = inStroke >= STROKE_BONUS_AT ? 'big' : variety === STAR_FRUIT ? 'big' : 'hit';
-    this.ctx.fx.impact(x, y, level, {
-      color: hue(FRUIT_HUE[variety]!, 82, 50),
-      sprite: variety === STAR_FRUIT ? 'sparkle' : 'burst',
-      label: this.labels[points] ?? '',
-    });
+    const fxo = this.hitFx;
+    fxo.color = FRUIT_COL[variety] ?? FRUIT_COL[0];
+    fxo.sprite = variety === STAR_FRUIT ? 'sparkle' : 'burst';
+    fxo.label = this.labels[points] ?? '';
+    this.ctx.fx.impact(x, y, level, fxo);
     // Rising pitch per combo step: the cheapest strong reward signal there is.
     this.ctx.audio.playLadder(variety === STAR_FRUIT ? 'chime' : 'pop', this.combo);
     if (kick) {
-      this.ctx.audio.play('hit.hard', { gain: 0.5 });
-      this.ctx.hud.toast(t('kick'), { color: C.info });
+      this.ctx.audio.play('hit.hard', SFX_KICK);
+      this.ctx.hud.toast(t('kick'), TOAST_KICK);
     } else if (inStroke === 2) {
-      this.ctx.hud.toast(t('double'), { color: C.accent });
+      this.ctx.hud.toast(t('double'), TOAST_DOUBLE);
     } else if (inStroke === STROKE_BONUS_AT) {
       this.ctx.audio.play('combo.up');
-      this.ctx.hud.toast(t('triple'), { color: C.accent, big: true });
+      this.ctx.hud.toast(t('triple'), TOAST_TRIPLE);
     }
     this.ctx.hud.setScore(this.score);
     this.ctx.hud.setCombo(this.combo);
-    this.ctx.emit({ kind: 'scored', points });
+    this.evScored.points = points;
+    this.ctx.emit(this.evScored);
   }
 
   /** Two halves tumbling apart along the blade's normal. The cross-section is
@@ -301,9 +329,9 @@ class FruitSlash implements MiniGame {
     // A rock is a QUIET penalty: no score loss, no red, no shake. The combo
     // break and the missing reward are the whole feedback.
     this.ctx.fx.miss(x, y);
-    this.ctx.audio.play('thud', { gain: 0.42 });
-    this.ctx.hud.toast(t('rock'), { color: C.textDim });
-    this.ctx.emit({ kind: 'miss' });
+    this.ctx.audio.play('thud', SFX_ROCK);
+    this.ctx.hud.toast(t('rock'), TOAST_ROCK);
+    this.ctx.emit(EV_MISS);
   }
 
   /** Kicks. The rep counter owns the state machine; this owns the 0.22 s
@@ -401,14 +429,14 @@ class FruitSlash implements MiniGame {
 
     // A ground band, so a fruit launching from "below the floor" reads as
     // thrown rather than as spawning in midair.
-    g.rect(0, g.h * 0.93, g.w, g.h * 0.07, { fill: fade(KEYLINE, 0.07) });
-    g.line(0, g.h * 0.93, g.w, g.h * 0.93, 3 * g.s, { stroke: fade(KEYLINE, 0.22) });
+    g.rect(0, g.h * 0.93, g.w, g.h * 0.07, this.paint(GROUND, undefined, 0));
+    g.line(0, g.h * 0.93, g.w, g.h * 0.93, 3 * g.s, this.paint(undefined, GROUND_LINE, 0));
 
     // Always draw the body. Even with latency, visible response to movement
     // reads as "it can see me"; a game that draws nothing reads as broken.
     if (this.player) {
       g.ghostBody(this.player, 0.09);
-      g.skeleton(this.player, { alpha: 0.6, emphasize: HANDS });
+      g.skeleton(this.player, SKELETON);
     }
 
     for (let i = 0; i < this.bits.n; i++) {
@@ -422,29 +450,32 @@ class FruitSlash implements MiniGame {
       if (kind === HALF) {
         g.alpha(clamp01(1 - age) * 0.92);
         const v = this.bits.hp[i]!;
-        g.sprite(FRUIT_SPRITE[v]!, x, y, r * 1.5, {
-          rot, hue: FRUIT_HUE[v]!, scaleY: 0.52,
-        });
+        const so = this.soHalf;
+        so.rot = rot;
+        so.hue = FRUIT_HUE[v]!;
+        g.sprite(FRUIT_SPRITE[v]!, x, y, r * 1.5, so);
       } else if (kind === ROCK) {
         // Shape, not colour: a lumpy grey rock next to round bright fruit, so
         // a red-green colour-blind child reads the rule off the silhouette.
-        g.circle(x, y, r * 1.22, { stroke: fade(KEYLINE, 0.3), sw: 3 * g.s });
-        g.sprite('rock', x, y, r * 2.1, { rot });
+        g.circle(x, y, r * 1.22, this.paint(undefined, RIM_ROCK, 3 * g.s));
+        this.soRock.rot = rot;
+        g.sprite('rock', x, y, r * 2.1, this.soRock);
       } else {
         // Nothing simply appears: 0.86 -> 1 with easeOutBack.
         const grow = age < 0.1 ? 0.86 + 0.14 * easeOutBack(age / 0.1) : 1;
         const v = this.bits.hp[i]!;
-        g.circle(x, y, r * 1.16 * grow, { stroke: fade(KEYLINE, 0.34), sw: 3 * g.s });
-        g.sprite(FRUIT_SPRITE[v]!, x, y, r * 2 * grow, { rot, hue: FRUIT_HUE[v]! });
+        g.circle(x, y, r * 1.16 * grow, this.paint(undefined, RIM_FRUIT, 3 * g.s));
+        const so = this.soFruit;
+        so.rot = rot;
+        so.hue = FRUIT_HUE[v]!;
+        g.sprite(FRUIT_SPRITE[v]!, x, y, r * 2 * grow, so);
         if (v !== STAR_FRUIT) {
           // A leaf and a glint, so a round tinted disc reads as fruit. They
           // turn with the fruit, which is what makes the spin visible.
-          g.circle(x + Math.sin(rot) * r * 0.98, y - Math.cos(rot) * r * 0.98, r * 0.2, {
-            fill: hue(125, 70, 38),
-          });
-          g.circle(x + Math.cos(rot - 2.3) * r * 0.5, y + Math.sin(rot - 2.3) * r * 0.5, r * 0.14, {
-            fill: fade(C.white, 0.7),
-          });
+          g.circle(x + Math.sin(rot) * r * 0.98, y - Math.cos(rot) * r * 0.98, r * 0.2,
+            this.paint(LEAF, undefined, 0));
+          g.circle(x + Math.cos(rot - 2.3) * r * 0.5, y + Math.sin(rot - 2.3) * r * 0.5, r * 0.14,
+            this.paint(GLINT, undefined, 0));
         }
       }
       g.restore();
@@ -453,19 +484,16 @@ class FruitSlash implements MiniGame {
     if (this.player) {
       const p = this.player;
       const hr = 20 * g.s;
-      const blade = hue(manifest.theme?.hue ?? 205, 82, 46);
       for (let s = 0; s < 2; s++) {
         const j = s === 0 ? L.LEFT_WRIST : L.RIGHT_WRIST;
-        g.circle(p.px[j * 2]!, p.px[j * 2 + 1]!, hr, { stroke: blade, sw: 4 * g.s, glow: 10 });
+        g.circle(p.px[j * 2]!, p.px[j * 2 + 1]!, hr, this.paint(undefined, BLADE, 4 * g.s, 10));
       }
       if (this.lowerBodyOk) {
         for (let s = 0; s < 2; s++) {
           const j = s === 0 ? L.LEFT_ANKLE : L.RIGHT_ANKLE;
           const live = this.kickLeft[s]! > 0;
-          g.circle(p.px[j * 2]!, p.px[j * 2 + 1]!, hr * (live ? 1.3 : 0.9), {
-            stroke: live ? C.info : fade(C.info, 0.4),
-            sw: 3 * g.s,
-          });
+          g.circle(p.px[j * 2]!, p.px[j * 2 + 1]!, hr * (live ? 1.3 : 0.9),
+            this.paint(undefined, live ? C.info : FOOT_IDLE, 3 * g.s));
         }
       }
     }
@@ -473,8 +501,18 @@ class FruitSlash implements MiniGame {
     if (this.inFrenzy()) {
       // A frame around the play area, so "frenzy" is visible with sound off.
       const pulse = 4 + 3 * Math.sin(g.t * TAU * 2.4);
-      g.rect(0, 0, g.w, g.h, { stroke: C.accent, sw: pulse * g.s });
+      g.rect(0, 0, g.w, g.h, this.paint(undefined, C.accent, pulse * g.s));
     }
+  }
+
+  /** The one reusable Paint: render() builds no objects. */
+  private paint(fill: string | undefined, stroke: string | undefined, sw: number, glow = 0): Paint {
+    const pt = this.pt;
+    pt.fill = fill;
+    pt.stroke = stroke;
+    pt.sw = sw;
+    pt.glow = glow;
+    return pt;
   }
 
   end(_reason: EndReason): GameResult {

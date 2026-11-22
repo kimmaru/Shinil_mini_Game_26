@@ -176,8 +176,10 @@ export class MediaPipePoseSource implements PoseSource {
 
   private lastVideoTime = -1;
   private lastTimestampMs = 0;
-  /** Wall-clock ms of the last frame SENT to inference, for the rate throttle. */
+  /** Wall-clock ms of the last frame SENT to inference. */
   private lastSubmitMs = 0;
+  /** Wall-clock ms the rate throttle next lets a frame through. */
+  private nextDueMs = 0;
   /** Wall-clock seconds of the last inference, for the fps meter only. */
   private lastInferT = -1;
   /** Wall-clock ms the last inferred frame was captured, for `inferenceAgeMs`. */
@@ -538,6 +540,14 @@ export class MediaPipePoseSource implements PoseSource {
       this.workerErrs = 0;
       if (this.disposed) return;
       this.ingest(m.data, m.n, this.inFlightAt);
+      // The camera usually delivered a newer frame while this one was being
+      // inferred. Send it now instead of idling until the next frame callback:
+      // an inference just over 33 ms otherwise waits for the frame AFTER next,
+      // which halves a 30 fps camera to 15 Hz.
+      if (this.running && !this.paused && !(typeof document !== 'undefined' && document.hidden)) {
+        const nowMs = this.now();
+        this.submit(nowMs, this.lastTimestampMs + (nowMs - this.lastSubmitMs));
+      }
       return;
     }
     if (m.type === 'detectError') {
@@ -626,6 +636,9 @@ export class MediaPipePoseSource implements PoseSource {
   // ── frames, internals ────────────────────────────────────────────────────
 
   private pump = (): void => {
+    // Never two callback chains: resume() and the visibility handler can both
+    // re-arm, and each extra chain inferred every frame once more.
+    this.cancelPump();
     if (!this.running || this.paused || this.disposed) return;
     const video = this.o.video;
     const useRvfc = typeof video.requestVideoFrameCallback === 'function';
@@ -651,8 +664,20 @@ export class MediaPipePoseSource implements PoseSource {
     this.rvfcHandle = 0;
     this.rafHandle = 0;
     if (!this.running || this.paused || this.disposed) return;
-    const video = this.o.video;
     const nowMs = this.now();
+    if (this.worker && this.inFlight && nowMs - this.watchSince > WORKER_STALL_MS) {
+      this.failOver(`no reply from the worker for ${WORKER_STALL_MS} ms`);
+      this.pump();
+      return;
+    }
+    this.submit(nowMs, meta ? meta.mediaTime * 1000 : nowMs);
+    this.pump();
+  };
+
+  /** Infer the frame the video is showing now, if it is new and the rate
+   *  allows. `frameMs` is that frame's time on the detector's clock. */
+  private submit(nowMs: number, frameMs: number): void {
+    const video = this.o.video;
     const onWorker = this.worker !== undefined;
     const lm = this.landmarker;
 
@@ -660,18 +685,17 @@ export class MediaPipePoseSource implements PoseSource {
     const hz = onWorker ? this.config.targetHz : Math.min(this.config.targetHz, MAIN_THREAD_MAX_HZ);
     const minGap = 1000 / Math.max(1, hz);
     const fresh = video.currentTime !== this.lastVideoTime;
-    if (onWorker && this.inFlight && nowMs - this.watchSince > WORKER_STALL_MS) {
-      this.failOver(`no reply from the worker for ${WORKER_STALL_MS} ms`);
-      this.pump();
-      return;
-    }
     const ready = onWorker ? !this.inFlight : lm !== undefined;
-    if (ready && fresh && nowMs - this.lastSubmitMs >= minGap - 2 && video.videoWidth > 0) {
+    if (ready && fresh && nowMs >= this.nextDueMs - 2 && video.videoWidth > 0) {
       this.lastVideoTime = video.currentTime;
       this.lastSubmitMs = nowMs;
+      // Pace by the AVERAGE rate, not by the gap to the last frame: a strict
+      // 40 ms gap (25 Hz) refuses every other frame of a 30 fps camera, which
+      // is 15 Hz. Lateness is never banked, so this cannot burst.
+      this.nextDueMs = Math.max(this.nextDueMs + minGap, nowMs);
       // Strictly increasing, always. mediaTime is the honest frame clock, but
       // it repeats if the camera stalls, so clamp upward.
-      const ts = nextTimestamp(meta ? meta.mediaTime * 1000 : nowMs, this.lastTimestampMs);
+      const ts = nextTimestamp(frameMs, this.lastTimestampMs);
       this.lastTimestampMs = ts;
       if (onWorker) {
         // Off the main thread: a copy of the frame goes over, the result
@@ -695,8 +719,7 @@ export class MediaPipePoseSource implements PoseSource {
         }
       }
     }
-    this.pump();
-  };
+  }
 
   /** One inference's worth of poses, flattened as [pose][joint][x, y, vis],
    *  stamped with the wall-clock ms the frame was CAPTURED — so the latency of
@@ -771,6 +794,7 @@ export class MediaPipePoseSource implements PoseSource {
     this.lastInferT = -1;
     this.lastInferMs = 0;
     this.lastSubmitMs = 0;
+    this.nextDueMs = 0;
     this.fpsMeter.reset();
   }
 
@@ -811,6 +835,8 @@ export class MediaPipePoseSource implements PoseSource {
       this.resetTimeBase();
       this.identity.teleport();
       this.info.warning = undefined;
+      // A frame callback registered on the old stream may never fire again.
+      if (this.running && !this.paused) this.pump();
     } catch (e) {
       this.warn(`카메라를 다시 켤 수 없어요. (${errText(e)})`);
     } finally {

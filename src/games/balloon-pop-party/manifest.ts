@@ -21,9 +21,11 @@ export const manifest: MiniGameManifest = {
   gestures: ['reach'],
 
   durationMs: 40_000,
-  // ~110 balloons spawn; a competent 9-year-old pops ~50-60 plus a few 10-combo
-  // bonuses. The dev clip (stepping side to side) scores ~80% of maxScore.
-  scoring: { kind: 'count', maxScore: 80, starCuts: [0.22, 0.48, 0.74] },
+  // ~130 balloons and ~14 spikes spawn; popping all of them with no spike is
+  // ~195 with the 10-combo bonuses. Moving a lot is most of the game, so the
+  // bar sits above flailing: measured at 1440x900, seeds 1-5, arm flailing at
+  // 1.2 m tops out at 161 (0.70, two stars), the step-lr dev clip at 84 (one).
+  scoring: { kind: 'count', maxScore: 230, starCuts: [0.22, 0.48, 0.74] },
 
   a11y: {
     keyboardFallback: true,

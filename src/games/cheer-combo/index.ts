@@ -14,7 +14,7 @@
 // means the player moved after the cue appeared.
 //
 // Two rented raise detectors do the work: `above: 0.25` for the ordinary cues
-// and a stricter `above: 0.85` for 만세. A miss is quiet: the combo ends, a
+// and a stricter `above: 0.6` for 만세. A miss is quiet: the combo ends, a
 // soft "다음!" shows, and the next cue comes after a short rest.
 import type {
   Detector, EndReason, GameContext, GameResult, MiniGame,
@@ -77,7 +77,7 @@ class CheerCombo implements MiniGame {
   private window = 0;
   private windowTotal = 1;
   private rest = FIRST_REST;
-  private lastHit = true;
+  private lastHit = false;
   private flash = 0;
   private born = 1;
   private lastGoodX = 0;
@@ -86,7 +86,10 @@ class CheerCombo implements MiniGame {
   init(ctx: GameContext): void {
     this.ctx = ctx;
     this.raise = ctx.gestures.use('raise', { side: 'either', above: 0.25 });
-    this.raiseOver = ctx.gestures.use('raise', { side: 'both', above: 0.85 });
+    // 0.6, not higher: at ~1.2 m the top of the frame is only ~0.9 shoulder
+    // widths above the shoulders, and the wrist must still be visible when
+    // it crosses the line for the detector to latch.
+    this.raiseOver = ctx.gestures.use('raise', { side: 'both', above: 0.6 });
     for (let i = 0; i < CROWD_CAP; i++) {
       this.crowdX[i] = (i + 0.5 + randRange(ctx.rng, -0.25, 0.25)) / CROWD_CAP;
       this.crowdHue[i] = randRange(ctx.rng, 0, 360);
@@ -114,7 +117,10 @@ class CheerCombo implements MiniGame {
     const r = this.raise.read(f);
     const rOver = this.raiseOver.read(f);
     // Nobody in frame: freeze the clock rather than punish an empty room.
-    if (!p || !r.ok) return;
+    // Wrists out of frame is NOT nobody: at ~1.2 m relaxed hands hang below
+    // the bottom edge, which simply means "hands down" (see satisfied()), so
+    // the cue clock keeps running.
+    if (!p) return;
 
     const frac = clamp01(this.time / (manifest.durationMs / 1000) / RAMP_UNTIL);
 
@@ -134,6 +140,10 @@ class CheerCombo implements MiniGame {
   /** Is the player's CURRENT pose a correct answer to `kind`? Reads only the
    *  rented detectors' debounced booleans — no raw threshold here. */
   private satisfied(kind: number, r: SignalOf<'raise'>, rOver: SignalOf<'raise'>): boolean {
+    // With no wrist visible the detectors HOLD their last latch: a hand that
+    // dropped below the frame released it on the way down (= hands down),
+    // and one raised out of the top keeps it (= still up). Forcing "down"
+    // here would fail every 만세 whose wrists leave the top of the frame.
     switch (kind) {
       case CUE_L: return r.left && !r.right;
       case CUE_R: return r.right && !r.left;
@@ -180,12 +190,9 @@ class CheerCombo implements MiniGame {
         label: LABELS[Math.min(pts, 40)],
       });
       this.ctx.audio.playLadder('pop', this.combo);
-      if (this.combo % 4 === 0) {
-        this.ctx.audio.play('combo.up');
-        this.ctx.hud.toast(this.combo >= 12 ? t('huge') : this.combo >= 8 ? t('wow') : t('nice'), {
-          color: C.accent,
-        });
-      }
+      // The cheer itself is the banner's rest text (drawBanner): a HUD toast
+      // would land on top of the next cue, which now sits in the same band.
+      if (this.combo % 4 === 0) this.ctx.audio.play('combo.up');
       this.ctx.hud.setScore(this.score);
       this.ctx.hud.setCombo(this.combo);
       this.ctx.emit({ kind: 'scored', points: pts });
@@ -228,8 +235,9 @@ class CheerCombo implements MiniGame {
     const leftOn = live && this.cueKind !== CUE_R;
     const rightOn = live && this.cueKind !== CUE_L;
     const high = live && this.cueKind === CUE_MANSAE;
-    this.drawHandMarker(g, g.w * 0.14, high ? g.h * 0.3 : g.h * 0.52, leftOn);
-    this.drawHandMarker(g, g.w * 0.86, high ? g.h * 0.3 : g.h * 0.52, rightOn);
+    // Left column below 0.26h + the marker radius: the HUD's combo pill lives above.
+    this.drawHandMarker(g, g.w * 0.14, high ? g.h * 0.36 : g.h * 0.52, leftOn);
+    this.drawHandMarker(g, g.w * 0.86, high ? g.h * 0.36 : g.h * 0.52, rightOn);
 
     if (this.player) {
       g.ghostBody(this.player, 0.1);
@@ -296,7 +304,8 @@ class CheerCombo implements MiniGame {
     const bh = 150 * s;
     const grow = live ? easeOutBack(this.born) : 1;
     const bx = g.w / 2 - bw / 2;
-    const by = g.h * 0.03;
+    // Below the DOM HUD row (its goal text sits centred at the very top).
+    const by = bx < g.w * 0.25 ? g.h * 0.26 : g.h * 0.18;
 
     g.save();
     g.translate(g.w / 2, by + bh / 2);
@@ -312,7 +321,10 @@ class CheerCombo implements MiniGame {
         fill: col, stroke: C.white, sw: 6 * s,
       });
     } else {
-      g.text(this.lastHit ? t('nice') : t('next'), g.w / 2, by + bh * 0.5, {
+      const msg = this.lastHit
+        ? (this.combo >= 12 ? t('huge') : this.combo >= 8 ? t('wow') : t('nice'))
+        : this.hits + this.misses === 0 ? t('ready') : t('next');
+      g.text(msg, g.w / 2, by + bh * 0.5, {
         size: 64 * s, weight: 800, display: true, align: 'center', baseline: 'middle',
         fill: col, stroke: C.white, sw: 6 * s,
       });

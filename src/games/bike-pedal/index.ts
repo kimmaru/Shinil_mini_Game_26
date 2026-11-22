@@ -53,6 +53,9 @@ class BikePedal implements MiniGame {
   private strideRate = 0;
   private speed = 0;
   private lastStrideT = -10;
+  /** Time of each hand's previous lap (rep), for its own cadence. */
+  private lapL = -1;
+  private lapR = -1;
   private lastSide: 0 | 1 | 2 = 0;
   private strides = 0;
   private bestRate = 0;
@@ -124,15 +127,19 @@ class BikePedal implements MiniGame {
   }
 
   private confirmStride(side: 1 | 2): void {
-    if (this.lastSide === side) return;
     const now = this.time;
-    if (this.lastStrideT >= 0 && now - this.lastStrideT < 5) {
-      const gap = now - this.lastStrideT;
-      if (gap > 1e-3) {
-        const inst = 1 / gap;
-        this.strideRate = this.strideRate > 0 ? this.strideRate + (inst - this.strideRate) * 0.4 : inst;
-        if (this.strideRate > this.bestRate) this.bestRate = this.strideRate;
-      }
+    // Cadence comes from each hand's OWN lap time, not from the gap to the
+    // other hand: two hands flapped together fire ~50ms apart, and 1/50ms
+    // read as a 20-strides/sec sprint. Two strides per lap; a lap faster than
+    // 0.5s (4 strides/sec) is capped.
+    const prev = side === 1 ? this.lapL : this.lapR;
+    if (side === 1) this.lapL = now;
+    else this.lapR = now;
+    if (this.lastSide === side) return;
+    if (prev >= 0 && now - prev < 5) {
+      const inst = 2 / Math.max(now - prev, 0.5);
+      this.strideRate = this.strideRate > 0 ? this.strideRate + (inst - this.strideRate) * 0.4 : inst;
+      if (this.strideRate > this.bestRate) this.bestRate = this.strideRate;
     }
     this.lastStrideT = now;
     this.lastSide = side;
@@ -196,17 +203,18 @@ class BikePedal implements MiniGame {
 
     if (this.time - this.lastStrideT > 1.6) {
       const k = 0.92 + 0.08 * pulse((this.time * 1.5) % 1);
-      g.text(t('prompt'), g.w / 2, g.h * 0.12, {
+      // Below the DOM HUD's top band (which ends ~0.17h).
+      g.text(t('prompt'), g.w / 2, g.h * 0.24, {
         size: 56 * s * k, weight: 800, display: true, align: 'center', baseline: 'middle',
         fill: C.primaryHi, stroke: C.white, sw: 8 * s,
       });
-      g.text(t('promptSub'), g.w / 2, g.h * 0.2, {
+      g.text(t('promptSub'), g.w / 2, g.h * 0.32, {
         size: 38 * s, weight: 700, align: 'center', baseline: 'middle',
         fill: C.text, stroke: C.white, sw: 6 * s,
       });
       // Two orbit rings with a dot each, half a lap apart: "take turns".
       const ph = this.time * 3;
-      const ry = g.h * 0.36;
+      const ry = g.h * 0.44;
       const rr = 62 * s;
       for (let i = 0; i < 2; i++) {
         const cx = g.w * (i === 0 ? 0.68 : 0.86);

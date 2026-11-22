@@ -177,7 +177,8 @@ class WaveJump implements MiniGame {
       this.cleared++;
       this.combo++;
       if (this.combo > this.bestCombo) this.bestCombo = this.combo;
-      this.score += 4 + Math.floor(this.combo / 3);
+      const pts = 4 + Math.floor(this.combo / 3);
+      this.score += pts;
       this.ctx.fx.burst(this.ctx.view.w / 2, y, {
         count: 16, color: hue(manifest.theme!.hue), sprite: 'droplet', speed: 380, gravity: 500,
       });
@@ -186,7 +187,7 @@ class WaveJump implements MiniGame {
       if (this.combo % 3 === 0) this.ctx.hud.toast(t('nice'), { color: C.accent });
       this.ctx.hud.setScore(this.score);
       this.ctx.hud.setCombo(this.combo);
-      this.ctx.emit({ kind: 'scored', points: 4 });
+      this.ctx.emit({ kind: 'scored', points: pts });
       return;
     }
     // Soaked: a splash, a broken combo, and nothing else. No scolding, no

@@ -1,7 +1,5 @@
 const S = {
   goal: '청기·백기를 지시대로!',
-  nice: '좋아요!',
-  wow: '정확해요!',
   keepWarn: '말하지 않은 깃발은 그대로 두세요!',
   up: '올려',
   down: '내려',
@@ -36,7 +34,11 @@ export interface Instruction {
 }
 
 /**
- * 8 plain instructions (4 single-flag, 4 two-flag) + 6 함정 (trap) ones.
+ * 8 plain instructions (4 single-flag, 4 two-flag) + 4 함정 (trap) ones.
+ * A trap is only served when its "don't" flag already sits at the target
+ * (index.ts trapFair), so "X 하지 말고" always means "leave X alone". The two
+ * double negatives ("…하지 마!" twice) could never need a move under that
+ * rule and were removed.
  * Every trap resolves to one of the same target combinations a plain
  * instruction can reach — the trick is entirely in the wording, never in a
  * target state a plain instruction could not also produce, which is what
@@ -86,13 +88,5 @@ export const INSTRUCTIONS: readonly Instruction[] = [
   { blue: 'down', white: 'up', trap: true, clauses: [
     { textKo: '백기 내리지 말고,', flag: 'white', dir: 'down', negate: true },
     { textKo: '청기 내려!', flag: 'blue', dir: 'down', negate: false },
-  ] },
-  { blue: 'up', white: 'up', trap: true, clauses: [
-    { textKo: '청기 내리지 말고,', flag: 'blue', dir: 'down', negate: true },
-    { textKo: '백기도 내리지 마!', flag: 'white', dir: 'down', negate: true },
-  ] },
-  { blue: 'down', white: 'down', trap: true, clauses: [
-    { textKo: '백기 올리지 말고,', flag: 'white', dir: 'up', negate: true },
-    { textKo: '청기도 올리지 마!', flag: 'blue', dir: 'up', negate: true },
   ] },
 ];

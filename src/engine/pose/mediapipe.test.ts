@@ -17,6 +17,7 @@ import {
   cameraConstraints, INFER_SHORT_SIDE, inferResize, MediaPipePoseSource, waitForVideo, workerSupported,
 } from './mediapipe';
 import { TIER_CONFIG } from './capability';
+import { FpsMeter } from './frame';
 import { flattenPoses, LM_STRIDE, nextTimestamp, visionWasmPaths } from './poseWorkerProtocol';
 
 describe('cameraConstraints', () => {
@@ -303,6 +304,63 @@ describe('MediaPipePoseSource start-up fallbacks', () => {
     expect(w.terminated).toBe(true);
   });
 
+  it('sends the newest frame as soon as a result comes back, not one frame callback later', async () => {
+    // An inference just over 33 ms would otherwise always wait for the frame
+    // after next: a 30 fps camera measured exactly 15 Hz.
+    stubWorkerEnv();
+    const { video, cbs, raw } = fakeVideo();
+    const src = source(video);
+    await src.start();
+    const w = FakeWorker.last!;
+    const detects = (): number => w.posted.filter((p) => p.msg.type === 'detect').length;
+    const result = (): void => w.onmessage?.({ data: { type: 'result', n: 0, data: new Float32Array(0) } });
+
+    raw.currentTime = 1;
+    cbs.at(-1)!(0, { mediaTime: 1 });
+    await flush();
+    expect(detects()).toBe(1);
+
+    raw.currentTime = 2; // the camera moved on while frame 1 was in flight
+    result();
+    await flush();
+    expect(detects()).toBe(2); // no frame callback in between
+
+    result(); // still frame 2 on screen: nothing new to infer
+    await flush();
+    expect(detects()).toBe(2);
+    src.stop();
+  });
+
+  it('a 25 Hz target on a 30 fps camera infers ~25 frames a second, not every other one', async () => {
+    stubWorkerEnv();
+    const { video, cbs, raw } = fakeVideo();
+    let t = 0;
+    let auto = true; // start() waits on the clock; let it run, then drive it by hand
+    const src = new MediaPipePoseSource({
+      video,
+      view: () => ({ w: 1280, h: 720 }),
+      config: { ...TIER_CONFIG.low, tier: 'low', renderer: 'test', cores: 4 },
+      warmup: false,
+      now: () => (auto ? (t += 1000) : t),
+      onWarning: () => {},
+    });
+    await src.start();
+    auto = false;
+    const w = FakeWorker.last!;
+    const t0 = t;
+    for (let i = 1; i <= 30; i++) {
+      t = t0 + i * (1000 / 30);
+      raw.currentTime = i;
+      cbs.at(-1)!(0, { mediaTime: i / 30 });
+      await flush();
+      w.onmessage?.({ data: { type: 'result', n: 0, data: new Float32Array(0) } });
+    }
+    const n = w.posted.filter((p) => p.msg.type === 'detect').length;
+    expect(n).toBeGreaterThanOrEqual(24);
+    expect(n).toBeLessThanOrEqual(26);
+    src.stop();
+  });
+
   it('sends the worker a downscaled copy, and full frames if the browser refuses', async () => {
     stubWorkerEnv();
     const calls: unknown[][] = [];
@@ -380,5 +438,15 @@ describe('MediaPipePoseSource start-up fallbacks', () => {
     await vi.waitFor(() => expect(src.info.tier).toContain('main'));
     expect(created).toEqual([{ loader: '/wasm/vision_wasm_internal.js', delegate: 'GPU' }]);
     src.stop();
+  });
+});
+
+describe('FpsMeter', () => {
+  it('reports the real rate when the gaps are uneven', () => {
+    // 25 Hz delivered as 33, 33, 33, 33, 66 ms gaps: averaging 1/dt said 27+.
+    const m = new FpsMeter();
+    for (let i = 0; i < 200; i++) m.sample(i % 5 === 4 ? 2 / 30 : 1 / 30);
+    expect(m.fps).toBeGreaterThan(23);
+    expect(m.fps).toBeLessThan(27);
   });
 });

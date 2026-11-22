@@ -35,10 +35,15 @@ for (let i = 0; i <= 30; i++) LABEL.push('+' + i);
 /** Seconds a spider waits before it quietly scuttles away. Generous on
  *  purpose — this is an accuracy game, not a reflex one; nobody is rushed. */
 const TARGET_LIFE = 3.8;
-/** A hand must stay inside the ring this many frames, and each hand needs a
- *  quarter second between two spiders, so one noisy frame is never a hit. */
-const CONFIRM = 2;
+/** A hand must stay inside the ring this many fixed steps (200 ms) — a real
+ *  "짚기". A palm swept through the ring is inside for well under that, so
+ *  flailing the arms no longer collects spiders. Each hand then needs a
+ *  quarter second before the next one. */
+const CONFIRM = 12;
 const HAND_CD = 0.26;
+/** The ring fills while a hand is pressing it: the only way a child can see
+ *  that a touch is in progress. */
+const PRESS_FILL = fade(C.accent, 0.45);
 
 /**
  * A resting arm already hangs almost straight down, so a spider spawned in that
@@ -74,16 +79,9 @@ class SpiderTouch implements MiniGame {
   private hits = 0;
   private misses = 0;
   private time = 0;
-  private spawnR = 0;
-  /** min(w,h)/1000, computed once — the same scale `g.s` uses, available
-   *  outside render() for sizing things spawned in update(). */
-  private s = 1;
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
-    this.s = Math.min(ctx.view.w, ctx.view.h) / 1000;
-    // 8% of the short side: a ~115 px wide ring on a 1280x720 view.
-    this.spawnR = Math.min(ctx.view.w, ctx.view.h) * 0.08;
     this.spawner = new Spawner(
       // Two spiders at once, and single-hand-only ones, only once the player
       // has the idea — see spawnOne().
@@ -147,8 +145,10 @@ class SpiderTouch implements MiniGame {
     const reachUnit = armSpan * 0.5;
     const d = this.spawner.difficulty;
     const ratio = clamp01(lerp(0.55, 0.95, d) + randRange(this.ctx.rng, -0.04, 0.04));
+    // Read at use time: the view is live across a resize.
     const { w, h } = this.ctx.view;
-    const r = this.spawnR;
+    // 8% of the short side: a ~115 px wide ring on a 1280x720 view.
+    const r = Math.min(w, h) * 0.08;
     const m = r * 1.3;
 
     let x = 0;
@@ -158,15 +158,26 @@ class SpiderTouch implements MiniGame {
       const angleDeg = randRange(this.ctx.rng, -180, 180);
       if (angleDeg > EXCLUDE_LO && angleDeg < EXCLUDE_HI) continue;
       const rad = (angleDeg * Math.PI) / 180;
-      let distPx = reachUnit * ratio * p.scalePx;
-      // Off the edge of the view: pull in along the same ray.
-      for (let k = 0; k < 8; k++) {
-        x = this.center.x + Math.cos(rad) * distPx;
-        y = this.center.y - Math.sin(rad) * distPx;
-        if (x >= m && x <= w - m && y >= m && y <= h - m) break;
-        distPx *= 0.88;
+      const distPx = reachUnit * ratio * p.scalePx;
+      const ca = Math.cos(rad);
+      x = this.center.x + ca * distPx;
+      y = this.center.y - Math.sin(rad) * distPx;
+      // Under the HUD: slide along the same reach circle, outward on the
+      // spider's own side, down to the HUD-free line. It stays exactly as far
+      // a stretch; a pull-in along the ray would park it on the child's head.
+      for (let k = 0; k < 2; k++) {
+        const top = this.safeTop(x, r);
+        const dy = this.center.y - top;
+        if (y >= top || dy <= 0 || dy >= distPx) break;
+        x = this.center.x + (ca < 0 ? -1 : 1) * Math.sqrt(distPx * distPx - dy * dy);
+        y = top;
       }
-      if (x < m || x > w - m || y < m || y > h - m) continue;
+      // Off a side or the bottom: pull in along the ray from the chest.
+      for (let k = 0; k < 8 && (x < m || x > w - m || y > h - m); k++) {
+        x = this.center.x + (x - this.center.x) * 0.88;
+        y = this.center.y + (y - this.center.y) * 0.88;
+      }
+      if (x < m || x > w - m || y < this.safeTop(x, r) || y > h - m) continue;
       // Never appear under a hand that is already there, or on another spider.
       if (this.handOkL && dist(x, y, this.handL.x, this.handL.y) < r * 2.2) continue;
       if (this.handOkR && dist(x, y, this.handR.x, this.handR.y) < r * 2.2) continue;
@@ -184,6 +195,13 @@ class SpiderTouch implements MiniGame {
 
     const i = this.targets.spawn(x, y, 0, 0, r, TARGET_LIFE, tier, 0);
     if (i >= 0) this.targets.data[i] = locked;
+  }
+
+  /** Highest ring centre the DOM HUD leaves clear at this x: below the top
+   *  band everywhere, and below the score + combo column on the left. */
+  private safeTop(x: number, r: number): number {
+    const { w, h } = this.ctx.view;
+    return (x < w * 0.25 ? h * 0.26 : h * 0.18) + r;
   }
 
   private resolveHits(): void {
@@ -218,7 +236,7 @@ class SpiderTouch implements MiniGame {
     // A faint, permanent footprint: the player's own coverage map growing on
     // the wall. Purely decorative — never re-tested, never re-scored.
     if (this.footprints.n < this.footprints.cap) {
-      this.footprints.spawn(x, y, 0, 0, 9 * this.s, 1e4, tier);
+      this.footprints.spawn(x, y, 0, 0, 9 * Math.min(this.ctx.view.w, this.ctx.view.h) / 1000, 1e4, tier);
     }
 
     this.ctx.fx.impact(x, y, tier === MAX ? 'big' : 'hit', {
@@ -270,6 +288,10 @@ class SpiderTouch implements MiniGame {
         sw: (tier === MAX ? 7 : 5) * g.s,
         glow: tier === MAX ? 12 : 0,
       });
+      const press = this.targets.hp[i]!;
+      if (press > 0) {
+        g.circle(bx, by, r * grow * Math.min(1, press / CONFIRM), { fill: PRESS_FILL });
+      }
       // The silk thread it hangs from.
       g.line(x, 0, x, y - bodyR, 3 * g.s, { stroke: fade(C.ink, 0.3) });
 
@@ -296,8 +318,12 @@ class SpiderTouch implements MiniGame {
       if (tier === MAX) g.sprite('star', x, y - bodyR * 2, 30 * g.s, { rot: this.time });
 
       if (locked !== 0) {
-        g.text(locked === 1 ? t('left') : t('right'), bx, by - r * 1.55, {
-          size: 48 * g.s, weight: 800, align: 'center', fill: C.ink, stroke: C.white, sw: 7 * g.s,
+        // Above the spider, unless that would put it under the HUD.
+        const above = by - r * 1.55;
+        const top = (bx < g.w * 0.25 ? g.h * 0.26 : g.h * 0.18) + 28 * g.s;
+        g.text(locked === 1 ? t('left') : t('right'), bx, above >= top ? above : by + r * 1.55, {
+          size: 48 * g.s, weight: 800, align: 'center', baseline: 'middle',
+          fill: C.ink, stroke: C.white, sw: 7 * g.s,
         });
       }
     }

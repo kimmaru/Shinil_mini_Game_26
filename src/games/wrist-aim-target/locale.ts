@@ -4,7 +4,6 @@ const S = {
   goal: '손끝 불빛을 과녁에 올려요!',
   nice: '좋아요!',
   wow: '정중앙!',
-  bombWarn: '폭탄이에요!',
   bothHands: '이번엔 두 손을 써요!',
   left: '왼손',
   right: '오른손',

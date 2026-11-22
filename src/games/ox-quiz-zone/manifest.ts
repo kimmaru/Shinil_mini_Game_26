@@ -17,11 +17,9 @@ export const manifest: MiniGameManifest = {
   space: 'standing',
   players: { min: 1, max: 1, mode: 'solo' },
 
-  // The zones read the HIPS, so 'legs': a child close to a laptop has them off
-  // the bottom of the frame and could never answer. The pool has one
-  // lower-body switch, so this also hides the game when only the feet are
-  // cropped — the price of never serving it to a body it cannot see.
-  requiredLandmarks: ['torso', 'legs'],
+  // The side is read from the SHOULDER midpoint, so a waist-up child close to
+  // the laptop (hips out of frame) can answer too: no 'legs'.
+  requiredLandmarks: ['torso'],
   gestures: ['zone'],
 
   durationMs: 50_000,
@@ -31,8 +29,8 @@ export const manifest: MiniGameManifest = {
   scoring: { kind: 'count', maxScore: 160, starCuts: [0.3, 0.55, 0.74] },
 
   a11y: {
-    // ←/→ translate the whole virtual body's hip x, which is exactly the
-    // signal the zone detectors read — no camera-only dead end here.
+    // ←/→ (and the mouse) move the whole virtual body sideways, shoulders
+    // included, which is exactly the signal the side is read from.
     keyboardFallback: true,
     noFlashing: true,
     colorBlindSafe: true,

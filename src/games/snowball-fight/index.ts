@@ -23,7 +23,7 @@ import type {
   Detector, EndReason, GameContext, GameResult, MiniGame,
   PlayerPose, PoseFrame, Pt, Renderer,
 } from '@/engine/types';
-import { headTopPx, hipPx, L, shoulderPx, visible } from '@/engine/pose/landmarks';
+import { headTopPx, L, shoulderPx, visible } from '@/engine/pose/landmarks';
 import { angleDeg6, clamp, clamp01, hitSegCircle, lerp, pulse } from '@/engine/math';
 import { Entities } from '@/engine/entities';
 import { chance, randRange, Spawner } from '@/engine/spawn';
@@ -57,6 +57,11 @@ const RELEASE_RATE = 150;
 const RELEASE_SPEED = 1.7;
 /** How long a cocked arm stays armed. */
 const COCK_WINDOW = 0.6;
+/** The cocked pose must be HELD this long, hand at or above the shoulder,
+ *  before it arms. A fast straight-arm windmill reads as "bent" for a frame
+ *  or two (filter lag between elbow and wrist) and used to fire on every lap;
+ *  a real wind-up is a held pose. */
+const COCK_HOLD = 0.2;
 /** Per-hand lockout. The brief's 0.5s, and the reason an arm scratch cannot
  *  empty a magazine. */
 const HAND_COOLDOWN = 0.5;
@@ -70,8 +75,11 @@ const AIM_CONE = 1.45;
 const SNOWMEN = 4;
 /** Lane fractions, in activation order. Nothing sits dead centre: a snowman
  *  straight ahead of the player can be hit by a throw in any direction, which
- *  removes the "which way do I throw" decision entirely. */
-const LANE_X = [0.18, 0.82, 0.36, 0.64] as const;
+ *  removes the "which way do I throw" decision entirely. The outer lanes stay
+ *  right of the HUD's score + combo column (x < 0.25w). */
+const LANE_X = [0.3, 0.7, 0.42, 0.58] as const;
+/** Snowman centre height, fraction of the view: its hat clears the HUD band. */
+const MAN_Y = 0.29;
 
 interface Snowman {
   live: boolean;
@@ -109,6 +117,7 @@ class SnowballFight implements MiniGame {
   private readonly elbow = new Float32Array(2);
   private readonly elbowPrev = new Float32Array(2);
   private readonly cockT = new Float32Array(2);
+  private readonly cockHold = new Float32Array(2);
   private readonly coolT = new Float32Array(2);
   private anyCool = 0;
 
@@ -128,6 +137,7 @@ class SnowballFight implements MiniGame {
   private bestCombo = 0;
   private time = 0;
   private duckTold = false;
+  private hitTold = false;
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
@@ -142,19 +152,11 @@ class SnowballFight implements MiniGame {
     );
 
     const { w, h } = ctx.view;
-    const g = Math.min(w, h);
-    this.bodyR = g * 0.1;
-    this.headR = g * 0.055;
-    this.ballR = g * 0.034;
-    // 0.075 -> a snowman body is ~8.5% of the view width, the target floor.
-    this.manR = g * 0.075;
-    this.gravity = g * 1.05;
-
     for (let i = 0; i < SNOWMEN; i++) {
       this.men.push({
         live: i === 0,
-        x: w * LANE_X[i]!,
-        y: h * 0.26,
+        x: 0,
+        y: 0,
         state: 0,
         // Staggered openings, so the first four shots arrive one at a time.
         timer: 1.6 + i * 1.1,
@@ -162,6 +164,9 @@ class SnowballFight implements MiniGame {
         big: false, threat: false, hitPop: 0,
       });
     }
+    this.layout(w, h);
+    this.bodyR = Math.min(w, h) * 0.1;
+    this.headR = Math.min(w, h) * 0.055;
 
     this.torso.x = w / 2;
     this.torso.y = h * 0.52;
@@ -171,6 +176,25 @@ class SnowballFight implements MiniGame {
     this.shoulder.y = h * 0.42;
 
     ctx.hud.setGoal(t('goal'));
+  }
+
+  /** Everything sized or placed from the view. Re-run on resize: the view is
+   *  live, and a snowman left at the old size's lane is off in the margin. */
+  private layout(w: number, h: number): void {
+    const g = Math.min(w, h);
+    this.ballR = g * 0.034;
+    // 0.075 -> a snowman body is ~8.5% of the view width, the target floor.
+    this.manR = g * 0.075;
+    this.gravity = g * 1.05;
+    for (let i = 0; i < SNOWMEN; i++) {
+      const m = this.men[i]!;
+      m.x = w * LANE_X[i]!;
+      m.y = h * MAN_Y;
+    }
+  }
+
+  onResize(w: number, h: number): void {
+    this.layout(w, h);
   }
 
   start(): void {
@@ -204,10 +228,17 @@ class SnowballFight implements MiniGame {
     // nose instead would let a child duck their head and keep standing in the
     // line of fire, which is not a dodge.
     shoulderPx(p, this.shoulder);
-    hipPx(p, this.hip);
+    // The hip centre is the origin of `n` (px = n * scalePx + origin): the
+    // measured hips when they are in frame, the engine's shoulder-based
+    // estimate when a waist-up child has them below the edge. So only the
+    // shoulders need to be seen.
+    const ncx = (p.n[L.LEFT_SHOULDER * 2]! + p.n[L.RIGHT_SHOULDER * 2]!) / 2;
+    const ncy = (p.n[L.LEFT_SHOULDER * 2 + 1]! + p.n[L.RIGHT_SHOULDER * 2 + 1]!) / 2;
+    this.hip.x = this.shoulder.x - ncx * p.scalePx;
+    this.hip.y = this.shoulder.y - ncy * p.scalePx;
     this.torso.x = (this.shoulder.x + this.hip.x) / 2;
     this.torso.y = (this.shoulder.y + this.hip.y) / 2;
-    this.bodyOk = visible(p, L.LEFT_SHOULDER, L.RIGHT_SHOULDER, L.LEFT_HIP, L.RIGHT_HIP);
+    this.bodyOk = visible(p, L.LEFT_SHOULDER, L.RIGHT_SHOULDER);
     // Hit zones scale with the player, not the screen, so a child at the back
     // of the room is neither harder nor easier to hit.
     this.bodyR = p.scalePx * 0.62;
@@ -221,13 +252,20 @@ class SnowballFight implements MiniGame {
       if (this.coolT[i]! > 0) this.coolT[i] = this.coolT[i]! - dt;
       if (this.cockT[i]! > 0) this.cockT[i] = this.cockT[i]! - dt;
     }
-    if (!p || !r.ok) return;
+    if (!p || !r.ok) {
+      this.cockHold[0] = 0;
+      this.cockHold[1] = 0;
+      return;
+    }
 
     for (let i = 0; i < 2; i++) {
       const sh = i === 0 ? L.LEFT_SHOULDER : L.RIGHT_SHOULDER;
       const el = i === 0 ? L.LEFT_ELBOW : L.RIGHT_ELBOW;
       const wr = i === 0 ? L.LEFT_WRIST : L.RIGHT_WRIST;
-      if (!visible(p, sh, el, wr)) continue;
+      if (!visible(p, sh, el, wr)) {
+        this.cockHold[i] = 0;
+        continue;
+      }
 
       const ang = angleDeg6(
         p.n[sh * 2]!, p.n[sh * 2 + 1]!,
@@ -240,9 +278,14 @@ class SnowballFight implements MiniGame {
 
       // Cocked: elbow folded with the hand up by the shoulder. The hand-above-
       // elbow test is what separates "winding up to throw" from "arm hanging
-      // down, bent at the waist".
-      if (ang < COCK_DEG && p.n[wr * 2 + 1]! < p.n[el * 2 + 1]!) {
-        this.cockT[i] = COCK_WINDOW;
+      // down, bent at the waist"; hand at or above the shoulder, held for
+      // COCK_HOLD, is what separates it from a windmill passing through.
+      const wy = p.n[wr * 2 + 1]!;
+      if (ang < COCK_DEG && wy < p.n[el * 2 + 1]! && wy <= p.n[sh * 2 + 1]!) {
+        this.cockHold[i] = this.cockHold[i]! + dt;
+        if (this.cockHold[i]! >= COCK_HOLD) this.cockT[i] = COCK_WINDOW;
+      } else {
+        this.cockHold[i] = 0;
       }
 
       const spd = Math.hypot(p.v[wr * 2]!, p.v[wr * 2 + 1]!);
@@ -368,7 +411,9 @@ class SnowballFight implements MiniGame {
     }
     m.threat = m.big || m.aimX === this.torso.x;
     m.aimX = clamp(m.aimX, w * 0.06, w * 0.94);
-    m.aimY = clamp(m.aimY, h * 0.1, h * 0.92);
+    // The telegraph ring is information a child must see: keep it below the
+    // HUD band, and below the score + combo column on the left quarter.
+    m.aimY = clamp(m.aimY, m.aimX < w * 0.25 ? h * 0.26 : h * 0.18, h * 0.92);
 
     // The engine's telegraph is one expanding ring, i.e. the "something is
     // coming" beat. The countdown itself is drawn in render().
@@ -416,8 +461,9 @@ class SnowballFight implements MiniGame {
         if (target >= 0) {
           const m = this.men[target | 0]!;
           // Swept, because a thrown ball covers ~80px between frames and a
-          // point test misses exactly when the throw was good.
-          if (hitSegCircle(px, py, x, y, m.x, m.y, this.manR + r)) {
+          // point test misses exactly when the throw was good. A snowman that
+          // is already down cannot be knocked over twice: the ball flies on.
+          if (m.state !== 2 && hitSegCircle(px, py, x, y, m.x, m.y, this.manR + r)) {
             this.balls.kill(i);
             this.knock(m, x, y);
           }
@@ -505,7 +551,12 @@ class SnowballFight implements MiniGame {
     });
     this.ctx.fx.pop(x, y, this.bodyR * 1.2, fade(C.info, 0.6));
     this.ctx.audio.play('thud', { gain: 0.5 });
-    this.ctx.hud.toast(t('oops'), { color: C.info });
+    // Said once per round: a toast on every hit is a failure banner that
+    // never leaves the screen for a child still learning the dodge.
+    if (!this.hitTold) {
+      this.hitTold = true;
+      this.ctx.hud.toast(t('oops'), { color: C.info });
+    }
     this.ctx.emit({ kind: 'miss' });
   }
 
@@ -590,7 +641,7 @@ class SnowballFight implements MiniGame {
     }
 
     if (!this.bodyOk) {
-      g.text(t('hint'), g.w / 2, g.h * 0.14, {
+      g.text(t('hint'), g.w / 2, g.h * 0.44, {
         size: 36 * g.s, weight: 700, align: 'center', fill: C.text,
         stroke: C.bg, sw: 6 * g.s,
       });

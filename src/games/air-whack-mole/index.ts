@@ -61,6 +61,7 @@ class AirWhackMole implements MiniGame {
   private readonly moles = new Entities(8);
   private readonly sh: Pt = { x: 0, y: 0 };
   private readonly hip: Pt = { x: 0, y: 0 };
+  private readonly pos: Pt = { x: 0, y: 0 };
   private readonly limb: Pt[] = [
     { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 },
   ];
@@ -79,8 +80,6 @@ class AirWhackMole implements MiniGame {
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
-    // 8.5% of the short side: a ~120 px wide mole on a 1280x720 view.
-    this.moleR = Math.min(ctx.view.w, ctx.view.h) * 0.085;
     this.spawner = new Spawner(
       { startInterval: 0.9, endInterval: 0.55, jitter: 0.3, burstLate: 1 },
       ctx.rng,
@@ -102,14 +101,7 @@ class AirWhackMole implements MiniGame {
       if (this.limbCd[k]! > 0) this.limbCd[k] = this.limbCd[k]! - dt;
     }
 
-    if (p) {
-      for (let i = 0, k = this.spawner.tick(dt); i < k; i++) this.spawnMole(p);
-    }
     this.moles.step(dt);
-    if (p) {
-      this.readLimbs(p);
-      this.resolveTouches();
-    }
     for (let i = this.moles.n - 1; i >= 0; i--) {
       // Timed out un-hit: a quiet miss — the combo breaks, nothing else.
       if (this.moles.life[i]! <= 0 && this.moles.kind[i] === MOLE) {
@@ -119,6 +111,15 @@ class AirWhackMole implements MiniGame {
           this.ctx.hud.setCombo(0);
         }
       }
+    }
+    // Swept BEFORE hit tests: a hit also leaves life <= 0, and must never be
+    // read back as a timeout.
+    this.moles.sweep();
+
+    if (p) {
+      this.readLimbs(p);
+      for (let i = 0, k = this.spawner.tick(dt); i < k; i++) this.spawnMole(p);
+      this.resolveTouches();
     }
     this.moles.sweep();
   }
@@ -178,6 +179,9 @@ class AirWhackMole implements MiniGame {
     }
     const kneesOk = thigh >= MIN_THIGH;
     const knee = kneesOk && chance(this.ctx.rng, 0.3);
+    // 8.5% of the short side (~120 px wide on 1280x720), read at use time:
+    // the view is live across a resize.
+    this.moleR = Math.min(this.ctx.view.w, this.ctx.view.h) * 0.085;
     let cell = -1;
     for (let attempt = 0; attempt < 6 && cell < 0; attempt++) {
       let c: number;
@@ -187,7 +191,14 @@ class AirWhackMole implements MiniGame {
       } else {
         c = Math.floor(this.ctx.rng() * HAND_CELLS);
       }
-      if (this.cellFree(c)) cell = c;
+      if (!this.cellFree(c)) continue;
+      this.cellPos(p, c, thigh);
+      // Never pop up under a hand that is already there: a parked hand would
+      // otherwise collect every mole in its cell without moving.
+      if (c < HAND_CELLS && this.nearPalm(this.pos.x, this.pos.y, this.moleR * 2)) continue;
+      // Two cells can land on the same spot once slid out from under the HUD.
+      if (this.nearMole(this.pos.x, this.pos.y, this.moleR * 2)) continue;
+      cell = c;
     }
     if (cell < 0) return;
 
@@ -196,7 +207,18 @@ class AirWhackMole implements MiniGame {
     const kind = gold ? GOLD : bomb ? BOMB : MOLE;
     const life = gold ? 2.2 : lerp(knee ? 2.0 : 1.7, knee ? 1.3 : 1.0, d);
 
-    const sw = p.scalePx; 
+    const i = this.moles.spawn(this.pos.x, this.pos.y, 0, 0, this.moleR, life, kind, 0);
+    if (i >= 0) {
+      this.moles.data[i] = cell;
+      // Hit radius in px, fixed for this mole's life.
+      this.moles.spin[i] = cell >= HAND_CELLS ? KNEE_HIT_FRAC * thigh * p.scalePx : this.moleR * 1.15;
+    }
+  }
+
+  /** Where `cell` sits for this body right now, written into `this.pos`. */
+  private cellPos(p: PlayerPose, cell: number, thigh: number): void {
+    const sw = p.scalePx;
+    const { w, h } = this.ctx.view;
     let x = 0;
     let y = 0;
     if (cell >= HAND_CELLS) {
@@ -206,30 +228,55 @@ class AirWhackMole implements MiniGame {
     } else {
       shoulderPx(p, this.sh);
       const armLen = p.calib.armLen > 0.5 ? p.calib.armLen : FALLBACK_ARM_LEN;
-      let reach = (armLen + PALM_EXT) * REACH_FRAC * sw;
+      const reach = (armLen + PALM_EXT) * REACH_FRAC * sw;
       const a = ((FAN_DEG[cell]! + randRange(this.ctx.rng, -6, 6)) * Math.PI) / 180;
       const ca = Math.cos(a);
       const sa = Math.sin(a);
-      const { w, h } = this.ctx.view;
+      x = this.sh.x + ca * reach;
+      y = this.sh.y - sa * reach;
+      // Under the HUD: slide along this arm's reach circle, outward on the
+      // cell's own side, down to the HUD-free line. It stays a full reach; a
+      // pull-in along the ray would park it on the child's own head.
+      for (let k = 0; k < 2; k++) {
+        const top = this.safeTop(x);
+        const dy = this.sh.y - top;
+        if (y >= top || dy <= 0 || dy >= reach) break;
+        x = this.sh.x + (ca < 0 ? -1 : 1) * Math.sqrt(reach * reach - dy * dy);
+        y = top;
+      }
+      // Off a side or the bottom: pull in along the ray from the shoulder, so
+      // it stays somewhere this arm can point at.
       const m = this.moleR * 1.2;
-      // Off the edge of the view: pull the mole in along the same ray from the
-      // shoulder, so it stays somewhere this arm can point at.
-      for (let k = 0; k < 8; k++) {
-        x = this.sh.x + ca * reach;
-        y = this.sh.y - sa * reach;
-        if (x >= m && x <= w - m && y >= m && y <= h - m) break;
-        reach *= 0.88;
+      for (let k = 0; k < 8 && (x < m || x > w - m || y > h - m); k++) {
+        x = this.sh.x + (x - this.sh.x) * 0.88;
+        y = this.sh.y + (y - this.sh.y) * 0.88;
       }
     }
     const m2 = this.moleR * 1.2;
-    x = clamp(x, m2, this.ctx.view.w - m2);
-    y = clamp(y, m2, this.ctx.view.h - m2);
-    const i = this.moles.spawn(x, y, 0, 0, this.moleR, life, kind, 0);
-    if (i >= 0) {
-      this.moles.data[i] = cell;
-      // Hit radius in px, fixed for this mole's life.
-      this.moles.spin[i] = cell >= HAND_CELLS ? KNEE_HIT_FRAC * thigh * sw : this.moleR * 1.15;
+    x = clamp(x, m2, w - m2);
+    this.pos.x = x;
+    this.pos.y = clamp(y, Math.min(this.safeTop(x), h - m2), h - m2);
+  }
+
+  /** Highest mole centre the DOM HUD leaves clear at this x: below the top
+   *  band everywhere, and below the score + combo column on the left. */
+  private safeTop(x: number): number {
+    const { w, h } = this.ctx.view;
+    return (x < w * 0.25 ? h * 0.26 : h * 0.18) + this.moleR;
+  }
+
+  private nearMole(x: number, y: number, d: number): boolean {
+    for (let i = 0; i < this.moles.n; i++) {
+      if (dist(this.moles.x[i]!, this.moles.y[i]!, x, y) < d) return true;
     }
+    return false;
+  }
+
+  private nearPalm(x: number, y: number, d: number): boolean {
+    for (let k = 0; k < 2; k++) {
+      if (this.limbOk[k] === 1 && dist(this.limb[k]!.x, this.limb[k]!.y, x, y) < d) return true;
+    }
+    return false;
   }
 
   private cellFree(c: number): boolean {

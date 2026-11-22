@@ -4,6 +4,7 @@ const S = {
   cueRight: '오른손!',
   cueBoth: '양손!',
   cueMansae: '만세!',
+  ready: '준비!',
   nice: '좋아요!',
   next: '다음!',
   wow: '대단해요!',

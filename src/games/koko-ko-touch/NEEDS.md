@@ -28,8 +28,9 @@ Nothing in the gesture set covers this:
   (~117 ms) AND have travelled < 0.4 sw over the last 8 frames (it has
   arrived, it is not a swipe passing through).
 - **"Fooled"** (resting on the part the caller pointed at instead of the part
-  it said) needs 30 frames (~0.5 s) of rest there, and never before 0.8 s
-  after the call — a passing hand is not a choice.
+  it said) needs 30 frames (~0.5 s) of rest there counted from the call, and
+  never before 1.2 s after it — a passing hand is not a choice, and a finger
+  still leaving the nose from the chant is not one either.
 - **One-shot latch per prompt:** the first judgement ends the prompt; prompts
   are >= 2.5 s apart, which covers the >= 250 ms cooldown.
 

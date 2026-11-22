@@ -137,7 +137,9 @@ export function createLoop(
 
     const t0 = perfNow();
     let steps = 0;
-    while (acc >= STEP && steps < MAX_STEPS) {
+    // `running` is re-checked: a step can end the round (time up, clearEarly),
+    // which disposes the game and the renderer under us.
+    while (running && acc >= STEP && steps < MAX_STEPS) {
       step();
       acc -= STEP;
       steps++;
@@ -148,6 +150,7 @@ export function createLoop(
     if (starved) acc = 0;
     const t1 = perfNow();
 
+    if (!running) return;
     const interp = acc / STEP;
     renderT += frameTime;
     sinceRender += frameTime;

@@ -207,6 +207,9 @@ const services: ShellServices & {
   closeCamera() {
     cameraGen++;
     camera?.stop();
+    // A keyboard-mode body made by runRound holds window key/pointer
+    // listeners: stop it, or every camera on/off leaks one.
+    if (!forceVirtual && pose && pose !== camera) pose.stop();
     camera = null;
     if (!forceVirtual) pose = null;
     if (video.srcObject instanceof MediaStream) {
@@ -222,6 +225,7 @@ const services: ShellServices & {
 
   runRound: (r) => {
     if (!pose) pose = virtual();
+    fx.setReducedMotion(r.reducedMotion ?? null);
     return runRound(r, {
       pose,
       audio,

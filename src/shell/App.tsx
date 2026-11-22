@@ -74,6 +74,10 @@ const WARMUP_TIMEOUT_MS = 60_000;
 /** How often the booth checks whether anybody is still standing there. */
 const PRESENCE_POLL_MS = 500;
 
+/** An overlay (설정, 전체 게임) left open blocks every start, by body and by
+ *  key. Nobody touching anything this long means the guest walked off. */
+const OVERLAY_IDLE_MS = 45_000;
+
 export interface AppProps {
   services?: ShellServices;
 }
@@ -121,10 +125,12 @@ export function App({ services = {} }: AppProps): React.ReactElement {
     };
   }, [services, settings.sound]);
 
+  const reducedMotionRef = useRef(reducedMotion);
+  reducedMotionRef.current = reducedMotion;
   const hud = useMemo(
-    () => createHudService({ reducedMotion }),
-    // One HUD per app instance; reducedMotion is read at construction only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // One HUD per app instance; it reads reduced motion through the ref, so
+    // the 설정 switch applies without rebuilding it.
+    () => createHudService({ get reducedMotion() { return reducedMotionRef.current; } }),
     [],
   );
   useEffect(() => () => hud.dispose(), [hud]);
@@ -193,9 +199,14 @@ export function App({ services = {} }: AppProps): React.ReactElement {
   useEffect(() => {
     if (state.phase !== 'setup' || !setupStarted) return;
     let alive = true;
+    let timedOut = false;
     const timeout = window.setTimeout(() => {
       if (!alive) return;
       push('준비가 너무 오래 걸려요. 카메라 없이도 쓸 수 있어요.', 'warn', 8000);
+      // The chain keeps running: if the camera then FAILS, the help screen
+      // must still come up, or the booth sits in camera mode with no camera.
+      alive = false;
+      timedOut = true;
       dispatch({ type: 'setupDone' });
     }, WARMUP_TIMEOUT_MS);
 
@@ -219,7 +230,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
       try {
         await services.openCamera();
       } catch (e) {
-        if (!alive) return;
+        if (!alive && !timedOut) return;
         // Carry the real error text through. Without it the help screen is a
         // dead end for whoever has to fix the problem.
         const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
@@ -298,13 +309,17 @@ export function App({ services = {} }: AppProps): React.ReactElement {
   // ─── Nobody there: reset the booth for the next person ──────────────────
   useEffect(() => {
     if (state.inputMode !== 'camera' || !pose) return;
-    if (state.phase !== 'results' && state.phase !== 'countdown') return;
+    const ph = state.phase;
+    if (ph !== 'results' && ph !== 'countdown' && ph !== 'play') return;
     let empty = 0;
     const id = window.setInterval(() => {
       const f = pose.sample(performance.now() / 1000);
       const here = f.players.some((p) => p.present);
       empty = here ? 0 : empty + PRESENCE_POLL_MS / 1000;
-      if (empty >= ABANDON_SEC) dispatch({ type: 'abandon' });
+      if (empty < ABANDON_SEC) return;
+      // Mid-round, stop the round (it goes to results, and this check then
+      // sends results home): a full minute played to nobody holds the booth.
+      dispatch({ type: ph === 'play' ? 'pause' : 'abandon' });
     }, PRESENCE_POLL_MS);
     return () => window.clearInterval(id);
   }, [state.phase, state.inputMode, pose, dispatch]);
@@ -345,13 +360,19 @@ export function App({ services = {} }: AppProps): React.ReactElement {
       seed: state.seed,
       signal: ac.signal,
       backdrop: backdropRef.current,
+      reducedMotion: reducedMotionRef.current,
     })
       .then((result: GameResult) => {
         // Feeds the scheduler's "not the same kind of game twice running".
         recordRound(result.gameId, result);
         dispatch({ type: 'roundEnded', result });
       })
-      .catch(() => {
+      .catch((e: unknown) => {
+        // The guest sees a toast; whoever opens devtools sees why.
+        console.warn('[round]', state.currentGame, e);
+        // The camera was turned off (or the app moved on) while the round was
+        // ending: the phase is no longer ours to change.
+        if (phaseRef.current !== 'play' && phaseRef.current !== 'paused') return;
         // Never strand the child on an empty stage: back to the start screen.
         push('게임을 불러오지 못했어요. 다른 게임을 해 볼까요?', 'warn');
         dispatch({ type: 'home' });
@@ -391,6 +412,8 @@ export function App({ services = {} }: AppProps): React.ReactElement {
   closeCameraRef.current = closeCamera;
   const inputModeRef = useRef(state.inputMode);
   inputModeRef.current = state.inputMode;
+  const phaseRef = useRef(state.phase);
+  phaseRef.current = state.phase;
 
   /** The 끄기 chip. Back to 게임 준비, where 시작 turns the camera on again —
    *  otherwise attract would keep asking a child to stand in front of a
@@ -438,6 +461,31 @@ export function App({ services = {} }: AppProps): React.ReactElement {
     };
   }, [services, dispatch]);
 
+  // An overlay nobody touches closes itself, so a guest who walked off with
+  // 설정 or 전체 게임 open does not leave the booth unable to start.
+  useEffect(() => {
+    if (state.overlay === 'none') return;
+    let id = 0;
+    const poke = () => {
+      window.clearTimeout(id);
+      id = window.setTimeout(() => dispatch({ type: 'closeOverlay' }), OVERLAY_IDLE_MS);
+    };
+    poke();
+    window.addEventListener('pointerdown', poke);
+    window.addEventListener('keydown', poke);
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener('pointerdown', poke);
+      window.removeEventListener('keydown', poke);
+    };
+  }, [state.overlay, dispatch]);
+
+  // 설정 → 소리: the games play through the engine's audio, not the menu
+  // wrapper above, so mute it at the source too.
+  useEffect(() => {
+    services.audio?.setMuted?.(!settings.sound);
+  }, [services, settings.sound]);
+
   // Esc closes an overlay, then pauses.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -460,7 +508,9 @@ export function App({ services = {} }: AppProps): React.ReactElement {
       players: state.players,
       space: ['seated', 'standing', 'room'],
       cameraOn: state.inputMode === 'camera',
-      ...(legs === false ? { lowerBodyVisible: false } : {}),
+      // Always passed: the scheduler MERGES options, so leaving the key out
+      // when legs are visible kept one close guest's "no legs" all day.
+      lowerBodyVisible: legs !== false,
       ...(includeDisabled ? { includeDisabled: true } : {}),
     });
     dispatch({ type: 'spin', shortlist: pick.shortlist, chosenIndex: pick.chosenIndex });
@@ -505,16 +555,21 @@ export function App({ services = {} }: AppProps): React.ReactElement {
     lastPickedRef.current = item;
     dispatch({ type: 'pick', item });
   }, [dispatch]);
-  /** Every game this input mode can play (keyboard mode drops the few with no
-   *  keyboard fallback), in 가나다 order so a name is easy to find. */
+  /** Every game this input mode and framing can play — the same rules as the
+   *  roulette (keyboard mode drops the few with no keyboard fallback; a
+   *  waist-up guest does not see the leg games) — in 가나다 order. */
+  const pickLegs = services.calibration?.ready
+    ? services.calibration.lowerBodyVisible
+    : state.calib?.lowerBodyVisible;
   const pickable = useMemo(
     () => poolItems({
       players: 1,
       space: ['seated', 'standing', 'room'],
       cameraOn: state.inputMode === 'camera',
+      lowerBodyVisible: pickLegs !== false,
       ...(includeDisabled ? { includeDisabled: true } : {}),
     }).sort((a, b) => a.nameKo.localeCompare(b.nameKo, 'ko')),
-    [state.inputMode, includeDisabled],
+    [state.inputMode, includeDisabled, pickLegs],
   );
   const resetAll = useCallback(() => {
     reset();
@@ -537,6 +592,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
     [dispatch],
   );
   const closeOverlay = useCallback(() => dispatch({ type: 'closeOverlay' }), [dispatch]);
+  const getPush = useCallback(() => pushRef.current, []);
 
   let screen: React.ReactElement;
   switch (state.phase) {
@@ -674,7 +730,7 @@ export function App({ services = {} }: AppProps): React.ReactElement {
             players={state.players}
             pose={pose}
             calib={state.calib}
-            getPush={() => pushRef.current}
+            getPush={getPush}
           />
         )}
       </div>

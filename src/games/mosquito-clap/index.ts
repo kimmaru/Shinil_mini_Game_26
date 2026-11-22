@@ -30,6 +30,8 @@ const LABELS = ['+0', '+1', '+2', '+3', '+4', '+5', '+6', '+7', '+8'] as const;
 const POINTS = 2;
 /** Every 4th catch in a row is worth an extra point. */
 const COMBO_STEP = 4;
+/** Palm ring colour, built once rather than once per frame. */
+const HAND_RING = hue(manifest.theme?.hue ?? 142, 80, 70);
 
 class MosquitoClap implements MiniGame {
   private ctx!: GameContext;
@@ -111,9 +113,12 @@ class MosquitoClap implements MiniGame {
       // Steer back inside rather than bouncing: a bug that leaves the frame is
       // a bug the player cannot reach, and this game has no misses to spare.
       const m = w * 0.08;
+      // The top edge is the DOM HUD's: its band (~0.17h), and the score +
+      // combo column on the left quarter. A bug behind the HUD is invisible.
+      const top = (this.bugs.x[i]! < w * 0.25 ? h * 0.26 : h * 0.18) + this.bugs.r[i]!;
       if (this.bugs.x[i]! < m) this.bugs.vx[i] = Math.abs(this.bugs.vx[i]!) + 10;
       if (this.bugs.x[i]! > w - m) this.bugs.vx[i] = -Math.abs(this.bugs.vx[i]!) - 10;
-      if (this.bugs.y[i]! < h * 0.1) this.bugs.vy[i] = Math.abs(this.bugs.vy[i]!) + 10;
+      if (this.bugs.y[i]! < top) this.bugs.vy[i] = Math.abs(this.bugs.vy[i]!) + 10;
       if (this.bugs.y[i]! > h * 0.85) this.bugs.vy[i] = -Math.abs(this.bugs.vy[i]!) - 10;
       // Clamp so a long round cannot accelerate a bug past catchable.
       const vmax = 150 * speed;
@@ -133,7 +138,7 @@ class MosquitoClap implements MiniGame {
     const r = Math.min(w, h) * (bee ? 0.07 : 0.066);
     const i = this.bugs.spawn(
       randRange(this.ctx.rng, w * 0.15, w * 0.85),
-      randRange(this.ctx.rng, h * 0.15, h * 0.75),
+      randRange(this.ctx.rng, h * 0.26 + r, h * 0.75),
       randRange(this.ctx.rng, -60, 60),
       randRange(this.ctx.rng, -30, 30),
       r,
@@ -239,14 +244,8 @@ class MosquitoClap implements MiniGame {
 
     // The hands, drawn on the PALMS: a child aims with their hand, and the
     // wrist trails a hand-length behind it.
-    const hr = 22 * g.s;
-    for (const p of [this.handL, this.handR]) {
-      g.circle(p.x, p.y, hr, {
-        stroke: hue(manifest.theme?.hue ?? 142, 80, 70),
-        sw: 3 * g.s,
-        glow: 10,
-      });
-    }
+    this.drawHand(g, this.handL);
+    this.drawHand(g, this.handR);
 
     // The clap flourish: a ring where the hands met, so the player can see
     // exactly where the game thought they clapped.
@@ -260,6 +259,10 @@ class MosquitoClap implements MiniGame {
         g.star(this.clapAt.x, this.clapAt.y, 26 * g.s * pulse(1 - k), 5, { fill: C.accent });
       }
     }
+  }
+
+  private drawHand(g: Renderer, p: Pt): void {
+    g.circle(p.x, p.y, 22 * g.s, { stroke: HAND_RING, sw: 3 * g.s, glow: 10 });
   }
 
   end(_reason: EndReason): GameResult {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { body } from '../testing/synth';
 import { L, LANDMARK_COUNT, jointDist, palm } from './landmarks';
 import { VIRTUAL_BODY, VIRTUAL_HZ, VirtualPoseSource, scriptedPose, solveArm } from './virtual';
+import type { PlayerPose } from '../types';
 
 const VIEW = { w: 1280, h: 720 };
 const ASPECT = VIEW.w / VIEW.h;
@@ -177,25 +178,53 @@ describe('VirtualPoseSource: the bindings a 9-year-old will press', () => {
     expect(q.px[L.RIGHT_WRIST * 2]!).toBeGreaterThan(VIEW.w / 2);
   });
 
-  it('the pointer puts the palm on the cursor', () => {
+  it('the pointer puts the palm of the hand on its side on the cursor', () => {
     const v = src();
     const pt = { x: 0, y: 0 };
     let t = 0;
-    for (const [x, y] of [
-      [900, 220],
-      [400, 300],
-      [640, 180],
+    // Screen right -> right hand, screen left -> left hand. At the centre
+    // either may hold it (the body walks there, and hysteresis keeps whichever
+    // hand crossed over), so only check that SOME palm is on the cursor.
+    for (const [x, y, want] of [
+      [900, 220, 'R'],
+      [400, 300, 'L'],
+      [640, 180, null],
     ] as const) {
       v.setPointer(x, y);
       const p = run(v, t, t + 1.5).p1!;
       t += 1.5;
+      const dR = Math.abs(p.px[L.RIGHT_WRIST * 2]! - x);
+      const dL = Math.abs(p.px[L.LEFT_WRIST * 2]! - x);
+      const side = want ?? (dR < dL ? 'R' : 'L');
+      const w = side === 'R' ? L.RIGHT_WRIST : L.LEFT_WRIST;
       // The wrist is driven by IK; the palm is what a game hit-tests, and it
       // sits 1.4x past the wrist, so check both are in the right place.
-      expect(Math.abs(p.px[L.RIGHT_WRIST * 2]! - x)).toBeLessThan(20);
-      expect(Math.abs(p.px[L.RIGHT_WRIST * 2 + 1]! - y)).toBeLessThan(20);
-      palm(p, 'R', pt);
+      expect(Math.abs(p.px[w * 2]! - x)).toBeLessThan(20);
+      expect(Math.abs(p.px[w * 2 + 1]! - y)).toBeLessThan(20);
+      palm(p, side, pt);
       expect(Math.hypot(pt.x - x, pt.y - y)).toBeLessThan(p.scalePx * 0.5);
     }
+  });
+
+  it('ArrowRight moves the body to the right of the SCREEN', () => {
+    const v = src();
+    const hipX = (p: PlayerPose): number => (p.px[L.LEFT_HIP * 2]! + p.px[L.RIGHT_HIP * 2]!) / 2;
+    const x0 = hipX(run(v, 0, 0.6).p1!);
+    v.press('ArrowRight');
+    expect(hipX(run(v, 0.6, 1.8).p1!)).toBeGreaterThan(x0 + 30);
+    v.release('ArrowRight');
+  });
+
+  it('keeps answering when a new caller starts its clock from zero', () => {
+    // Every round's loop samples from t = 0 after the attract screen sampled
+    // for a minute; the body used to freeze until the new clock caught up.
+    const v = src();
+    run(v, 0, 40);
+    const hipX = (p: PlayerPose): number => (p.px[L.LEFT_HIP * 2]! + p.px[L.RIGHT_HIP * 2]!) / 2;
+    const x0 = hipX(run(v, 0, 0.5).p1!);
+    v.press('ArrowRight');
+    expect(hipX(run(v, 0.5, 2.5).p1!)).toBeGreaterThan(x0 + 30);
+    v.release('ArrowRight');
   });
 
   it('C claps: the wrists converge past ClapOpts.closeAt and re-open past openAt', () => {

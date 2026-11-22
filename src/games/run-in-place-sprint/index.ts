@@ -26,6 +26,9 @@ const LAP_STRIDES = 24;
 const SPURT_SEC = 8;
 /** A pause longer than this ends the streak (quietly). */
 const STREAK_GAP = 0.9;
+/** Opposite-side edges closer than this are one motion. A real alternation at
+ *  a sprint's 5 strides/s is still 0.2s apart. */
+const PAIR_GAP = 0.1;
 const CLOUDS = 4;
 const POSTS = 5;
 const GRASS = fade(C.success, 0.55);
@@ -70,10 +73,12 @@ class RunInPlaceSprint implements MiniGame {
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
-    // Default enter/exit (0.22/0.10) are measured against this exact signal.
+    // Below the default 0.22/0.10: at 1.2 m only the elbow fallback is live,
+    // and after filter lag a 45-50 degree arm swing peaks under 0.22. 0.14/0.06
+    // still counts nothing on idle, fidget, step-lr or clap-x12.
     // 250 ms per leg = at most 4 cycles/s per side, 8 strides/s in all.
-    this.repL = ctx.gestures.use('rep', { signal: sigL, cooldownMs: 250 });
-    this.repR = ctx.gestures.use('rep', { signal: sigR, cooldownMs: 250 });
+    this.repL = ctx.gestures.use('rep', { signal: sigL, enter: 0.14, exit: 0.06, cooldownMs: 250 });
+    this.repR = ctx.gestures.use('rep', { signal: sigR, enter: 0.14, exit: 0.06, cooldownMs: 250 });
     for (let i = 0; i < CLOUDS; i++) {
       this.cloudX[i] = (i + ctx.rng() * 0.6) / CLOUDS;
       this.cloudY[i] = 0.1 + ctx.rng() * 0.22;
@@ -120,6 +125,9 @@ class RunInPlaceSprint implements MiniGame {
   private confirmStride(side: 1 | 2): void {
     if (this.lastSide === side) return; // same leg twice: quietly ignored
     const now = this.time;
+    // Both arms (or knees) rising together reach the two detectors a frame or
+    // two apart. That is one motion, not an alternation: quietly ignored.
+    if (now - this.lastStrideT < PAIR_GAP) return;
     if (this.lastStrideT >= 0 && now - this.lastStrideT < 5) {
       const gap = now - this.lastStrideT;
       if (gap > 1e-3) {
@@ -241,11 +249,12 @@ class RunInPlaceSprint implements MiniGame {
     // How-to, until they are really running.
     if (this.time - this.lastStrideT > 1.6) {
       const k = 0.92 + 0.08 * pulse((this.time * 1.5) % 1);
-      g.text(t('prompt'), g.w / 2, g.h * 0.17, {
+      // Below the DOM HUD's top band (it ends ~0.17h).
+      g.text(t('prompt'), g.w / 2, g.h * 0.21, {
         size: 58 * s * k, weight: 800, display: true, align: 'center', baseline: 'middle',
         fill: C.primaryHi, stroke: C.white, sw: 8 * s,
       });
-      g.text(t('promptSub'), g.w / 2, g.h * 0.25, {
+      g.text(t('promptSub'), g.w / 2, g.h * 0.29, {
         size: 38 * s, weight: 700, align: 'center', baseline: 'middle',
         fill: C.text, stroke: C.white, sw: 6 * s,
       });
@@ -254,7 +263,7 @@ class RunInPlaceSprint implements MiniGame {
       g.chevron(g.w * 0.3, g.h * 0.55 - lift * 18 * s, 34 * s, -Math.PI / 2, { fill: swap ? C.accent : ACCENT_DIM, stroke: C.ink, sw: 3 * s });
       g.chevron(g.w * 0.7, g.h * 0.55 - lift * 18 * s, 34 * s, -Math.PI / 2, { fill: swap ? ACCENT_DIM : C.accent, stroke: C.ink, sw: 3 * s });
     } else if (spurt) {
-      g.text(t('spurt'), g.w / 2, g.h * 0.17, {
+      g.text(t('spurt'), g.w / 2, g.h * 0.21, {
         size: 44 * s, weight: 800, display: true, align: 'center', baseline: 'middle',
         fill: C.hot, stroke: C.white, sw: 7 * s,
       });

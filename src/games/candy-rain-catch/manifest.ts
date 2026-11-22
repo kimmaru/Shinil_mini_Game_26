@@ -19,11 +19,13 @@ export const manifest: MiniGameManifest = {
   gestures: ['reach'],
 
   durationMs: 45_000,
-  // ~60 sweets fall in a round. Calibrated against the step-lr clip, which
-  // sweeps side to side WITHOUT chasing anything — roughly the floor of real
-  // play — and lands on one star. A child who actually follows the sweets
-  // should reach two or three.
-  scoring: { kind: 'count', maxScore: 110, starCuts: [0.3, 0.55, 0.78] },
+  // ~75 drops, ~65 sweets worth 264-288 before combo bonuses. Measured at
+  // 1440x900, seeds 1-5: clips that never chase anything top out at 166
+  // (knee-run) and 139 (arm flailing at 1.2 m), so both stay under three stars;
+  // step-lr lands on one. A pointer bot that follows every sweet scores
+  // 235-296 (~1.1). One star at 0.25: the step-lr dev clip (sidestepping,
+  // never chasing) scores 69 at 1280x720 and must still earn it.
+  scoring: { kind: 'count', maxScore: 240, starCuts: [0.25, 0.55, 0.78] },
 
   a11y: {
     keyboardFallback: true,

@@ -8,8 +8,6 @@ const S = {
   nice: '쭉쭉!',
   perfect: '최고로 쭉!',
   both: '양팔 쭉!',
-  /** The camera is too close for a full stretch to fit on screen. */
-  stepBack: '한 걸음 뒤로 가요!',
 } as const;
 
 export type Key = keyof typeof S;

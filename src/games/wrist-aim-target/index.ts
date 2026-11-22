@@ -15,7 +15,7 @@
 // zone (enter at r, leave at 1.2r).
 import type {
   Detector, EndReason, GameContext, GameResult, MiniGame,
-  PlayerPose, PoseFrame, Pt, Renderer,
+  PlayerPose, PlayOpts, PoseFrame, Pt, Renderer,
 } from '@/engine/types';
 import { L, jx, jy } from '@/engine/pose/landmarks';
 import { approach, clamp, clamp01, dist, easeOutBack, TAU } from '@/engine/math';
@@ -52,6 +52,9 @@ const TRACK = fade(C.ink, 0.18);
 const GLINT = fade(C.white, 0.6);
 const LABEL_RING = '+10';
 const LABEL_BULL = '+20';
+/** A bomb is a quiet miss: soft sound, no toast (the point loss stays). */
+const SFX_BOMB: PlayOpts = { gain: 0.3 };
+const EV_MISS = { kind: 'miss' as const };
 
 class WristAimTarget implements MiniGame {
   private ctx!: GameContext;
@@ -195,13 +198,15 @@ class WristAimTarget implements MiniGame {
     let x = sh.x + out * Math.cos(phi) * this.armPx * frac;
     let y = sh.y + Math.sin(phi) * this.armPx * frac;
     x = clamp(x, r * 1.1, w - r * 1.1);
-    y = clamp(y, h * 0.22, h * 0.88 - r * 0.3);
+    y = clamp(y, this.topAt(x, r), h * 0.88 - r * 0.3);
     // The view clamp must never push it out of this arm's reach.
     const dx = x - sh.x;
     const dy = y - sh.y;
     const d = Math.hypot(dx, dy);
     const cap = this.armPx * 0.95;
     if (d > cap) { x = sh.x + (dx / d) * cap; y = sh.y + (dy / d) * cap; }
+    // ...nor back up under the HUD (only possible for a body far off-centre).
+    if (y < this.topAt(x, r)) y = this.topAt(x, r);
 
     this.tOn[i] = 1;
     this.tx[i] = x; this.ty[i] = y; this.tr[i] = r;
@@ -213,6 +218,13 @@ class WristAimTarget implements MiniGame {
     this.tPhase[i] = rng() * TAU;
     this.tWob[i] = this.u > 0.6 ? w * 0.012 : 0;
     if (kind === NORMAL) this.realLeft++;
+  }
+
+  /** Highest target centre at screen x: the whole target stays below the DOM
+   *  HUD band (score + combo pill on the left, goal and timer across the top). */
+  private topAt(x: number, r: number): number {
+    const { w, h } = this.ctx.view;
+    return (x < w * 0.25 ? h * 0.26 : h * 0.18) + r;
   }
 
   private posX(i: number): number {
@@ -257,10 +269,9 @@ class WristAimTarget implements MiniGame {
       this.score = Math.max(0, this.score - BOMB_PENALTY);
       this.ctx.hud.setCombo(0);
       this.ctx.hud.setScore(this.score);
-      this.ctx.hud.toast(t('bombWarn'), { color: C.warn });
-      this.ctx.audio.play('miss');
+      this.ctx.audio.play('miss', SFX_BOMB);
       this.ctx.fx.miss(x, y);
-      this.ctx.emit({ kind: 'miss' });
+      this.ctx.emit(EV_MISS);
       return;
     }
 
@@ -335,7 +346,11 @@ class WristAimTarget implements MiniGame {
           g.circle(x, y, rr * 1.12, {
             stroke: hand === HAND_L ? C.slot[0] : C.slot[1], sw: 8 * g.s,
           });
-          g.text(hand === HAND_L ? t('left') : t('right'), x, y - rr * 1.42, {
+          // Above the target unless that is inside the HUD band; then below.
+          const half = 26 * g.s;
+          const safe = x < g.w * 0.25 ? g.h * 0.26 : g.h * 0.18;
+          const ly = y - rr * 1.42 - half >= safe ? y - rr * 1.42 : Math.min(y + rr * 1.42, g.h - half);
+          g.text(hand === HAND_L ? t('left') : t('right'), x, ly, {
             size: 48 * g.s, weight: 800, align: 'center', baseline: 'middle',
             fill: hand === HAND_L ? C.slot[0] : C.slot[1], stroke: C.white, sw: 7 * g.s,
           });

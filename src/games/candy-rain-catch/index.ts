@@ -9,11 +9,11 @@
 // stays kind, and difficulty that ramps by forcing the player to use the head
 // basket AND both hands rather than by simply going faster.
 import type {
-  EndReason, GameContext, GameResult, MiniGame,
+  EndReason, GameContext, GameResult, MiniGame, Paint,
   PlayerPose, PoseFrame, Pt, Renderer,
 } from '@/engine/types';
 import { headTopPx, jx, L, palm, palmSpeedPx } from '@/engine/pose/landmarks';
-import { clamp01, easeOutBack, hitCircles, lerp } from '@/engine/math';
+import { clamp, clamp01, easeOutBack, hitCircles, lerp } from '@/engine/math';
 import { Entities } from '@/engine/entities';
 import { chance, randRange, Spawner } from '@/engine/spawn';
 import { C, fade, hue } from '@/engine/render/palette';
@@ -33,6 +33,10 @@ const ROCK = 2;
 const LANES = 4;
 
 const VALUE = [3, 10, 0] as const;
+/** Seconds the HUD goal line stays up before it is cleared. */
+const GOAL_SEC = 3;
+const HAND_LIVE = hue(manifest.theme?.hue ?? 320, 90, 72);
+const HAND_IDLE = fade(C.white, 0.22);
 
 class CandyRainCatch implements MiniGame {
   private ctx!: GameContext;
@@ -58,6 +62,9 @@ class CandyRainCatch implements MiniGame {
   private basketPop = 0;
   private basketR = 0;
   private handR_ = 0;
+  private goalCleared = false;
+  /** Reused every frame by drawHand(). */
+  private readonly handPaint: Paint = {};
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
@@ -88,6 +95,12 @@ class CandyRainCatch implements MiniGame {
   update(dt: number, f: PoseFrame): void {
     this.time += dt;
     if (this.basketPop > 0) this.basketPop = Math.max(0, this.basketPop - dt * 3.5);
+    // At 1.2 m the head basket rides at the top of the screen, right under the
+    // HUD goal line: the goal has been read by now, so clear the way.
+    if (!this.goalCleared && this.time >= GOAL_SEC) {
+      this.goalCleared = true;
+      this.ctx.hud.setGoal('');
+    }
 
     for (let i = 0, k = this.spawner.tick(dt); i < k; i++) this.spawnDrop();
 
@@ -129,11 +142,16 @@ class CandyRainCatch implements MiniGame {
     // near the middle and late ones demand real movement.
     const spread = lerp(0.72, 1.0, d);
     const lane = Math.floor(this.ctx.rng() * LANES) / (LANES - 1);
-    const x = w * (0.5 + (lane - 0.5) * spread);
     const r = Math.min(w, h) * 0.06;
+    // At full spread the outer lanes would sit ON the screen edge, half drawn
+    // and reachable only with a hand leaving the camera frame.
+    const x = clamp(w * (0.5 + (lane - 0.5) * spread), r * 1.5, w - r * 1.5);
+    // Outer lanes drift inward only, so a sweet never slides off the side.
+    const drift = randRange(this.ctx.rng, -20, 20);
+    const vx = lane === 0 ? Math.abs(drift) : lane === 1 ? -Math.abs(drift) : drift;
     const i = this.drops.spawn(
       x, -r * 2,
-      randRange(this.ctx.rng, -20, 20), randRange(this.ctx.rng, 0, 40),
+      vx, randRange(this.ctx.rng, 0, 40),
       r, 12, kind,
     );
     if (i >= 0) this.drops.data[i] = this.ctx.rng() * 6.28;
@@ -243,15 +261,16 @@ class CandyRainCatch implements MiniGame {
 
     // Hands glow only while they are moving fast enough to catch. Without
     // this the speed gate is invisible and reads as the game ignoring you.
-    const hr = this.handR_;
-    const hands: [Pt, boolean][] = [[this.handL, this.handLive.l], [this.handR, this.handLive.r]];
-    for (const [p, live] of hands) {
-      g.circle(p.x, p.y, hr * (live ? 1 : 0.7), {
-        stroke: live ? hue(manifest.theme?.hue ?? 320, 90, 72) : fade(C.white, 0.22),
-        sw: (live ? 4 : 2) * g.s,
-        glow: live ? 12 : 0,
-      });
-    }
+    this.drawHand(g, this.handL, this.handLive.l);
+    this.drawHand(g, this.handR, this.handLive.r);
+  }
+
+  private drawHand(g: Renderer, p: Pt, live: boolean): void {
+    const o = this.handPaint;
+    o.stroke = live ? HAND_LIVE : HAND_IDLE;
+    o.sw = (live ? 4 : 2) * g.s;
+    o.glow = live ? 12 : 0;
+    g.circle(p.x, p.y, this.handR_ * (live ? 1 : 0.7), o);
   }
 
   end(_reason: EndReason): GameResult {
@@ -272,6 +291,11 @@ class CandyRainCatch implements MiniGame {
       }],
       highlightsKo: highlights.length > 0 ? highlights : undefined,
     };
+  }
+
+  onResize(w: number, h: number): void {
+    this.basketR = Math.min(w, h) * 0.08;
+    this.handR_ = Math.min(w, h) * 0.055;
   }
 
   dispose(): void {

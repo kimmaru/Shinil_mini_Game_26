@@ -216,8 +216,11 @@ describe('close range: the hip origin', () => {
 });
 
 describe('close range: the roulette pool', () => {
-  const HIP_GAMES = ['ox-quiz-zone', 'snowball-fight'];
-  const LEG_GAMES = ['air-whack-mole', 'goalkeeper-save', 'wave-jump'];
+  // Only a game that cannot be played without seeing the legs is hidden.
+  // ox-quiz-zone and snowball-fight read the shoulders now, and air-whack-mole
+  // and goalkeeper-save use the knees only when they are in frame.
+  const HIP_GAMES: string[] = [];
+  const LEG_GAMES = ['wave-jump'];
   const pool = (lowerBodyVisible: boolean): string[] =>
     pickPool({
       players: 1, space: ['seated', 'standing', 'room'], cameraOn: true, lowerBodyVisible,
@@ -235,6 +238,7 @@ describe('close range: the roulette pool', () => {
     for (const g of [...HIP_GAMES, ...LEG_GAMES]) expect(ids).not.toContain(g);
     // Everything played with the arms, hands and head stays.
     for (const g of [
+      'air-whack-mole', 'goalkeeper-save', 'ox-quiz-zone', 'snowball-fight',
       'arm-pump-inflate', 'balloon-pop-party', 'bike-pedal', 'blue-flag-white-flag',
       'candy-rain-catch', 'castle-defense', 'cheer-combo', 'color-shield-block',
       'connect-dots-order', 'fruit-slash', 'koko-ko-touch', 'max-reach-stretch',

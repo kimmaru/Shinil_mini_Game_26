@@ -270,6 +270,22 @@ class ConnectDotsOrder implements MiniGame {
 
   private place(s: Slot, pic: number): void {
     const def = PICS[pic]!;
+    this.layout(s, pic);
+    s.active = true;
+    s.pic = pic;
+    s.count = def.dots.length;
+    s.next = 0;
+    s.hand = def.frame === LEFT_HAND ? 0 : def.frame === RIGHT_HAND ? 1 : -1;
+    s.touch = 0;
+    s.lock = 0.4;
+    s.done = false;
+    s.closed = def.closed;
+    s.appear = 0;
+  }
+
+  /** Dot positions in view px from the live view and this player's body. */
+  private layout(s: Slot, pic: number): void {
+    const def = PICS[pic]!;
     const { w, h } = this.ctx.view;
     const S = this.armPx;
     const cx = (this.shL.x + this.shR.x) / 2;
@@ -282,19 +298,18 @@ class ConnectDotsOrder implements MiniGame {
       if (def.frame === LEFT_HAND) x = this.shL.x - ox * S;
       else if (def.frame === RIGHT_HAND) x = this.shR.x + ox * S;
       else x = cx + ox * S;
-      s.px[i * 2] = clamp(x, m, w - m);
-      s.px[i * 2 + 1] = clamp(cy + oy * S, h * 0.13, h * 0.92 - m * 0.3);
+      x = clamp(x, m, w - m);
+      // HUD safe area: below the DOM top band, deeper under the score column.
+      const top = h * (x < w * 0.25 ? 0.26 : 0.2);
+      s.px[i * 2] = x;
+      s.px[i * 2 + 1] = clamp(cy + oy * S, top, h * 0.92 - m * 0.3);
     }
-    s.active = true;
-    s.pic = pic;
-    s.count = def.dots.length;
-    s.next = 0;
-    s.hand = def.frame === LEFT_HAND ? 0 : def.frame === RIGHT_HAND ? 1 : -1;
-    s.touch = 0;
-    s.lock = 0.4;
-    s.done = false;
-    s.closed = def.closed;
-    s.appear = 0;
+  }
+
+  onResize(): void {
+    this.hitR = this.ctx.view.w * HIT_FRAC;
+    if (this.slotA.active) this.layout(this.slotA, this.slotA.pic);
+    if (this.slotB.active) this.layout(this.slotB, this.slotB.pic);
   }
 
   render(g: Renderer, _interp: number): void {
@@ -364,7 +379,10 @@ class ConnectDotsOrder implements MiniGame {
       });
     }
     if (s.hand >= 0 && !s.done) {
-      g.text(s.hand === 0 ? t('left') : t('right'), s.px[0]!, s.px[1]! - r * 1.9, {
+      // Above the first dot, unless that would put it under the DOM HUD.
+      const above = s.px[1]! - r * 1.9;
+      const ly = above < g.h * (s.px[0]! < g.w * 0.25 ? 0.26 : 0.18) ? s.px[1]! + r * 1.9 : above;
+      g.text(s.hand === 0 ? t('left') : t('right'), s.px[0]!, ly, {
         size: 44 * g.s, weight: 800, align: 'center', baseline: 'middle',
         fill: handColor, stroke: C.white, sw: 7 * g.s,
       });

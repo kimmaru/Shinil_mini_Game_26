@@ -4,7 +4,11 @@ export const manifest: MiniGameManifest = {
   id: 'color-shield-block',
   nameKo: '색깔 방패',
   taglineKo: '색에 맞는 곳으로 막아요!',
-  howToKo: ['빨간 세모 공은 오른손으로 막아요', '파란 네모 공은 왼손으로 막아요', '노란 동그라미 공은 머리로 막아요'],
+  howToKo: [
+    '빨간 세모는 오른손, 파란 마름모 공은 왼손으로',
+    '노란 동그라미 공은 머리를 기울여 막아요',
+    '초록 네모 공은 두 손으로 막아요',
+  ],
   /** A sprite id from src/engine/render/sprites.ts — never an emoji. */
   icon: 'gi-color-shield-block',
   theme: { hue: 212 },
@@ -20,11 +24,12 @@ export const manifest: MiniGameManifest = {
   gestures: ['reach'],
 
   durationMs: 50_000,
-  // About 54 balls arrive in a round at 20 points each. A strong child blocks
-  // 30 of them. `swing-wide` sweeps both arms through the hand slots without
-  // ever leaning its head, so it blocks only the red and blue ones (22) and
-  // sits just under three stars.
-  scoring: { kind: 'count', maxScore: 600, starCuts: [0.26, 0.5, 0.74] },
+  // About 42 balls arrive in a round at 20 points each (840 if every one is
+  // blocked); roughly 25 red/blue, 13 yellow, 4 green. A competent child
+  // blocks ~32-35 (640-700). `swing-wide` sweeps both arms through the hand
+  // slots without ever leaning its head, so it blocks only red and blue (up
+  // to 27, 540): 2 stars. 3 stars needs the yellow and green balls too.
+  scoring: { kind: 'count', maxScore: 780, starCuts: [0.26, 0.5, 0.74] },
 
   a11y: {
     // A yellow ball is blocked by moving the HEAD half a shoulder-width off

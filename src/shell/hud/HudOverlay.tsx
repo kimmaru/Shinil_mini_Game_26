@@ -146,8 +146,17 @@ export function createHudService(o?: {
     },
     setBar(key, value, opts) {
       const v = Math.max(0, Math.min(1, value));
+      // Games call this every frame: an unchanged bar must cost nothing (no
+      // copy, no React render).
+      let i = -1;
+      for (let k = 0; k < state.bars.length; k++) if (state.bars[k]!.key === key) i = k;
+      const old = i >= 0 ? state.bars[i]! : undefined;
+      if (
+        old && old.value === v &&
+        (opts?.labelKo === undefined || opts.labelKo === old.labelKo) &&
+        (opts?.color === undefined || opts.color === old.color)
+      ) return;
       const bars = state.bars.slice();
-      const i = bars.findIndex((b) => b.key === key);
       const next: HudBar = {
         key,
         value: v,
@@ -155,11 +164,7 @@ export function createHudService(o?: {
         ...(opts?.color !== undefined ? { color: opts.color } : {}),
       };
       if (i < 0) bars.push(next);
-      else {
-        const prev = bars[i]!;
-        if (prev.value === v && opts === undefined) return;
-        bars[i] = { ...prev, ...next };
-      }
+      else bars[i] = { ...bars[i]!, ...next };
       mark({ bars });
     },
     clearBar(key) {

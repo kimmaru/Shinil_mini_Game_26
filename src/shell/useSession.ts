@@ -300,6 +300,9 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       return s.phase === 'paused' ? { ...s, phase: 'play' } : s;
 
     case 'roundEnded': {
+      // A round settles asynchronously. If the camera was turned off (setup)
+      // or the guest went home meanwhile, its result belongs to nobody.
+      if (s.phase !== 'play' && s.phase !== 'paused') return s;
       const id = s.currentGame;
       if (!id) return { ...s, phase: 'results', lastResult: a.result };
       const { table, beat } = submitRecord(
@@ -374,6 +377,8 @@ export interface RoundRequest {
   /** The camera image is showing behind the stage: paint the game's sky
    *  translucent so the child sees themselves under their avatar. */
   backdrop?: boolean;
+  /** 설정 → 화면 효과 줄이기 (or the OS setting), for the round's effects. */
+  reducedMotion?: boolean;
 }
 
 /**
@@ -393,7 +398,7 @@ export interface ShellServices {
   /** The attract screen rents `gestures.use('jump', …)` from this — there is
    *  no bespoke jump code anywhere in the shell. */
   gestures?: GestureService | null;
-  audio?: Pick<AudioService, 'play' | 'muted'> | null;
+  audio?: (Pick<AudioService, 'play' | 'muted'> & { setMuted?(m: boolean): void }) | null;
   /** Stage A: prefetch /wasm/* + the .task model into the Cache API while the
    *  child reads the privacy screen. No camera, no user gesture. */
   prefetchAssets?: (onProgress: (p: number, labelKo: string) => void) => Promise<void>;

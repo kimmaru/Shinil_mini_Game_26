@@ -2,31 +2,36 @@
 //
 // Every other overlap game in the catalogue tests a POINT (a palm, the top of
 // the head) against a circle. A goalkeeper does not save with a point: the
-// save is made by the whole forearm, the shin, the outstretched leg. So the
-// test here is eight swept segment-vs-circle checks per ball, which is what
-// makes a lunge feel like a lunge instead of a game of finding the pixel.
+// save is made by the whole forearm. So the test here is four swept
+// segment-vs-circle checks per ball (upper arm and forearm-to-palm, both
+// sides), which is what makes a lunge feel like a lunge instead of a game of
+// finding the pixel.
 //
 // Three decisions that shaped everything else:
 //
-// 1. THE TORSO DOES NOT SAVE. A child standing still in front of a camera has
+// 1. ONLY THE ARMS SAVE. A child standing still in front of a camera has
 //    their chest in the middle of the goal, so a torso that saves is a game
 //    that scores a child for standing there — the exact phantom score the
-//    smoke test exists to catch. Arms and legs save; the chest is where you
-//    get beaten.
+//    smoke test exists to catch. Legs are out of frame at 1.2 m, and when
+//    they are visible (further back) a jumping flail with legs saved 41 of
+//    45 shots, so they do not save either: the howTo says hands, and it is.
 //
 // 2. A LIMB ONLY SAVES WHILE IT IS MOVING (1.5 shoulder-widths/sec, measured
 //    against an idle peak of 1.2 and a fidget peak of 2.0). Same reason, and
 //    the same gate candy-rain-catch puts on its hands.
 //
 // 3. THE GOAL IS SIZED FROM THE PLAYER'S OWN ARM. The nine zones sit at
-//    1.15 arm-lengths apart and the lowest row is at ankle height, so a small
-//    child and a tall one are asked for the same stretch rather than the same
-//    number of pixels.
+//    1.15 arm-lengths apart in three rows measured from the SHOULDERS (high,
+//    chest, low), so a small child and a tall one are asked for the same
+//    stretch rather than the same number of pixels — and so the game works
+//    waist-up, 1.2 m from a laptop, where hips and legs are out of frame.
+//    The ball and glove are capped by the same arm length: in view px alone a
+//    child far from the camera covers the whole goal with one flail.
 import type {
-  Detector, EndReason, GameContext, GameResult, MiniGame,
+  EndReason, GameContext, GameResult, MiniGame,
   PlayerPose, PoseFrame, Pt, Renderer,
 } from '@/engine/types';
-import { hipPx, jx, jy, L, palm, shoulderPx, visible } from '@/engine/pose/landmarks';
+import { jx, jy, L, palm, shoulderPx, visible } from '@/engine/pose/landmarks';
 import { clamp, clamp01, easeInQuad, hitSegCircle, lerp, pulse, TAU } from '@/engine/math';
 import { chance, randInt, randRange, Spawner } from '@/engine/spawn';
 import { C, fade, hue } from '@/engine/render/palette';
@@ -34,7 +39,25 @@ import { manifest } from './manifest';
 import { t } from './locale';
 
 const PTS = 20;
-const LABEL = '+20';
+/** Max combo bonus on top of PTS. */
+const BONUS_MAX = 5;
+/** Pre-built: the floating label always shows the points actually awarded. */
+const LABELS = ['+20', '+21', '+22', '+23', '+24', '+25'] as const;
+
+/** Colour strings built once: update() and render() build none. */
+const THEME = hue(manifest.theme!.hue);
+const BALL_TRAIL = fade(THEME, 0.3);
+const NET_FILL = fade(C.white, 0.35);
+const NET_LINE = fade(C.ink, 0.1);
+const GOAL_LINE = fade(C.ink, 0.5);
+const ZONE_RING = fade(C.ink, 0.22);
+const ZONE_MARK = fade(C.ink, 0.3);
+const SHOOTER = fade(C.ink, 0.5);
+const SAVE_TRAIL = fade(C.white, 0.7);
+const EMPHASIZE = [L.LEFT_WRIST, L.RIGHT_WRIST] as const;
+/** Top of the zone rows: below the DOM HUD band, deep enough for the score
+ *  column on the left. */
+const SAFE_TOP = 0.26;
 
 /** A limb saves only while it is actually being moved, in shoulder-widths/sec. */
 const LIMB_GATE = 1.35;
@@ -56,7 +79,7 @@ const LINGER = 0.14;
 const BALL_HUE = 28;
 
 const SHOTS = 4;
-const SEGS = 8;
+const SEGS = 4;
 
 interface Shot {
   /** 0 free, 1 telegraphing, 2 in flight. */
@@ -84,13 +107,12 @@ interface Shot {
 
 class GoalkeeperSave implements MiniGame {
   private ctx!: GameContext;
-  private reach!: Detector<'reach'>;
   private spawner!: Spawner;
 
   private readonly shots: Shot[] = [];
   private readonly zoneX = new Float32Array(9);
   private readonly zoneY = new Float32Array(9);
-  /** Which row a zone is in: 0 hands, 1 either, 2 feet. */
+  /** Which row a zone is in: 0 high, 1 chest, 2 low. All three are hand rows. */
   private readonly zoneRow = new Uint8Array(9);
   private rigged = false;
 
@@ -103,10 +125,11 @@ class GoalkeeperSave implements MiniGame {
   private readonly segLeft = new Uint8Array(SEGS);
   private readonly palmPt: Pt = { x: 0, y: 0 };
   private readonly shoulder: Pt = { x: 0, y: 0 };
-  private readonly hip: Pt = { x: 0, y: 0 };
 
   private player: PlayerPose | null = null;
-  private lowerOk = true;
+  /** Both shoulders in frame: the goal is laid out from them. */
+  private shouldersOk = true;
+  private armPx = 0;
 
   private goalL = 0;
   private goalR = 0;
@@ -127,10 +150,9 @@ class GoalkeeperSave implements MiniGame {
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
-    this.reach = ctx.gestures.use('reach', { side: 'both' });
     this.spawner = new Spawner(
-      // ~26 shots. Two at once only in the last stretch, where the player
-      // already knows which limb goes where.
+      // ~45 shots (the pool of 4 caps the late bursts). Two at once only in
+      // the last stretch, where the player already knows which hand goes where.
       { startInterval: 2.4, endInterval: 1.2, jitter: 0.2, burstLate: 2 },
       ctx.rng,
       manifest.durationMs / 1000,
@@ -138,34 +160,28 @@ class GoalkeeperSave implements MiniGame {
 
     const { w, h } = ctx.view;
     const g = Math.min(w, h);
-    this.ballR = g * 0.055;
-    // A glove, not a fingertip: the save is tested against the limb segment
-    // inflated by this, which is roughly a child's hand across.
-    this.glove = g * 0.045;
 
     for (let i = 0; i < SHOTS; i++) {
       this.shots.push({
         state: 0, zone: 4, aimT: 0, aimT0: 1, age: 0, flight: 1, linger: 0,
         curve: 0, faked: false, willFake: false,
-        lx: w / 2, ly: h * 0.1, x: w / 2, y: h * 0.1, prevX: w / 2, prevY: h * 0.1,
-        r: this.ballR, prog: 0,
+        lx: w / 2, ly: h * 0.2, x: w / 2, y: h * 0.2, prevX: w / 2, prevY: h * 0.2,
+        r: 0, prog: 0,
       });
     }
 
-    const A = [L.LEFT_SHOULDER, L.LEFT_ELBOW, L.RIGHT_SHOULDER, L.RIGHT_ELBOW,
-      L.LEFT_HIP, L.LEFT_KNEE, L.RIGHT_HIP, L.RIGHT_KNEE];
-    const B = [L.LEFT_ELBOW, L.LEFT_WRIST, L.RIGHT_ELBOW, L.RIGHT_WRIST,
-      L.LEFT_KNEE, L.LEFT_ANKLE, L.RIGHT_KNEE, L.RIGHT_ANKLE];
+    const A = [L.LEFT_SHOULDER, L.LEFT_ELBOW, L.RIGHT_SHOULDER, L.RIGHT_ELBOW];
+    const B = [L.LEFT_ELBOW, L.LEFT_WRIST, L.RIGHT_ELBOW, L.RIGHT_WRIST];
     for (let i = 0; i < SEGS; i++) {
       this.segA[i] = A[i]!;
       this.segB[i] = B[i]!;
       this.segPalm[i] = i === 1 || i === 3 ? 1 : 0;
-      this.segLeft[i] = i === 0 || i === 1 || i === 4 || i === 5 ? 1 : 0;
+      this.segLeft[i] = i === 0 || i === 1 ? 1 : 0;
     }
 
     // A default goal, so frame one is never drawn around a body we have not
     // seen yet.
-    this.layout(w / 2, h * 0.34, h * 0.52, g * 0.3);
+    this.layout(w / 2, h * 0.45, g * 0.3);
     ctx.hud.setGoal(t('goal'));
   }
 
@@ -174,26 +190,42 @@ class GoalkeeperSave implements MiniGame {
     this.ctx.audio.music({ bpm: 118 });
   }
 
-  /** Place the nine zones and the frame from this player's own proportions. */
-  private layout(cx: number, shoulderY: number, hipY: number, armPx: number): void {
+  /**
+   * Place the nine zones and the frame from this player's own proportions,
+   * in the LIVE view (the host keeps ctx.view current across resizes).
+   *
+   * Rows hang off the shoulder line, never the hips: 1.2 m from a laptop the
+   * hips are below the frame and their landmarks are guesses. The low row is
+   * a hand reaching down and out, which a waist-up child can do.
+   */
+  private layout(cx: number, shoulderY: number, armPx: number): void {
     const { w, h } = this.ctx.view;
+    const g = Math.min(w, h);
+    this.armPx = armPx;
+    // Capped by the arm, so the goal shrinks with the body and a child far
+    // from the camera is asked for the same stretch, not handed every save.
+    this.ballR = Math.min(g * 0.055, armPx * 0.11);
+    // A glove, not a fingertip: the save is tested against the limb segment
+    // inflated by this, which is roughly a child's hand across.
+    this.glove = Math.min(g * 0.045, armPx * 0.09);
+
     const mx = w * 0.05;
-    const my = h * 0.06;
-    const rows = [
-      shoulderY - armPx * 0.45,
-      (shoulderY + hipY) / 2 + armPx * 0.3,
-      hipY + armPx * 1.1,
-    ];
+    const hi = shoulderY - armPx * 0.45;
+    // Slide the whole goal down (spacing kept) until the top row clears the
+    // DOM HUD band; a far-away child's shoulders sit high in the frame.
+    const drop = Math.max(0, h * SAFE_TOP - hi);
+    const yMax = h * 0.92;
     for (let i = 0; i < 9; i++) {
       const col = i % 3;
       const row = (i / 3) | 0;
+      const ry = row === 0 ? hi : row === 1 ? shoulderY + armPx * 0.2 : shoulderY + armPx * 0.55;
       this.zoneX[i] = clamp(cx + (col - 1) * armPx * 1.15, mx, w - mx);
-      this.zoneY[i] = clamp(rows[row]!, my, h - my);
+      this.zoneY[i] = Math.min(ry + drop, yMax);
       this.zoneRow[i] = row;
     }
     this.goalL = clamp(cx - armPx * 1.75, w * 0.02, w * 0.4);
     this.goalR = clamp(cx + armPx * 1.75, w * 0.6, w * 0.98);
-    this.goalT = clamp(this.zoneY[0]! - armPx * 0.5, my * 0.4, h * 0.5);
+    this.goalT = clamp(this.zoneY[0]! - armPx * 0.5, h * 0.18, h * 0.5);
     this.goalB = clamp(this.zoneY[6]! + armPx * 0.3, h * 0.5, h * 0.99);
   }
 
@@ -204,20 +236,19 @@ class GoalkeeperSave implements MiniGame {
 
     const p = f.p1;
     this.player = p ?? null;
-    this.reach.read(f);
     if (p) {
       shoulderPx(p, this.shoulder);
-      hipPx(p, this.hip);
-      this.lowerOk = visible(p, L.LEFT_HIP, L.RIGHT_HIP)
-        && (visible(p, L.LEFT_KNEE) || visible(p, L.RIGHT_KNEE));
-      if (!this.rigged && p.conf > 0.4) {
+      this.shouldersOk = visible(p, L.LEFT_SHOULDER, L.RIGHT_SHOULDER);
+      // Rigged off the shoulders, not `conf`: conf averages in the hips, which
+      // are out of frame for a waist-up child.
+      if (!this.rigged && this.shouldersOk) {
         // Floored so a child far from the camera still gets zones a ball wide apart.
         const armPx = Math.max((p.calib.armLen > 0.5 ? p.calib.armLen : 1.6) * p.scalePx,
           Math.min(this.ctx.view.w, this.ctx.view.h) * 0.2);
         // The goal is pinned to the middle of the VIEW, not to the player: a
         // goal that follows the keeper cannot be beaten, and a child who
         // drifts sideways has to come back, which is the game.
-        this.layout(this.ctx.view.w / 2, this.shoulder.y, this.hip.y, armPx);
+        this.layout(this.ctx.view.w / 2, this.shoulder.y, armPx);
         this.rigged = true;
       }
     }
@@ -248,7 +279,8 @@ class GoalkeeperSave implements MiniGame {
       ? randRange(this.ctx.rng, 0.4, 0.75) * (chance(this.ctx.rng, 0.5) ? -1 : 1) * w * 0.12
       : 0;
     s.lx = w * 0.5 + randRange(this.ctx.rng, -0.14, 0.14) * w;
-    s.ly = h * 0.08;
+    // Inside the HUD safe area (x is 0.36..0.64w, so 0.18h is clear).
+    s.ly = h * 0.2;
     s.x = s.lx;
     s.y = s.ly;
     s.prevX = s.lx;
@@ -266,10 +298,10 @@ class GoalkeeperSave implements MiniGame {
   }
 
   /**
-   * Which of the nine. The bottom row is deliberately rarer than a third:
-   * a low ball needs a foot there, which is the slowest thing a child can
-   * move, and a uniform nine meant a third of every round was unsaveable
-   * before the player had learned anything.
+   * Which of the nine. The low row is deliberately rarer than a third: a
+   * hand reaching down and out is the slowest, most awkward save there is,
+   * and a uniform nine meant a third of every round was a scramble before the
+   * player had learned anything.
    */
   private pickZone(): number {
     const row = chance(this.ctx.rng, 0.22) ? 2 : chance(this.ctx.rng, 0.5) ? 0 : 1;
@@ -386,12 +418,13 @@ class GoalkeeperSave implements MiniGame {
     this.saves++;
     this.combo++;
     if (this.combo > this.bestCombo) this.bestCombo = this.combo;
-    const pts = PTS + Math.min(5, Math.floor(this.combo / 4));
+    const bonus = Math.min(BONUS_MAX, Math.floor(this.combo / 4));
+    const pts = PTS + bonus;
     this.score += pts;
     this.savePop = 1;
 
     this.ctx.fx.impact(s.x, s.y, close ? 'big' : 'hit', {
-      color: hue(manifest.theme!.hue), sprite: 'burst', label: LABEL,
+      color: THEME, sprite: 'burst', label: LABELS[bonus]!,
     });
     if (close) {
       // A fingertip save is the best thing that happens in this game, so it
@@ -402,7 +435,7 @@ class GoalkeeperSave implements MiniGame {
     } else {
       this.ctx.audio.playLadder('hit.soft', this.combo);
     }
-    this.ctx.fx.trail(hx, hy, s.x, s.y, { color: fade(C.white, 0.7), life: 0.2 });
+    this.ctx.fx.trail(hx, hy, s.x, s.y, { color: SAVE_TRAIL, life: 0.2 });
     this.ctx.hud.setScore(this.score);
     this.ctx.hud.setCombo(this.combo);
     this.ctx.emit({ kind: 'scored', points: pts });
@@ -424,37 +457,34 @@ class GoalkeeperSave implements MiniGame {
   render(g: Renderer, _interp: number): void {
     g.clear(manifest.theme?.hue);
 
-    const theme = hue(manifest.theme!.hue);
     const wob = this.netShake > 0 ? Math.sin(this.time * 34) * this.netShake * 7 * g.s : 0;
 
     // Pitch and goal. The frame is the only fixed furniture on screen, so it
     // carries the ink: posts and crossbar at full weight, net at a whisper.
     const gw = this.goalR - this.goalL;
     const gh = this.goalB - this.goalT;
-    g.rect(this.goalL, this.goalT, gw, gh, { fill: fade(C.white, 0.35) });
+    g.rect(this.goalL, this.goalT, gw, gh, { fill: NET_FILL });
     for (let i = 1; i < 6; i++) {
       const x = this.goalL + (gw * i) / 6;
-      g.line(x + wob * 0.3, this.goalT, x, this.goalB, 2 * g.s, { stroke: fade(C.ink, 0.1) });
+      g.line(x + wob * 0.3, this.goalT, x, this.goalB, 2 * g.s, { stroke: NET_LINE });
     }
     for (let i = 1; i < 4; i++) {
       const y = this.goalT + (gh * i) / 4;
-      g.line(this.goalL, y, this.goalR, y + wob * 0.3, 2 * g.s, { stroke: fade(C.ink, 0.1) });
+      g.line(this.goalL, y, this.goalR, y + wob * 0.3, 2 * g.s, { stroke: NET_LINE });
     }
     g.line(this.goalL, this.goalT, this.goalR, this.goalT, 9 * g.s, { stroke: C.ink });
     g.line(this.goalL, this.goalT, this.goalL, this.goalB, 9 * g.s, { stroke: C.ink });
     g.line(this.goalR, this.goalT, this.goalR, this.goalB, 9 * g.s, { stroke: C.ink });
-    g.line(this.goalL, this.goalB, this.goalR, this.goalB, 4 * g.s, { stroke: fade(C.ink, 0.5) });
+    g.line(this.goalL, this.goalB, this.goalR, this.goalB, 4 * g.s, { stroke: GOAL_LINE });
 
-    // The nine zones; the foot row carries an arrow so a low ball reads as a
-    // kick.
+    // The nine zones; the low row carries a down arrow: reach down for it.
     for (let i = 0; i < 9; i++) {
       const x = this.zoneX[i]!;
       const y = this.zoneY[i]!;
       const row = this.zoneRow[i]!;
-      g.circle(x, y, this.ballR * 1.25, { stroke: fade(C.ink, 0.22), sw: 3 * g.s });
-      // Only the foot row is marked: an arrow up from the floor.
+      g.circle(x, y, this.ballR * 1.25, { stroke: ZONE_RING, sw: 3 * g.s });
       if (row === 2) {
-        g.chevron(x, y + this.ballR * 0.5, this.ballR * 0.3, -Math.PI / 2, { fill: fade(C.ink, 0.3) });
+        g.chevron(x, y + this.ballR * 0.5, this.ballR * 0.3, Math.PI / 2, { fill: ZONE_MARK });
       }
     }
 
@@ -469,13 +499,13 @@ class GoalkeeperSave implements MiniGame {
       g.arc(x, y, this.ballR * 1.6, -Math.PI / 2, -Math.PI / 2 + k * TAU, {
         stroke: C.accent, sw: 5 * g.s,
       });
-      g.circle(s.lx, s.ly, this.ballR * 0.3, { fill: fade(C.ink, 0.5) });
+      g.circle(s.lx, s.ly, this.ballR * 0.3, { fill: SHOOTER });
     }
 
     for (let i = 0; i < this.shots.length; i++) {
       const s = this.shots[i]!;
       if (s.state !== 2) continue;
-      g.line(s.prevX, s.prevY, s.x, s.y, s.r * 0.7, { stroke: fade(theme, 0.3) });
+      g.line(s.prevX, s.prevY, s.x, s.y, s.r * 0.7, { stroke: BALL_TRAIL });
       g.sprite('circle', s.x, s.y, s.r * 2.2, {
         hue: BALL_HUE,
         rot: this.time * 6,
@@ -486,25 +516,28 @@ class GoalkeeperSave implements MiniGame {
 
     if (this.player) {
       g.ghostBody(this.player, 0.1);
-      // Emphasise the four limb ends: these are the parts that save, and a
-      // player who cannot tell what the game is watching plays with their
-      // chest.
+      // Emphasise the hands: they are what saves, and a player who cannot
+      // tell what the game is watching plays with their chest.
       g.skeleton(this.player, {
         alpha: 0.6,
         jointSet: 'ends',
-        emphasize: [L.LEFT_WRIST, L.RIGHT_WRIST, L.LEFT_ANKLE, L.RIGHT_ANKLE],
+        emphasize: EMPHASIZE,
         outline: true,
       });
     }
 
     if (this.savePop > 0) {
+      g.save();
+      g.alpha(this.savePop * 0.5);
       g.circle(this.shoulder.x, this.shoulder.y, this.ballR * (2 + pulse(this.savePop) * 3), {
-        stroke: fade(C.accent, this.savePop * 0.5), sw: 5 * g.s,
+        stroke: C.accent, sw: 5 * g.s,
       });
+      g.restore();
     }
 
-    if (!this.lowerOk) {
-      g.text(t('hint'), g.w / 2, g.h * 0.12, {
+    // Only when the goal cannot be read off this body: shoulders out of frame.
+    if (this.player && !this.shouldersOk) {
+      g.text(t('hint'), g.w / 2, g.h * 0.22, {
         size: 36 * g.s, weight: 700, align: 'center', fill: C.text,
         stroke: C.bg, sw: 6 * g.s,
       });

@@ -249,6 +249,9 @@ export interface Canvas2DOpts {
   manageStyle?: boolean;
 }
 
+/** Body-layer resolution for ghostBody(), as a fraction of the canvas's. */
+const GHOST_LAYER_SCALE = 0.5;
+
 export class Canvas2DRenderer implements Renderer {
   readonly canvas: HTMLCanvasElement;
   private readonly c: CanvasRenderingContext2D;
@@ -1042,7 +1045,9 @@ export class Canvas2DRenderer implements Renderer {
     const g = u * BODY.ghostGrow;
     if (!this.prepBody(p, Math.max(u * BODY.head, u * BODY.leg) + g + 2)) return;
 
-    const c = this.openBody(a);
+    // Half resolution: the ghost is a faint soft silhouette, and at 1.2 m its
+    // layer is most of the screen — a quarter of the fill, and no visible change.
+    const c = this.openBody(a, GHOST_LAYER_SCALE);
     const layered = c !== this.c;
     const ba = layered ? 1 : this.a * a;
     // On the layer: a white silhouette, then the colour laid over it
@@ -1091,7 +1096,9 @@ export class Canvas2DRenderer implements Renderer {
   private by0 = 0;
   private bx1 = 0;
   private by1 = 0;
-  /** The layer region in use, device px. */
+  /** The layer region in use, layer px, and the layer's scale against the
+   *  canvas backing store. */
+  private lk = 1;
   private lx = 0;
   private ly = 0;
   private lw = 0;
@@ -1207,14 +1214,17 @@ export class Canvas2DRenderer implements Renderer {
 
   /** A cleared, dpr-scaled layer to draw the body into — or, with no layer,
    *  the canvas itself at the body's alpha. */
-  private openBody(al: number): CanvasRenderingContext2D {
+  private openBody(al: number, scale = 1): CanvasRenderingContext2D {
     const lc = this.bodyLayer();
     if (lc) {
-      const d = this._dpr;
+      // `scale` < 1 draws the body into a smaller region of the layer and
+      // closeBody() stretches it back: same layer, a fraction of the pixels.
+      const d = this._dpr * scale;
+      this.lk = scale;
       const x0 = Math.max(0, Math.floor(this.bx0 * d));
       const y0 = Math.max(0, Math.floor(this.by0 * d));
-      const x1 = Math.min(this.canvas.width, Math.ceil(this.bx1 * d));
-      const y1 = Math.min(this.canvas.height, Math.ceil(this.by1 * d));
+      const x1 = Math.min(Math.ceil(this.canvas.width * scale), Math.ceil(this.bx1 * d));
+      const y1 = Math.min(Math.ceil(this.canvas.height * scale), Math.ceil(this.by1 * d));
       this.lx = x0;
       this.ly = y0;
       this.lw = x1 - x0;
@@ -1247,7 +1257,7 @@ export class Canvas2DRenderer implements Renderer {
     }
     if (this.lw <= 0 || this.lh <= 0 || !this.layerCanvas) return;
     const m = this.c;
-    const d = this._dpr;
+    const d = this._dpr * this.lk;
     m.save();
     m.globalAlpha = this.a * al;
     m.drawImage(

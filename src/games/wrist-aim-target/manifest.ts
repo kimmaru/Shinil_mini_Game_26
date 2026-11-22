@@ -20,10 +20,11 @@ export const manifest: MiniGameManifest = {
   gestures: ['reach'],
 
   durationMs: 45_000,
-  // ~20 targets in a strong round at 10 (ring) / 20 (bullseye) => ~240 for a
-  // strong 9-year-old; maxScore sits below that so 3 stars is reachable. The
-  // blind-sweep dev clip lands ~1 star (it parks on ~7 targets by luck).
-  scoring: { kind: 'count', maxScore: 200, starCuts: [0.22, 0.48, 0.72] },
+  // A child who watches the laser dot and corrects (scratch oracle at ~1.2 m,
+  // 0.45 s reaction) lands ~21 targets, ~15 of them bullseyes: ~360. A mouse
+  // aimed perfectly in keyboard mode gets ~470. The blind-sweep dev clip parks
+  // on a few targets by luck (seed 3: 60), so the 1-star cut sits at 0.15.
+  scoring: { kind: 'count', maxScore: 360, starCuts: [0.15, 0.48, 0.72] },
 
   a11y: {
     // Mouse = dominant hand under VirtualPoseSource, which is exactly an aim

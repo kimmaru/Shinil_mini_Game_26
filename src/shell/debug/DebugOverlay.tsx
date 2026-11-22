@@ -108,8 +108,11 @@ export function DebugOverlay({
       const c = graphRef.current;
       const ctx = c?.getContext('2d');
       if (c && ctx) {
-        const w = (c.width = c.clientWidth);
-        const h = (c.height = c.clientHeight);
+        // Resizing the backing store reallocates it: only when the box changed.
+        if (c.width !== c.clientWidth) c.width = c.clientWidth;
+        if (c.height !== c.clientHeight) c.height = c.clientHeight;
+        const w = c.width;
+        const h = c.height;
         ctx.clearRect(0, 0, w, h);
         // 16.7ms budget line
         ctx.strokeStyle = 'rgba(255,255,255,.25)';

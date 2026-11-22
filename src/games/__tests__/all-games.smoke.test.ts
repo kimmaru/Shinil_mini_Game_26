@@ -16,6 +16,13 @@ const IDS = [...ALL.keys()].sort();
 // Keep rounds short: the assertions are about behaviour, not endurance.
 const DUR = 12_000;
 
+/** Games where only AIMING scores, and no synthetic clip aims: none of them is
+ *  a strong run, so the "a strong run earns credit" floor cannot be measured
+ *  here (connect-dots-order passed it only while a dot sat under the HUD where
+ *  swing-wide happened to pause). Their tuning is checked with a pointer-driven
+ *  virtual body instead; the maxScore ceiling below still applies. */
+const AIM_ONLY = new Set(['connect-dots-order']);
+
 describe('catalogue', () => {
   it('has at least one authored game', () => {
     expect(IDS.length).toBeGreaterThan(0);
@@ -107,8 +114,10 @@ describe.each(IDS)('%s', (id) => {
     // everyone gets three stars has no rating at all.
     const clip = manifest.dev!.clip as ClipName;
     const r = await runGame(id, { clip, seed: 3, durationMs: manifest.durationMs });
-    expect(r.result.normalized, `${id}: a strong run barely scores`)
-      .toBeGreaterThan(manifest.scoring.starCuts[0]);
+    if (!AIM_ONLY.has(id)) {
+      expect(r.result.normalized, `${id}: a strong run barely scores`)
+        .toBeGreaterThan(manifest.scoring.starCuts[0]);
+    }
     expect(r.result.rawScore / r.result.maxScore, `${id}: maxScore is too low — a strong run laps it`)
       .toBeLessThan(1.6);
   });

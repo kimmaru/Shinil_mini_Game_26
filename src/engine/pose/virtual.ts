@@ -167,6 +167,13 @@ const WALK_SPEED = 4;
 /** How far from the shoulder centre both hands can still meet, in shoulder
  *  widths. An arm is 1.63; a shoulder is 0.5 off centre. */
 const CLAP_REACH = 1.45;
+/** Shoulder widths the pointer must cross past the centre line before the
+ *  other hand takes it over, so the hand does not flip at the midline. */
+const HAND_SWITCH = 0.3;
+/** Fastest an arm angle may change, deg/s: a hand taking over the pointer (or
+ *  letting go of it) swings across instead of teleporting, which a swing
+ *  detector would read as a slash. */
+const ARM_DEG_PER_SEC = 900;
 
 export class VirtualPoseSource implements PoseSource {
   readonly info: PoseSourceInfo = { kind: 'virtual', fps: VIRTUAL_HZ, tier: 'virtual' };
@@ -176,6 +183,8 @@ export class VirtualPoseSource implements PoseSource {
   private viewW: number;
   private viewH: number;
   private dominant: 'L' | 'R';
+  /** The hand the pointer drives: the one on the pointer's side of the body. */
+  private pointerSide: 'L' | 'R';
   private useGamepad: boolean;
 
   // input state
@@ -208,12 +217,15 @@ export class VirtualPoseSource implements PoseSource {
   private det = { lm: new Float32Array(LANDMARK_COUNT * 2), vis: this.visBuf };
   private dets = [this.det];
   private params: Partial<BodyParams> = {};
+  /** Last fed armL, elbowL, armR, elbowR; NaN until the first feed. */
+  private armNow = new Float32Array(4).fill(NaN);
 
   constructor(opts: VirtualOpts = {}) {
     this.viewW = opts.view?.w ?? 1280;
     this.viewH = opts.view?.h ?? 720;
     this.calib = opts.calib ?? defaultCalibration(this.viewW, this.viewH);
     this.dominant = opts.dominant ?? 'R';
+    this.pointerSide = this.dominant;
     this.useGamepad = opts.gamepad ?? true;
     this.identity = new PoseIdentity({
       maxPlayers: 1,
@@ -307,6 +319,7 @@ export class VirtualPoseSource implements PoseSource {
     this.identity.reset();
     this.nextFeedT = 0;
     this.lastFed = -1;
+    this.armNow.fill(NaN);
   }
 
   pause(): void {
@@ -322,7 +335,13 @@ export class VirtualPoseSource implements PoseSource {
     if (!this.paused) {
       // A backgrounded tab resumes with a huge gap: skip the dead time rather
       // than simulate four thousand frames of nothing.
-      if (tSec - this.nextFeedT > 0.5) this.nextFeedT = tSec - 1 / VIRTUAL_HZ;
+      // Each caller counts from its own zero (every round's loop starts at
+      // 0), so a jump BACK is as normal as a jump forward; without this the
+      // body froze until the new clock caught up with the old one.
+      if (Math.abs(tSec - this.nextFeedT) > 0.5) {
+        if (tSec < this.nextFeedT) this.identity.teleport();
+        this.nextFeedT = tSec - 1 / VIRTUAL_HZ;
+      }
       while (this.nextFeedT <= tSec) {
         this.feed(this.nextFeedT);
         this.nextFeedT += 1 / VIRTUAL_HZ;
@@ -389,7 +408,13 @@ export class VirtualPoseSource implements PoseSource {
     const aspect = this.viewW / this.viewH;
     const S = p.shoulderW ?? STAND.shoulderW;
 
-    if (!override) this.applyHands(p, S, aspect);
+    if (!override) {
+      this.applyHands(p, S, aspect);
+      p.armL = this.turn(0, p.armL ?? STAND.armL, dt);
+      p.elbowL = this.turn(1, p.elbowL ?? STAND.elbowL, dt);
+      p.armR = this.turn(2, p.armR ?? STAND.armR, dt);
+      p.elbowR = this.turn(3, p.elbowR ?? STAND.elbowR, dt);
+    }
 
     const lm = body(p, aspect);
     this.det.lm.set(lm);
@@ -425,7 +450,9 @@ export class VirtualPoseSource implements PoseSource {
     }
 
     this.squat = approach(this.squat, h.has('ArrowDown') ? 1 : 0, 9, dt);
-    const leanTarget = (h.has('ArrowRight') ? 1 : 0) - (h.has('ArrowLeft') ? 1 : 0);
+    // In IMAGE coords, where +x is the player's left: on the mirrored screen
+    // that is ArrowRight moving the body to the right, as the player expects.
+    const leanTarget = (h.has('ArrowLeft') ? 1 : 0) - (h.has('ArrowRight') ? 1 : 0);
     this.lean = approach(this.lean, leanTarget, 7, dt);
     this.raiseL = approach(this.raiseL, h.has('KeyZ') ? 1 : 0, 8, dt);
     this.raiseR = approach(this.raiseR, h.has('KeyX') ? 1 : 0, 8, dt);
@@ -478,6 +505,17 @@ export class VirtualPoseSource implements PoseSource {
     p.hipY = hipY;
     p.kneeL = knee;
     p.kneeR = knee;
+  }
+
+  /** Move arm angle `i` toward `target` at no more than ARM_DEG_PER_SEC. */
+  private turn(i: number, target: number, dt: number): number {
+    const now = this.armNow[i]!;
+    const max = ARM_DEG_PER_SEC * dt;
+    const next = Number.isNaN(now) || Math.abs(target - now) <= max
+      ? target
+      : now + Math.sign(target - now) * max;
+    this.armNow[i] = next;
+    return next;
   }
 
   /** Pointer x in image coords (un-mirrored), 0..1. */
@@ -559,7 +597,13 @@ export class VirtualPoseSource implements PoseSource {
     }
 
     if (this.pointerOn) {
-      const side = this.dominant;
+      // The hand on the pointer's side of the body follows it, so a mouse can
+      // play the left hand too ("왼손으로!" targets were unreachable).
+      const dL = Math.abs(tIx - shoulder('L').x);
+      const dR = Math.abs(tIx - shoulder('R').x);
+      if (this.pointerSide === 'R' && dL + HAND_SWITCH * S < dR) this.pointerSide = 'L';
+      else if (this.pointerSide === 'L' && dR + HAND_SWITCH * S < dL) this.pointerSide = 'R';
+      const side = this.pointerSide;
       const sh = shoulder(side);
       toUnits(sh.x, sh.y, tIx, tIy, u);
       const sol = side === 'L' ? this.solL : this.solR;

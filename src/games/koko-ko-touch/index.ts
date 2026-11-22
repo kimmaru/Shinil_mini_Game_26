@@ -78,8 +78,10 @@ const CORRECT_FRAMES = 7;
  *  purpose: passing a hand through on the way somewhere else is not a choice. */
 const FOOL_FRAMES = 30;
 /** No "fooled" before this: a choice reaction takes a 7-year-old ~0.7s, and
- *  the chant asks them to rest a finger on their nose right up to the call. */
-const FOOL_GRACE = 0.8;
+ *  the chant asks them to rest a finger on their nose right up to the call.
+ *  At 0.8 a child who reacted at 0.75s and was just leaving the nose was
+ *  judged fooled on every nose-decoy trick; 1.2 leaves room to move away. */
+const FOOL_GRACE = 1.2;
 /** Position history for the "hand has stopped" check. */
 const HIST = 8;
 /** Max hand travel over HIST frames, shoulder widths (~3 sw/s): a hand that
@@ -109,6 +111,12 @@ const RING_Y = [0.12, -0.12, 0.45, 0.05, -0.98, 1.36, 1.95] as const;
 const RING_R = [0.3, 0.24, 0.3, 0.36, 0.5, 0.34, 0.46] as const;
 const HAND_X = [0.44, 0.7, 0.44, 1.32, 0.42, -0.4, 0.38] as const;
 const HAND_Y = [0.34, -0.02, 0.66, 0.2, -1.08, 1.24, 2.04] as const;
+/** Layout, as fractions of the view height. The DOM HUD owns the top band and
+ *  its score/combo column covers x < 0.25w down to ~0.25h, so the bubble (and
+ *  the word in it) starts below that, and the caller stands under the bubble. */
+const BUBBLE_Y = 0.26;
+const BUBBLE_H = 0.19;
+const CALLER_Y = 0.63;
 
 // Option objects, built once. Passing a literal per call would allocate.
 const HANDS = [L.LEFT_WRIST, L.RIGHT_WRIST] as const;
@@ -427,6 +435,9 @@ class KokoKoTouch implements MiniGame {
       this.phase = PH_CALL;
       this.phaseT = 0;
       this.wordPop = 0;
+      // Judge only what the hands do after the call: resting on the nose
+      // through the chant is what the chant asks for, not a choice.
+      this.streak[0] = this.streak[1] = 0;
       this.ctx.audio.play('beat.hi');
       this.ctx.hud.announce(t(WORD_KEY[this.word]!), ANNOUNCE);
     }
@@ -621,13 +632,13 @@ class KokoKoTouch implements MiniGame {
     const jump = this.cheer > 0 ? Math.sin((1 - this.cheer / 0.7) * Math.PI) * 0.35 * u : 0;
     const shakeX = this.wiggle > 0 ? Math.sin(this.wiggle * 40) * 0.08 * u * (this.wiggle / 0.6) : 0;
     const cx = g.w * 0.15 + shakeX;
-    const hy = g.h * 0.47 - jump;
+    const hy = g.h * CALLER_Y - jump;
     const ink = 4 * g.s;
     const bodyTop = hy + 1.05 * u;
 
     // Ground shadow stays put while the caller hops.
     g.save();
-    g.translate(cx, g.h * 0.47 + 3.55 * u);
+    g.translate(cx, g.h * CALLER_Y + 3.55 * u);
     g.scale(1, 0.22);
     g.circle(0, 0, 1.15 * u * (1 - jump / (u * 2)), this.paint(this.colShadow, undefined, 0));
     g.restore();
@@ -719,14 +730,14 @@ class KokoKoTouch implements MiniGame {
 
   private drawBubble(g: Renderer): void {
     const bx = g.w * 0.035;
-    const by = g.h * 0.07;
+    const by = g.h * BUBBLE_Y;
     const bw = g.w * 0.3;
-    const bh = g.h * 0.22;
+    const bh = g.h * BUBBLE_H;
     const u = 80 * g.s;
     const tail = this.tri;
     tail[0] = bx + bw * 0.34; tail[1] = by + bh - 3 * g.s;
     tail[2] = bx + bw * 0.52; tail[3] = by + bh - 3 * g.s;
-    tail[4] = g.w * 0.15 + 0.5 * u; tail[5] = g.h * 0.47 - 1.55 * u;
+    tail[4] = g.w * 0.15 + 0.5 * u; tail[5] = g.h * CALLER_Y - 1.55 * u;
     g.poly(tail, 3, this.paint(C.white, KEYLINE, 4 * g.s));
     g.roundRect(bx, by, bw, bh, 26 * g.s, this.paint(C.white, KEYLINE, 4 * g.s));
     // Paint over the tail's join so bubble and tail read as one shape.

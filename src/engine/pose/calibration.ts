@@ -109,6 +109,11 @@ export interface CalibrateOpts {
 }
 
 export const CALIBRATE_MS = 4000;
+/** Longest believable arm, shoulder widths (a child's is ~1.6). Turning the
+ *  torso narrows the shoulder line while an arm is out, which reads as a 2.3
+ *  "arm" — and every reach target and extension test then asks for more arm
+ *  than the child has. */
+export const ARM_LEN_MAX = 1.9;
 export const CALIBRATE_SKIP = 10;
 export const CALIBRATE_SAMPLES = 60;
 
@@ -290,7 +295,7 @@ export class CalibrationCapture {
 
     const armSpanRaw = this.span.length ? percentile(this.span, 0.9) : 0;
     const armLenRaw = this.armLen.length ? percentile(this.armLen, 0.9) : 0;
-    const armLen = armLenRaw > 0.9 ? armLenRaw : 1.6;
+    const armLen = armLenRaw > 0.9 ? Math.min(ARM_LEN_MAX, armLenRaw) : 1.6;
     // A player who kept their hands down for the whole capture still has an
     // arm span, and it is geometrically determined: two arms plus the width
     // between the shoulders (which is 1 by definition of the unit). Taking the
@@ -927,7 +932,7 @@ export class AutoCalibrator {
     // Same rule as the 4-second capture: an arm length under 0.9 shoulder
     // widths is an occlusion, not an arm.
     const armLenObserved = this.armLenBest > 0.9;
-    const armLen = armLenObserved ? this.armLenBest : this.base.armLen;
+    const armLen = armLenObserved ? Math.min(ARM_LEN_MAX, this.armLenBest) : this.base.armLen;
     const derivedSpan = 2 * armLen + 0.9; // two arms plus the shoulder line
     this.live.armLen = armLen;
     this.flags.armLen = armLenObserved;

@@ -1,16 +1,17 @@
 // ─── ox-quiz-zone — OX 퀴즈 (Shape A, discrete cue x whole-body zone trigger) ──
 //
-// The player's hip-centre x decides O (screen-left) or X (screen-right).
+// The player's body-centre x (the SHOULDER midpoint, so a waist-up child
+// close to the laptop plays too) decides O (screen-left) or X (screen-right).
 // This is a screen-space "which half of the room" question, not a size or
 // distance threshold — the same technique the `zone` detector itself uses
 // internally (a rect in 0..1 view fractions) — so there is no fairness issue
 // the way a raw-pixel THRESHOLD would have: a short child and a tall one
 // standing on the same side of the room both land in the same zone.
 import type {
-  Detector, EndReason, GameContext, GameResult, MiniGame,
+  EndReason, GameContext, GameResult, MiniGame,
   PlayerPose, PoseFrame, Renderer,
 } from '@/engine/types';
-import { L, hipPx } from '@/engine/pose/landmarks';
+import { L, MIN_VIS, shoulderPx } from '@/engine/pose/landmarks';
 import { clamp01, easeOutBack } from '@/engine/math';
 import { chance, randInt } from '@/engine/spawn';
 import { C, fade } from '@/engine/render/palette';
@@ -36,15 +37,28 @@ const SIDE_O = 0;
 const SIDE_X = 1;
 const SIDE_NONE = -1;
 
+/** Body-centre x, as a fraction of the view width, that claims a side.
+ *  Hysteresis: from O the body must pass 0.55 to become X and vice versa, so
+ *  standing on the centre line never flickers. */
+const SIDE_O_AT = 0.45;
+const SIDE_X_AT = 0.55;
+/** Fixed steps (100 ms) a new side must hold before it counts, so a two-frame
+ *  landmark glitch never moves the child to the other half of the room. */
+const SIDE_CONFIRM = 6;
+
 const POINTS = 20;
 
 class OxQuizZone implements MiniGame {
   private ctx!: GameContext;
-  private zoneO!: Detector<'zone'>;
-  private zoneX!: Detector<'zone'>;
 
   private player: PlayerPose | null = null;
-  private readonly hip = { x: 0, y: 0 };
+  /** Shoulder midpoint in view px: the body point the side is judged on. */
+  private readonly body = { x: 0, y: 0 };
+  private side = SIDE_NONE;
+  private pendingSide = SIDE_NONE;
+  private pendingN = 0;
+  /** Set once the 8th answer has been revealed and the round handed back. */
+  private done = false;
 
   // This round's questions, decided once from the seeded rng so a replay
   // reproduces the same quiz. Fixed-size typed arrays: no per-frame growth.
@@ -66,19 +80,13 @@ class OxQuizZone implements MiniGame {
   private phaseTotal = THINK_SEC;
   private correctSide = SIDE_O;
   private chosenSide = SIDE_NONE;
-  /** Which half the hips are in right now, for the "you are here" glow. */
+  /** Which half the body is in right now, for the "you are here" glow. */
   private inO = false;
   private inX = false;
   private readonly plus: string[] = [];
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
-    // Whole-body translation, not hands: watch the hips, both halves of the
-    // view, with the zone detector's own margin hysteresis so standing
-    // exactly on the centre line never flickers between sides.
-    this.zoneO = ctx.gestures.use('zone', { x: 0, y: 0, w: 0.5, h: 1, joints: [L.LEFT_HIP, L.RIGHT_HIP] });
-    this.zoneX = ctx.gestures.use('zone', { x: 0.5, y: 0, w: 0.5, h: 1, joints: [L.LEFT_HIP, L.RIGHT_HIP] });
-
     const pool: number[] = [];
     for (let i = 0; i < QUIZ_BANK.length; i++) pool.push(i);
     for (let i = pool.length - 1; i > 0; i--) {
@@ -114,36 +122,62 @@ class OxQuizZone implements MiniGame {
   }
 
   update(dt: number, f: PoseFrame): void {
+    if (this.done) return;
     this.time += dt;
     const p = f.p1;
     this.player = p ?? null;
-    if (p) hipPx(p, this.hip);
-
-    const zo = this.zoneO.read(f);
-    const zx = this.zoneX.read(f);
-    this.inO = zo.inside && !zx.inside;
-    this.inX = zx.inside && !zo.inside;
+    // Gate, never guess: with a shoulder out of sight the side holds.
+    if (p && p.vis[L.LEFT_SHOULDER]! >= MIN_VIS && p.vis[L.RIGHT_SHOULDER]! >= MIN_VIS) {
+      shoulderPx(p, this.body);
+      this.track(this.body.x / Math.max(1, this.ctx.view.w));
+    }
+    this.inO = this.side === SIDE_O;
+    this.inX = this.side === SIDE_X;
 
     if (this.phase === PHASE_THINK) {
       this.phaseT -= dt;
-      if (this.phaseT <= 0) this.commit(zo.inside, zx.inside);
+      if (this.phaseT <= 0) this.commit();
     } else if (this.phase === PHASE_REVEAL) {
       this.phaseT -= dt;
       if (this.phaseT <= 0) {
+        if (this.qIndex >= ROUND_N - 1) {
+          // All eight answered and shown: hand the round back rather than
+          // re-asking question 1 in the last seconds.
+          this.done = true;
+          this.ctx.emit({ kind: 'clearEarly' });
+          return;
+        }
         this.phase = PHASE_GAP;
         this.phaseT = GAP_SEC;
         this.phaseTotal = GAP_SEC;
       }
     } else {
       this.phaseT -= dt;
-      if (this.phaseT <= 0) this.startQuestion((this.qIndex + 1) % ROUND_N);
+      if (this.phaseT <= 0) this.startQuestion(this.qIndex + 1);
+    }
+  }
+
+  /** Side with hysteresis and a short confirm. `fx` is 0..1 of the width. */
+  private track(fx: number): void {
+    const want = fx < SIDE_O_AT ? SIDE_O : fx > SIDE_X_AT ? SIDE_X : this.side;
+    if (want === this.side) {
+      this.pendingN = 0;
+      return;
+    }
+    if (want !== this.pendingSide) {
+      this.pendingSide = want;
+      this.pendingN = 0;
+    }
+    if (++this.pendingN >= SIDE_CONFIRM) {
+      this.side = want;
+      this.pendingN = 0;
     }
   }
 
   /** Judged at the deadline MOMENT: wherever the body happens to be when the
    *  window closes, not any position passed through earlier. */
-  private commit(oIn: boolean, xIn: boolean): void {
-    this.chosenSide = oIn && !xIn ? SIDE_O : xIn && !oIn ? SIDE_X : SIDE_NONE;
+  private commit(): void {
+    this.chosenSide = this.side;
     const correct = this.chosenSide === this.correctSide;
 
     if (correct) {
@@ -151,7 +185,7 @@ class OxQuizZone implements MiniGame {
       this.combo++;
       if (this.combo > this.bestCombo) this.bestCombo = this.combo;
       this.score += POINTS;
-      this.ctx.fx.impact(this.hip.x, this.hip.y, this.combo >= 3 ? 'big' : 'hit', {
+      this.ctx.fx.impact(this.body.x, this.body.y, this.combo >= 3 ? 'big' : 'hit', {
         color: C.success, sprite: 'sparkle', label: this.plus[POINTS] ?? '',
       });
       this.ctx.audio.playLadder('pop', this.combo);
@@ -162,7 +196,7 @@ class OxQuizZone implements MiniGame {
       this.misses++;
       this.combo = 0;
       // Quiet by construction: no shake, no flash, no red on the player.
-      this.ctx.fx.miss(this.hip.x, this.hip.y);
+      this.ctx.fx.miss(this.body.x, this.body.y);
       this.ctx.hud.setCombo(0);
       this.ctx.emit({ kind: 'miss' });
     }
@@ -271,11 +305,15 @@ class OxQuizZone implements MiniGame {
   }
 
   private drawBanner(g: Renderer): void {
-    if (this.phase === PHASE_GAP) return;
-    const bw = Math.min(g.w * 0.9, 900 * g.s);
+    // Thinking time only: the reveal's "정답은 O!" toast lands where the
+    // banner is, and the question stays readable in the HUD announce line.
+    if (this.phase !== PHASE_THINK) return;
+    // Inside the HUD-free area: below the top band (~0.17h) and clear of the
+    // score + combo column on the left quarter.
+    const bw = Math.min(g.w * 0.5, 900 * g.s);
     const bh = 120 * g.s;
     const bx = g.w / 2 - bw / 2;
-    const by = g.h * 0.03;
+    const by = g.h * 0.18;
     g.roundRect(bx, by, bw, bh, 22 * g.s, { fill: fade(C.white, 0.96), stroke: C.ink, sw: 4 * g.s });
     g.text(this.questionText(), g.w / 2, by + bh / 2, {
       size: 48 * g.s, weight: 800, display: true, align: 'center', baseline: 'middle',

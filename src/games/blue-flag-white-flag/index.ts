@@ -43,6 +43,10 @@ const POINTS = 10;
 
 const BLUE_COLOR = C.primary;
 const WHITE_COLOR = C.ink;
+/** Colour strings built once: render() builds none. */
+const PANEL_FILL = fade(C.white, 0.9);
+const BANNER_FILL = fade(C.white, 0.96);
+const BAR_TRACK = fade(C.ink, 0.15);
 
 class BlueFlagWhiteFlag implements MiniGame {
   private ctx!: GameContext;
@@ -158,6 +162,25 @@ class BlueFlagWhiteFlag implements MiniGame {
     );
   }
 
+  /**
+   * A "don't" clause means "leave that flag alone", so a trap is only fair
+   * when every negated flag ALREADY sits at the instruction's target for it.
+   * Otherwise "청기 올리지 말고" with blue up would demand lowering a flag
+   * nobody said to lower. The two double negatives can never pass this AND
+   * need a move, so they are retired by construction.
+   */
+  private trapFair(ins: Instruction): boolean {
+    for (let i = 0; i < ins.clauses.length; i++) {
+      const cl = ins.clauses[i]!;
+      if (!cl.negate) continue;
+      const blue = cl.flag === 'blue';
+      const target = blue ? ins.blue : ins.white;
+      const up = blue ? this.prevBlueUp : this.prevWhiteUp;
+      if ((target === 'up') !== up) return false;
+    }
+    return true;
+  }
+
   private resolve(correct: boolean): void {
     const cx = (this.handL.x + this.handR.x) / 2;
     const cy = (this.handL.y + this.handR.y) / 2;
@@ -174,9 +197,9 @@ class BlueFlagWhiteFlag implements MiniGame {
         color: C.success, sprite: 'sparkle', label: this.plus[POINTS] ?? '',
       });
       this.ctx.audio.playLadder('pop', this.combo);
-      if (this.combo > 0 && this.combo % 4 === 0) {
-        this.ctx.hud.toast(this.combo >= 8 ? t('wow') : t('nice'), { color: C.accent });
-      }
+      // No HUD toast here: it lands at 24% of the height, on top of the next
+      // instruction's first line. The burst, its label and the combo pill
+      // carry the praise instead.
       this.ctx.hud.setScore(this.score);
       this.ctx.hud.setCombo(this.combo);
       this.ctx.emit({ kind: 'scored', points: POINTS });
@@ -196,8 +219,8 @@ class BlueFlagWhiteFlag implements MiniGame {
 
     if (!this.strictKeep && elapsedFrac >= STRICT_KEEP_AT) {
       this.strictKeep = true;
+      // Announce only (bottom of the screen): a toast would cover the banner.
       this.ctx.hud.announce(t('keepWarn'), { assertive: true });
-      this.ctx.hud.toast(t('keepWarn'), { color: C.warn });
     }
 
     const n = INSTRUCTIONS.length;
@@ -206,7 +229,10 @@ class BlueFlagWhiteFlag implements MiniGame {
     for (let k = 0; k < n; k++) {
       const c = (first + k) % n;
       const cand = INSTRUCTIONS[c]!;
-      if (c !== this.prevIdx && this.needsMove(cand) && (!cand.trap || elapsedFrac >= TRAP_AFTER)) {
+      if (
+        c !== this.prevIdx && this.needsMove(cand) &&
+        (!cand.trap || (elapsedFrac >= TRAP_AFTER && this.trapFair(cand)))
+      ) {
         idx = c;
         break;
       }
@@ -276,7 +302,7 @@ class BlueFlagWhiteFlag implements MiniGame {
     const pw = 170 * g.s;
     const ph = 250 * g.s;
     g.roundRect(cx - pw / 2, cy - ph / 2, pw, ph, 22 * g.s, {
-      fill: fade(C.white, 0.9), stroke: ok ? C.success : C.ink, sw: (ok ? 10 : 4) * g.s,
+      fill: PANEL_FILL, stroke: ok ? C.success : C.ink, sw: (ok ? 10 : 4) * g.s,
     });
     const px = cx - 26 * g.s;
     const top = cy - ph * 0.38;
@@ -289,14 +315,15 @@ class BlueFlagWhiteFlag implements MiniGame {
 
     const col = white ? C.text : BLUE_COLOR;
     if (state === 'keep') {
+      // A target the child reacts to: never under 34 px, whatever the scale.
       g.text(t('stay'), cx, cy + ph * 0.3, {
-        size: 40 * g.s, weight: 800, display: true, align: 'center', baseline: 'middle', fill: C.textDim,
+        size: Math.max(34, 40 * g.s), weight: 800, display: true, align: 'center', baseline: 'middle', fill: C.textDim,
       });
       return;
     }
     g.chevron(cx, cy + ph * 0.1, 26 * g.s, state === 'up' ? -Math.PI / 2 : Math.PI / 2, { fill: col });
     g.text(state === 'up' ? t('up') : t('down'), cx, cy + ph * 0.34, {
-      size: 46 * g.s, weight: 800, display: true, align: 'center', baseline: 'middle', fill: col,
+      size: Math.max(34, 46 * g.s), weight: 800, display: true, align: 'center', baseline: 'middle', fill: col,
     });
   }
 
@@ -304,13 +331,16 @@ class BlueFlagWhiteFlag implements MiniGame {
     const clauses = this.instr.clauses;
     const rows = this.clauseRevealT > 0 ? 1 : clauses.length;
     const rowH = 84 * g.s;
-    const bw = Math.min(g.w * 0.66, 900 * g.s);
+    // Inside the HUD safe area: below the DOM top band (0.18h, with room for
+    // the trap badge that pokes above the banner) and clear of the score
+    // column on the left (x >= 0.25w).
+    const bw = Math.min(g.w * 0.5, 900 * g.s);
     const bh = rowH * clauses.length + 24 * g.s;
     const bx = g.w / 2 - bw / 2;
-    const by = g.h * 0.04;
+    const by = g.h * 0.18 + 22 * g.s;
 
     g.roundRect(bx, by, bw, bh, 22 * g.s, {
-      fill: fade(C.white, 0.96), stroke: this.instr.trap ? C.warn : C.ink, sw: 5 * g.s,
+      fill: BANNER_FILL, stroke: this.instr.trap ? C.warn : C.ink, sw: 5 * g.s,
     });
 
     for (let i = 0; i < rows; i++) {
@@ -334,7 +364,7 @@ class BlueFlagWhiteFlag implements MiniGame {
       const barW = bw * 0.9;
       const barX = g.w / 2 - barW / 2;
       const barY = by + bh + 12 * g.s;
-      g.roundRect(barX, barY, barW, 14 * g.s, 7 * g.s, { fill: fade(C.ink, 0.15) });
+      g.roundRect(barX, barY, barW, 14 * g.s, 7 * g.s, { fill: BAR_TRACK });
       g.roundRect(barX, barY, Math.max(1, barW * ratio), 14 * g.s, 7 * g.s, {
         fill: ratio > 0.3 ? C.success : C.warn,
       });

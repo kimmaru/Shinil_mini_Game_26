@@ -7,7 +7,7 @@ export const manifest: MiniGameManifest = {
   howToKo: [
     '표시된 자리에서 옆으로 피해요',
     '큰 눈덩이는 몸을 숙여요',
-    '팔을 당겼다가 앞으로 던져요',
+    '팔을 접었다가 눈사람 쪽으로 쭉 뻗어요',
   ],
   icon: 'gi-snowball-fight',
   theme: { hue: 192 },
@@ -21,17 +21,19 @@ export const manifest: MiniGameManifest = {
   // one child against the snowmen.
   players: { min: 1, max: 1, mode: 'solo' },
 
-  // 'legs': hits and dodges are judged on the shoulder-to-hip torso, so with
-  // the hips out of frame nothing can hit or be dodged.
-  requiredLandmarks: ['head', 'arms', 'hands', 'torso', 'legs'],
+  // No 'legs': the torso is the shoulder centre plus the origin of `n`, which
+  // the engine estimates from the shoulders when the hips are out of frame,
+  // so a waist-up child close to the laptop can dodge and throw.
+  requiredLandmarks: ['head', 'arms', 'hands', 'torso'],
   gestures: ['reach'],
 
   durationMs: 60_000,
-  // ~25 counter-throws land in a strong round at 15-20 each, plus 8 for every
-  // snowball dodged. Being hit only breaks the combo and never ends the round.
-  // swing-wide is the closest clip to a throw and never dodges, and lands above
-  // maxScore: a perfect flail is better than a real child.
-  scoring: { kind: 'count', maxScore: 480, starCuts: [0.3, 0.55, 0.78] },
+  // Measured on synthetic clips: an honest thrower (wind up, hold, extend
+  // toward a snowman every 2s) lands ~29 throws for 441 (0.92); the same
+  // waist-up with the hips out of frame 377-416; throwing while stepping
+  // side to side 341. A windmill no longer throws at all. Dodging alone
+  // (step-lr, the dev clip: no clip throws honestly) earns ~90-100 = 1 star.
+  scoring: { kind: 'count', maxScore: 480, starCuts: [0.15, 0.55, 0.78] },
 
   a11y: {
     keyboardFallback: true,
@@ -43,5 +45,5 @@ export const manifest: MiniGameManifest = {
   version: 1,
   author: 'A2',
   enabled: true,
-  dev: { clip: 'swing-wide' },
+  dev: { clip: 'step-lr' },
 };

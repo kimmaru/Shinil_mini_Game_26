@@ -102,8 +102,6 @@ class MaxReachStretch implements MiniGame {
   private readonly palmY = new Float32Array(2);
   private fx = 0;
   private fy = 0;
-  /** A star had to be pulled well inside the reach to fit on screen. */
-  private tooClose = false;
   private frac0 = FRAC_START;
   private frac = FRAC_START;
   private both = false;
@@ -163,9 +161,13 @@ class MaxReachStretch implements MiniGame {
     this.colTip = hueDark(h);
     this.colHandIdle = hsla(h, 0.45);
     this.colHaloHold = fade(C.white, 0.8);
-    // A view-relative radius: 8%+ of the view width across, whatever the body.
-    this.r = Math.max(ctx.view.w * 0.042, Math.min(ctx.view.w, ctx.view.h) * 0.07);
+    this.onResize(ctx.view.w, ctx.view.h);
     ctx.hud.setGoal(t('goal'));
+  }
+
+  onResize(w: number, h: number): void {
+    // A view-relative radius: 8%+ of the view width across, whatever the body.
+    this.r = Math.max(w * 0.042, Math.min(w, h) * 0.07);
   }
 
   start(): void {
@@ -214,14 +216,19 @@ class MaxReachStretch implements MiniGame {
     }
     // Own arm length, sanity-clamped: an implausibly long one would put stars
     // out of reach, which is the one failure this game must never have.
-    this.armLen = clamp(p.calib.armLen > 0.5 ? p.calib.armLen : 1.6, 1.1, 1.9);
+    const detArm = p.calib.armLen > 0.5 ? p.calib.armLen : 1.6;
+    this.armLen = clamp(detArm, 1.1, 1.9);
     this.scale = Math.max(20, p.scalePx);
     this.palmX[0] = sig.leftPalm.x;
     this.palmY[0] = sig.leftPalm.y;
     this.palmX[1] = sig.rightPalm.x;
     this.palmY[1] = sig.rightPalm.y;
-    this.ext[0] = p.vis[L.LEFT_WRIST]! >= MIN_VIS ? sig.leftExtend : 0;
-    this.ext[1] = p.vis[L.RIGHT_WRIST]! >= MIN_VIS ? sig.rightExtend : 0;
+    // The detector divides by the raw armLen; re-express extension against the
+    // SAME clamped armLen the stars are placed with, or a clamped profile asks
+    // for a stretch the arm cannot make.
+    const k = detArm / this.armLen;
+    this.ext[0] = p.vis[L.LEFT_WRIST]! >= MIN_VIS ? sig.leftExtend * k : 0;
+    this.ext[1] = p.vis[L.RIGHT_WRIST]! >= MIN_VIS ? sig.rightExtend * k : 0;
   }
 
   // ─── Stars ────────────────────────────────────────────────────────────────
@@ -271,12 +278,16 @@ class MaxReachStretch implements MiniGame {
    * tall child) turn it toward one that fits at the same distance. Only when
    * no direction fits does place() fall back to pulling the star in — and
    * then it asks for no more extension than the star's real distance.
+   *
+   * The search walks outward from the chosen direction across the WHOLE
+   * [ANG_MIN, ANG_MAX] range: at ~1.2 m only the low diagonals fit, and a
+   * +/-60 degree search from an overhead star never reached them.
    */
   private fitAngles(): void {
     for (let s = 0; s < 2; s++) {
       if (!this.on[s] || this.fits(s, this.ang[s]!)) continue;
       const a0 = this.ang[s]!;
-      for (let k = 1; k <= 20; k++) {
+      for (let k = 1; k <= 42; k++) {
         const a = a0 + (k % 2 === 1 ? -1 : 1) * Math.ceil(k / 2) * 6;
         if (a < ANG_MIN || a > ANG_MAX) continue;
         if (this.fits(s, a) && (!this.both || this.fits(1 - s, a))) {
@@ -292,7 +303,14 @@ class MaxReachStretch implements MiniGame {
     this.starAt(s, angDeg);
     const { w, h } = this.ctx.view;
     const m = this.r * 1.1;
-    return this.fx >= m && this.fx <= w - m && this.fy >= m + h * 0.06 && this.fy <= h - m;
+    return this.fx >= m && this.fx <= w - m && this.fy >= this.topAt(this.fx) && this.fy <= h - m;
+  }
+
+  /** Highest star centre allowed at screen x: the whole halo stays below the
+   *  DOM HUD band (score + combo pill on the left, timer on the right). */
+  private topAt(x: number): number {
+    const { w, h } = this.ctx.view;
+    return (x < w * 0.25 ? h * 0.26 : h * 0.18) + this.r;
   }
 
   /** Unclamped star centre for side `s` at `angDeg`, into fx/fy. */
@@ -311,19 +329,16 @@ class MaxReachStretch implements MiniGame {
   private place(): void {
     const { w, h } = this.ctx.view;
     const m = this.r * 1.1;
-    this.tooClose = false;
     for (let s = 0; s < 2; s++) {
       if (!this.on[s]) continue;
       this.starAt(s, this.ang[s]!);
       const x = clamp(this.fx, m, w - m);
-      const y = clamp(this.fy, m + h * 0.06, h - m);
+      const y = clamp(this.fy, this.topAt(x), h - m);
       this.tx[s] = x;
       this.ty[s] = y;
       // A star pulled in by the screen edge asks only for the reach it is at.
       const actual = Math.hypot(x - this.shX[s]!, y - this.shY[s]!) / this.scale;
       this.need[s] = clamp((actual - PALM_OFF) / this.armLen - EXT_SLACK, 0.5, this.frac - EXT_SLACK);
-      // Pulled in a lot: the child is too close for a full stretch. Say so.
-      if (actual < (this.frac * this.armLen + PALM_OFF) * 0.8) this.tooClose = true;
     }
   }
 
@@ -426,9 +441,6 @@ class MaxReachStretch implements MiniGame {
 
     if (this.state === ST_ACTIVE) {
       for (let s = 0; s < 2; s++) if (this.on[s]) this.drawStar(g, s);
-      if (this.tooClose) {
-        g.text(t('stepBack'), g.w / 2, g.h * 0.12, this.text(40 * g.s, this.colTip, C.white));
-      }
     }
 
     if (p) {
@@ -528,8 +540,12 @@ class MaxReachStretch implements MiniGame {
     g.restore();
 
     if (this.inside[s] === 1) {
-      // Above the star, unless that would leave the screen: then below it.
-      const ty = y - r * 1.55 > 34 * g.s ? y - r * 1.55 : y + r * 1.55;
+      // Above the star, unless that would enter the HUD band: then below it,
+      // and on the star itself if neither fits.
+      const half = 24 * g.s;
+      const safe = x < g.w * 0.25 ? g.h * 0.26 : g.h * 0.18;
+      const ty = y - r * 1.55 - half >= safe ? y - r * 1.55
+        : y + r * 1.55 + half <= g.h ? y + r * 1.55 : y;
       if (this.extOk[s] === 1) {
         g.text(t('hold'), x, ty, this.text(40 * g.s, C.success, C.white));
       } else {

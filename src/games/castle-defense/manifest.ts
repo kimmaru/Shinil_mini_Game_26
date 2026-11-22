@@ -4,7 +4,7 @@ export const manifest: MiniGameManifest = {
   id: 'castle-defense',
   nameKo: '성 지키기',
   taglineKo: '떨어지는 바위를 쳐내요!',
-  howToKo: ['손으로 바위를 쳐서 날려요', '큰 바위는 두 번 쳐요', '발로 차도 돼요'],
+  howToKo: ['손으로 바위를 쳐서 날려요', '큰 바위는 두 번 쳐요', '팔을 빠르게 휘둘러야 날아가요'],
   icon: 'gi-castle-defense',
   theme: { hue: 26 },
 
@@ -19,7 +19,10 @@ export const manifest: MiniGameManifest = {
   gestures: ['swing'],
 
   durationMs: 50_000,
-  scoring: { kind: 'count', maxScore: 650, starCuts: [0.25, 0.5, 0.75] },
+  // ~100 rocks a round at 10/20/30 plus a combo bonus. A two-handed child
+  // tracking the lowest rock at ~1.2 m (scratch oracle, 0.35 s reaction) hits
+  // ~75 for ~1000; the blind `swing-wide` sweep scores 592 = 2 stars, not 3.
+  scoring: { kind: 'count', maxScore: 1000, starCuts: [0.25, 0.5, 0.75] },
 
   a11y: {
     // Hands alone play the whole game; the mouse drives the dominant hand.

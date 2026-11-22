@@ -143,8 +143,7 @@ class ShootingStarGrab implements MiniGame {
     );
 
     const g = Math.min(ctx.view.w, ctx.view.h);
-    this.grabR = g * 0.095;
-    this.keepR = this.grabR * 2.2;
+    this.size();
     this.armPx = g * 0.3;
 
     for (let i = 0; i < POOL; i++) {
@@ -156,10 +155,11 @@ class ShootingStarGrab implements MiniGame {
         hand: -1, prog: 0, matchSum: 0, matchN: 0, pull: 0,
       });
     }
+    // Fractions of the view, so a resize never strands the sky.
     for (let i = 0; i < DECOR; i++) {
-      this.decor[i * 3] = ctx.rng() * ctx.view.w;
-      this.decor[i * 3 + 1] = ctx.rng() * ctx.view.h * 0.92;
-      this.decor[i * 3 + 2] = g * (0.006 + ctx.rng() * 0.01);
+      this.decor[i * 3] = ctx.rng();
+      this.decor[i * 3 + 1] = ctx.rng() * 0.92;
+      this.decor[i * 3 + 2] = 0.006 + ctx.rng() * 0.01;
     }
 
     // Start the hands somewhere sane so frame one never draws them at (0,0).
@@ -182,6 +182,16 @@ class ShootingStarGrab implements MiniGame {
   start(): void {
     this.ctx.hud.setScore(0);
     this.ctx.audio.music({ bpm: 104 });
+  }
+
+  /** Hand radii from the live view (ctx.view is kept current by the host). */
+  private size(): void {
+    this.grabR = Math.min(this.ctx.view.w, this.ctx.view.h) * 0.095;
+    this.keepR = this.grabR * 2.2;
+  }
+
+  onResize(): void {
+    this.size();
   }
 
   update(dt: number, f: PoseFrame): void {
@@ -252,12 +262,17 @@ class ShootingStarGrab implements MiniGame {
     // envelope runs 0.69-1.31. An annulus tighter than that puts every star
     // inside the player's arc, where no sweep ever reaches it.
     // Upper and outer arc only: the hanging-arm sector below the shoulders is
-    // where a resting hand lives, and a star there would be free.
-    const ang = randRange(this.ctx.rng, -2.9, 0.45);
+    // where a resting hand lives, and a star there would be free. Symmetric
+    // about straight up (26 degrees below horizontal on both sides), so
+    // neither arm gets all the raised-arm work.
+    const ang = randRange(this.ctx.rng, -Math.PI - 0.45, 0.45);
     const rad = (lerp(0.68, 1.1, d) + randRange(this.ctx.rng, -0.16, 0.16)) * this.armPx;
     const margin = g * 0.14;
     const ax = clamp(this.shoulder.x + Math.cos(ang) * rad, margin, w - margin);
-    const ay = clamp(this.shoulder.y + Math.sin(ang) * rad, margin, h - margin);
+    // Keep the grab point out from under the DOM HUD (top band; the score
+    // column runs deeper on the left).
+    const top = Math.max(margin, h * (ax < w * 0.25 ? 0.26 : 0.18));
+    const ay = clamp(this.shoulder.y + Math.sin(ang) * rad, top, h - margin);
 
     // Falling diagonals: a star that travels straight down or straight across
     // can be taken with a one-axis wave, which is not a sweep.
@@ -451,9 +466,10 @@ class ShootingStarGrab implements MiniGame {
 
     // Night sky. Background decoration only, so it stays in ART.md's
     // 1.2-2:1 contrast band and never competes with a real star.
+    const gm = Math.min(g.w, g.h);
     for (let i = 0; i < DECOR; i++) {
       const tw = Math.floor(1.5 + 1.49 * Math.sin(this.time * 1.3 + i));
-      g.star(this.decor[i * 3]!, this.decor[i * 3 + 1]!, this.decor[i * 3 + 2]!, 4, {
+      g.star(this.decor[i * 3]! * g.w, this.decor[i * 3 + 1]! * g.h, this.decor[i * 3 + 2]! * gm, 4, {
         fill: DECOR_COL[tw]!,
       });
     }
@@ -523,7 +539,7 @@ class ShootingStarGrab implements MiniGame {
     }
 
     if (!this.handsSeen) {
-      g.text(t('hint'), g.w / 2, g.h * 0.16, {
+      g.text(t('hint'), g.w / 2, g.h * 0.22, {
         size: 34 * g.s, weight: 700, align: 'center', fill: C.text,
         stroke: C.bg, sw: 6 * g.s,
       });

@@ -3,8 +3,10 @@ import {
   initialSession, sessionReducer, WHEEL_SIZE,
   type SessionState, type WheelItem,
 } from './useSession';
-import type { GameResult } from '@/engine/types';
+import type { GameResult, SpaceNeed } from '@/engine/types';
 import { defaultCalibration } from '@/engine/pose/source';
+import { ALL } from '@/engine/registry';
+import { __resetRounds, decideRound } from './rounds';
 
 const S = (over: Partial<SessionState> = {}): SessionState => ({
   ...initialSession({ seed: 7, now: 0 }),
@@ -94,6 +96,46 @@ describe('the guest loop', () => {
     expect(s.shortlist).toEqual([WHEEL[5]]);
     expect(s.lastResult).toBeNull();
     expect(s.beatRecord).toBe(false);
+  });
+});
+
+describe('a round that settles after the app moved on', () => {
+  it('is ignored once the camera was turned off (setup) or the guest went home', () => {
+    // 끄기 mid-round used to land on results 20 s later, then on attract with
+    // no camera and no way back to setup.
+    for (const phase of ['setup', 'attract', 'results'] as const) {
+      const s = S({ phase, currentGame: 'g3' });
+      expect(sessionReducer(s, { type: 'roundEnded', result: result(40), nowMs: 1 }), phase).toBe(s);
+    }
+  });
+
+  it('still lands on results from play and from paused (그만하기)', () => {
+    for (const phase of ['play', 'paused'] as const) {
+      const s = sessionReducer(S({ phase, currentGame: 'g3' }), {
+        type: 'roundEnded', result: result(40), nowMs: 1,
+      });
+      expect(s.phase, phase).toBe('results');
+    }
+  });
+});
+
+describe('the roulette pool follows the CURRENT guest’s framing', () => {
+  it('brings the leg games back after a waist-up guest leaves', () => {
+    // The scheduler merges its options: one close guest's "no legs" used to
+    // stick for the rest of the day.
+    __resetRounds();
+    const base = { players: 1, space: ['seated', 'standing', 'room'] as SpaceNeed[], cameraOn: true };
+    const legGames = (lowerBodyVisible: boolean): number => {
+      let n = 0;
+      for (let i = 0; i < 30; i++) {
+        const pick = decideRound({ ...base, lowerBodyVisible });
+        n += pick.shortlist.filter((w) => ALL.get(w.id)!.requiredLandmarks.some(
+          (g) => g === 'legs' || g === 'feet' || g === 'fullBody')).length;
+      }
+      return n;
+    };
+    expect(legGames(false)).toBe(0);
+    expect(legGames(true)).toBeGreaterThan(0);
   });
 });
 

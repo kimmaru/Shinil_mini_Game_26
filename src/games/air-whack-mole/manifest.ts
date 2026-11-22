@@ -3,8 +3,8 @@ import type { MiniGameManifest } from '@/engine/types';
 export const manifest: MiniGameManifest = {
   id: 'air-whack-mole',
   nameKo: '하늘 두더지',
-  taglineKo: '손과 무릎으로 톡톡!',
-  howToKo: ['손을 뻗어 두더지를 톡 쳐요', '무릎을 올려서 아래 두더지도 잡아요', '검은 폭탄은 피해요'],
+  taglineKo: '두더지를 손으로 톡톡!',
+  howToKo: ['손을 뻗어 두더지를 톡 쳐요', '낮은 두더지가 나오면 무릎을 올려요', '검은 폭탄은 피해요'],
   icon: 'gi-air-whack-mole',
   theme: { hue: 92 },
 
@@ -14,14 +14,17 @@ export const manifest: MiniGameManifest = {
   space: 'standing',
   players: { min: 1, max: 1, mode: 'solo' },
 
-  requiredLandmarks: ['arms', 'hands', 'torso', 'legs'],
+  // No 'legs': knee moles only spawn while the knees are tracked (index.ts
+  // spawnMole), so a waist-up child close to the laptop gets a hands-only round.
+  requiredLandmarks: ['arms', 'hands', 'torso'],
   gestures: ['reach'],
 
   durationMs: 45_000,
-  // ~60 moles spawn in a round. A competent 9-year-old taps ~65% of the plain
-  // ones (10-18 pts) plus golds: ~400-450. The dev clip (swing-wide, a
-  // metronomic arm flail) scores ~60% of that, i.e. 2 stars.
-  scoring: { kind: 'count', maxScore: 480, starCuts: [0.3, 0.55, 0.78] },
+  // Measured with an aiming player on the virtual body (reaction 0.25-0.4s):
+  // waist-up (hand moles only) 42-52 hits, combos to 23-30, 640-760; full
+  // body while ignoring the knee moles 410-454. The dev clip (swing-wide, a
+  // metronomic arm flail) scores 120-210 = 1 star; parked hands score 0.
+  scoring: { kind: 'count', maxScore: 600, starCuts: [0.15, 0.55, 0.78] },
 
   a11y: {
     // The bottom row is a targeted knee-raise into one of three columns.

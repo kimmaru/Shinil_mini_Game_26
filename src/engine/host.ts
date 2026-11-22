@@ -135,6 +135,14 @@ export async function runRound(req: RoundRequest, deps: HostDeps): Promise<GameR
     canvas.height = 0;
     throw e;
   }
+  // Aborted (그만하기, camera off) while the game's chunk was loading: there is
+  // no round to settle yet, so drop the canvas and stop here.
+  if (req.signal.aborted) {
+    canvas.remove();
+    canvas.width = 0;
+    canvas.height = 0;
+    throw new DOMException('round aborted while loading', 'AbortError');
+  }
 
   let resolveRound!: (r: GameResult) => void;
   let rejectRound!: (e: unknown) => void;
@@ -144,7 +152,13 @@ export async function runRound(req: RoundRequest, deps: HostDeps): Promise<GameR
     view = measure();
     viewRef.w = view.w;
     viewRef.h = view.h;
+    // The contract types ctx.view as readonly to the GAME; the host keeps it
+    // live, or a game laying out from it after a resize uses the old size.
+    const cv = ctx.view as { w: number; h: number; dpr: number };
     g.resize(view.w, view.h);
+    cv.w = view.w;
+    cv.h = view.h;
+    cv.dpr = g.dpr;
     fx.setView(view.w, view.h, g.s);
     game.onResize?.(view.w, view.h);
   };

@@ -4,7 +4,7 @@ export const manifest: MiniGameManifest = {
   id: 'fruit-slash',
   nameKo: '과일 쓱싹',
   taglineKo: '과일을 쓱 베어요!',
-  howToKo: ['날아오는 과일을 손으로 쓱 베어요', '발로 차도 잘려요', '돌은 건드리지 마세요'],
+  howToKo: ['날아오는 과일을 손으로 쓱 베어요', '한 번에 여러 개 베면 보너스!', '돌은 건드리지 마세요'],
   /** A sprite id from src/engine/render/sprites.ts — never an emoji. */
   icon: 'gi-fruit-slash',
   // A cool sky wash: red, green and gold fruit pop on it, and none of them
@@ -27,10 +27,10 @@ export const manifest: MiniGameManifest = {
   durationMs: 60_000,
   // The `swing-wide` clip sweeps both arms at 1.5 Hz without ever LOOKING at
   // the fruit, which for an aiming game is a floor rather than a ceiling: it
-  // scores 485, two stars. maxScore is set above that so a child who actually
-  // tracks the fruit has somewhere to go; three stars needs ~52 of the ~115
-  // fruit a round throws.
-  scoring: { kind: 'count', maxScore: 700, starCuts: [0.26, 0.5, 0.75] },
+  // scores 560, two stars. A two-handed child tracking the nearest fruit at
+  // ~1.2 m (scratch oracle, 0.3 s reaction) cuts ~67 of the ~100 fruit for
+  // ~780; three stars needs ~640.
+  scoring: { kind: 'count', maxScore: 850, starCuts: [0.26, 0.5, 0.75] },
 
   a11y: {
     keyboardFallback: true,

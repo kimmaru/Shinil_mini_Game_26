@@ -59,21 +59,22 @@ export const MAX_EXTRAPOLATE_SEC = 0.06;
 /** Exponentially smoothed inference rate, for the debug overlay and the
  *  quality ladder. Raw 1/dt reads as 11-47fps on a steady 25Hz stream. */
 export class FpsMeter {
-  private ema = 0;
+  /** Smoothed INTERVAL, seconds. Averaging 1/dt instead reads high whenever
+   *  the gaps are uneven (33, 33, 66 ms is 25 Hz, but averages to 27). */
+  private emaDt = 0;
 
   get fps(): number {
-    return this.ema;
+    return this.emaDt > 0 ? 1 / this.emaDt : 0;
   }
 
   /** `dt` is the interval between two consecutive inferences, in seconds. */
   sample(dt: number): void {
     if (!(dt > 1e-4) || dt > 2) return;
-    const inst = 1 / dt;
-    this.ema = this.ema === 0 ? inst : this.ema + 0.15 * (inst - this.ema);
+    this.emaDt = this.emaDt === 0 ? dt : this.emaDt + 0.15 * (dt - this.emaDt);
   }
 
   reset(): void {
-    this.ema = 0;
+    this.emaDt = 0;
   }
 }
 

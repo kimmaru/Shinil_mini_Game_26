@@ -20,13 +20,16 @@ export const manifest: MiniGameManifest = {
   gestures: ['reach'],
 
   durationMs: 45_000,
-  // A strong player finishes ~17 stretches (every 5th two-armed, 20) with most
-  // held all the way out (+5): ~240. reach-grid, which sweeps every direction
-  // without following the stars, lands on one star (seed 3: 65).
-  scoring: { kind: 'count', maxScore: 240, starCuts: [0.2, 0.5, 0.75] },
+  // A child who stretches every star all the way out at ~1.2 m (scratch
+  // oracle, 0.5 s reaction) finishes ~20 stretches, every one a +5 "all the
+  // way": ~315. reach-grid, which sweeps every direction without following
+  // the stars, lands on one star (seed 3: 95); hold-poses on two.
+  scoring: { kind: 'count', maxScore: 290, starCuts: [0.2, 0.5, 0.75] },
 
   a11y: {
-    keyboardFallback: true,
+    // Every 5th star needs BOTH arms out at once; the mouse drives one hand
+    // and Z/X only raise straight up, so those stars cannot be finished.
+    keyboardFallback: false,
     noFlashing: true,
     colorBlindSafe: true,
     audioOptional: true,

@@ -21,10 +21,11 @@ export const manifest: MiniGameManifest = {
   gestures: ['raise'],
 
   durationMs: 50_000,
-  // About 16 instructions fit in a round at 10 points each; a strong child
-  // answers around 13 of them. `swing-wide` waves both arms on a fixed rhythm
-  // without reading anything and answers about half, so it lands near two stars.
-  scoring: { kind: 'count', maxScore: 130, starCuts: [0.27, 0.5, 0.75] },
+  // 10 points per instruction. A keyboard oracle that reads, waits 0.6 s and
+  // answers gets 20-21 (200-210); a competent child ~16-17. `swing-wide`
+  // waves both arms on a fixed rhythm without reading anything and lands 12
+  // (120): 2 stars, not 3.
+  scoring: { kind: 'count', maxScore: 180, starCuts: [0.27, 0.5, 0.75] },
 
   a11y: {
     // Z/X raise the subject's own left/right wrist independently, which is

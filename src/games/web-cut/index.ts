@@ -8,9 +8,11 @@
 // Both halves of a cut thread whip back to their anchors. That recoil is the
 // reward; the points are bookkeeping.
 import type {
-  Detector, EndReason, GameContext, GameResult, MiniGame,
-  PlayerPose, PoseFrame, Pt, Renderer,
+  Detector, EndReason, GameContext, GameResult, MiniGame, Paint,
+  PlayerPose, PlayOpts, PoseFrame, Pt, Renderer,
 } from '@/engine/types';
+import type { ImpactOpts, TrailOpts } from '@/engine/fx/index';
+import type { SpriteOpts } from '@/engine/render/sprite';
 import { L, palm } from '@/engine/pose/landmarks';
 import {
   angleDelta, clamp, clamp01, distSegPoint, easeOutQuint, hitSegCircle, limbAngle,
@@ -52,6 +54,22 @@ const THREADS_MAX = 12;
 const BONDS = 3;
 
 const HANDS = [L.LEFT_WRIST, L.RIGHT_WRIST] as const;
+const SKELETON = { alpha: 0.42, emphasize: HANDS };
+
+// Built once: update() and render() must not build objects or strings.
+const SFX_BREAK: PlayOpts = { gain: 0.5 };
+const SFX_TICK: PlayOpts = { gain: 0.5 };
+const SFX_TRAP: PlayOpts = { gain: 0.4 };
+/** Misses are quiet: one soft sound, no toast. */
+const SFX_GOLD: PlayOpts = { gain: 0.22 };
+const SFX_BITE: PlayOpts = { gain: 0.25 };
+const TOAST_HINT = { color: C.textDim };
+const TOAST_SAVED = { color: C.success, big: true };
+const EV_MISS = { kind: 'miss' as const };
+const FRAME_COL = fade(C.white, 0.35);
+const BOND_OFF = fade(KEYLINE, 0.18);
+const DEAD_COL = fade(KEYLINE, 0.35);
+const SPIDER_COL = '#3A3F55';
 
 class WebCut implements MiniGame {
   private ctx!: GameContext;
@@ -73,6 +91,12 @@ class WebCut implements MiniGame {
   private readonly trailCol = hue(manifest.theme?.hue ?? 266, 80, 42);
   private readonly sparkCol = hue(manifest.theme?.hue ?? 266, 80, 46);
   private readonly silkCol = '#FFFFFF';
+  private readonly trailOpts: TrailOpts = { color: this.trailCol, width: 11, life: 0.2 };
+  private readonly snipFx: ImpactOpts = { color: this.sparkCol, sprite: 'sparkle', label: '', dir: 0 };
+  private readonly saveFx: ImpactOpts = { color: C.success, sprite: 'star', label: '' };
+  private readonly evScored = { kind: 'scored' as const, points: 0 };
+  private readonly pt: Paint = {};
+  private readonly so: SpriteOpts = {};
   private player: PlayerPose | null = null;
 
   /** The reachable rect the web is strung inside, in view px. Recomputed from
@@ -113,6 +137,8 @@ class WebCut implements MiniGame {
       manifest.durationMs / 1000,
     );
     for (let i = 0; i < 80; i++) this.labels.push('+' + String(i));
+    this.snipFx.label = this.labels[SILK_POINTS] ?? '';
+    this.saveFx.label = this.labels[SAVE_POINTS] ?? '';
     ctx.hud.setGoal(t('goal'));
   }
 
@@ -174,19 +200,29 @@ class WebCut implements MiniGame {
       this.fx1 = w * 0.8;
       this.fy0 = h * 0.14;
       this.fy1 = h * 0.66;
-      return;
+    } else {
+      const sx = (p.px[L.LEFT_SHOULDER * 2]! + p.px[L.RIGHT_SHOULDER * 2]!) / 2;
+      const sy = (p.px[L.LEFT_SHOULDER * 2 + 1]! + p.px[L.RIGHT_SHOULDER * 2 + 1]!) / 2;
+      // armLen is shoulder-to-wrist; add half a shoulder width to get the span
+      // from the shoulder CENTRE, then keep 90% of it so the far edge is a
+      // stretch rather than a limit.
+      const reach = (p.calib.armLen + 0.5) * p.scalePx * 0.9;
+      const m = Math.min(w, h) * 0.06;
+      this.fx0 = clamp(sx - reach, m, w - m);
+      this.fx1 = clamp(sx + reach, m, w - m);
+      this.fy0 = clamp(sy - reach * 0.85, m, h - m);
+      this.fy1 = clamp(sy + reach * 0.55, m, h - m);
     }
-    const sx = (p.px[L.LEFT_SHOULDER * 2]! + p.px[L.RIGHT_SHOULDER * 2]!) / 2;
-    const sy = (p.px[L.LEFT_SHOULDER * 2 + 1]! + p.px[L.RIGHT_SHOULDER * 2 + 1]!) / 2;
-    // armLen is shoulder-to-wrist; add half a shoulder width to get the span
-    // from the shoulder CENTRE, then keep 90% of it so the far edge is a
-    // stretch rather than a limit.
-    const reach = (p.calib.armLen + 0.5) * p.scalePx * 0.9;
-    const m = Math.min(w, h) * 0.06;
-    this.fx0 = clamp(sx - reach, m, w - m);
-    this.fx1 = clamp(sx + reach, m, w - m);
-    this.fy0 = clamp(sy - reach * 0.85, m, h - m);
-    this.fy1 = clamp(sy + reach * 0.55, m, h - m);
+    // Keep the web below the HUD band (goal text and timer across the top;
+    // the score/combo column is handled per object by topAt()).
+    if (this.fy0 < h * 0.18) this.fy0 = h * 0.18;
+    if (this.fy1 < this.fy0 + h * 0.25) this.fy1 = Math.min(h * 0.96, this.fy0 + h * 0.25);
+  }
+
+  /** Highest y anything a child must see may reach at screen x. */
+  private topAt(x: number): number {
+    const { w, h } = this.ctx.view;
+    return x < w * 0.25 ? h * 0.26 : h * 0.18;
   }
 
   private liveThreads(): number {
@@ -214,14 +250,14 @@ class WebCut implements MiniGame {
     }
     // Gold threads only once the player has the rhythm.
     const gold = folk < 0 && d > 0.35 && chance(this.ctx.rng, 0.2);
-    const i = this.webs.spawn(
-      cx, cy, 0, 0,
-      span * randRange(this.ctx.rng, 0.3, 0.42),
-      1e5,
-      gold ? GOLD : SILK,
-    );
+    const len = span * randRange(this.ctx.rng, 0.3, 0.42);
+    const rot = this.ctx.rng() * Math.PI;
+    // The upper anchor stays below the HUD band, so no thread hides under it.
+    const top = this.topAt(cx) + Math.abs(Math.sin(rot)) * len;
+    if (cy < top) cy = top;
+    const i = this.webs.spawn(cx, cy, 0, 0, len, 1e5, gold ? GOLD : SILK);
     if (i < 0) return;
-    this.webs.rot[i] = this.ctx.rng() * Math.PI;
+    this.webs.rot[i] = rot;
     this.webs.hp[i] = folk >= 0 ? this.folks.hp[folk]! : 0;
     // `data` is the shiver timer and nothing else; the drawing phase comes
     // from the entity's own monotonic id, which survives a sweep().
@@ -230,18 +266,17 @@ class WebCut implements MiniGame {
 
   private trapFriend(): void {
     const span = Math.min(this.fx1 - this.fx0, this.fy1 - this.fy0);
-    const i = this.folks.spawn(
-      randRange(this.ctx.rng, this.fx0 + span * 0.2, this.fx1 - span * 0.2),
-      randRange(this.ctx.rng, this.fy0 + span * 0.2, this.fy1 - span * 0.2),
-      0, 0, span * 0.14, 1e5, 0,
-    );
+    const fx = randRange(this.ctx.rng, this.fx0 + span * 0.2, this.fx1 - span * 0.2);
+    const fy = randRange(this.ctx.rng, this.fy0 + span * 0.2, this.fy1 - span * 0.2);
+    // The bond dots ring the friend at 1.7 r: keep the whole ring out of the HUD.
+    const i = this.folks.spawn(fx, Math.max(fy, this.topAt(fx) + span * 0.14 * 2), 0, 0, span * 0.14, 1e5, 0);
     if (i < 0) return;
     // `hp` on a friend is its OWN id, matched by the threads' `hp`; `data`
     // counts the bonds still holding it. Indices move on sweep(), ids do not.
     this.folks.hp[i] = this.nextFolk++;
     this.folks.data[i] = BONDS;
     for (let k = 0; k < BONDS; k++) this.stringThread(this.spawner.difficulty, i);
-    this.ctx.audio.play('wobble', { gain: 0.4 });
+    this.ctx.audio.play('wobble', SFX_TRAP);
   }
 
   private hatchSpider(): void {
@@ -265,9 +300,11 @@ class WebCut implements MiniGame {
         this.bugs.x[i] = this.bugs.x[i]! + Math.cos(this.time * 0.7 + phase) * speed * dt;
         this.bugs.y[i] = this.bugs.y[i]! + Math.sin(this.time * 0.9 + phase * 1.7) * speed * dt;
       }
-      // Steer back inside: a spider off-screen is a spider nobody can avoid.
+      // Steer back inside: a spider off-screen (or under the HUD) is a spider
+      // nobody can avoid.
       this.bugs.x[i] = clamp(this.bugs.x[i]!, this.fx0, this.fx1);
-      this.bugs.y[i] = clamp(this.bugs.y[i]!, this.fy0, this.fy1);
+      const top = Math.max(this.fy0, this.topAt(this.bugs.x[i]!) + this.bugs.r[i]!);
+      this.bugs.y[i] = clamp(this.bugs.y[i]!, top, Math.max(top, this.fy1));
       this.bugs.rot[i] = Math.sin(this.time * 4 + phase) * 0.12;
     }
   }
@@ -278,11 +315,7 @@ class WebCut implements MiniGame {
     x0: number, y0: number, x1: number, y1: number,
     dirDeg: number,
   ): void {
-    this.ctx.fx.trail(x0, y0, x1, y1, {
-      color: this.trailCol,
-      width: 11,
-      life: 0.2,
-    });
+    this.ctx.fx.trail(x0, y0, x1, y1, this.trailOpts);
 
     const tol = Math.min(this.ctx.view.w, this.ctx.view.h) * 0.034;
     for (let i = 0; i < this.webs.n; i++) {
@@ -335,7 +368,7 @@ class WebCut implements MiniGame {
     this.grazes++;
     if (this.grazes % 6 !== 0) return;
     this.hintT = 2.4;
-    this.ctx.hud.toast(t('slide'), { color: C.textDim });
+    this.ctx.hud.toast(t('slide'), TOAST_HINT);
   }
 
   private snip(i: number, side: number): void {
@@ -352,17 +385,14 @@ class WebCut implements MiniGame {
     if (this.combo > this.bestCombo) this.bestCombo = this.combo;
     this.score += SILK_POINTS;
 
-    this.ctx.fx.impact(x, y, 'hit', {
-      color: this.sparkCol,
-      sprite: 'sparkle',
-      label: this.labels[SILK_POINTS] ?? '',
-      dir: side === 0 ? Math.PI : 0,
-    });
-    this.ctx.audio.play('break', { gain: 0.5 });
+    this.snipFx.dir = side === 0 ? Math.PI : 0;
+    this.ctx.fx.impact(x, y, 'hit', this.snipFx);
+    this.ctx.audio.play('break', SFX_BREAK);
     this.ctx.audio.playLadder('pop.high', this.combo);
     this.ctx.hud.setScore(this.score);
     this.ctx.hud.setCombo(this.combo);
-    this.ctx.emit({ kind: 'scored', points: SILK_POINTS });
+    this.evScored.points = SILK_POINTS;
+    this.ctx.emit(this.evScored);
 
     if (folk > 0) this.loosen(folk);
   }
@@ -372,7 +402,7 @@ class WebCut implements MiniGame {
       if (this.folks.hp[i] !== folkId) continue;
       this.folks.data[i] = this.folks.data[i]! - 1;
       if (this.folks.data[i]! > 0) {
-        this.ctx.audio.play('ui.tick', { gain: 0.5 });
+        this.ctx.audio.play('ui.tick', SFX_TICK);
         return;
       }
       const x = this.folks.x[i]!;
@@ -381,21 +411,18 @@ class WebCut implements MiniGame {
       this.saved++;
       this.folkGap = FOLK_GAP_SEC;
       this.score += SAVE_POINTS;
-      this.ctx.fx.impact(x, y, 'big', {
-        color: C.success,
-        sprite: 'star',
-        label: this.labels[SAVE_POINTS] ?? '',
-      });
+      this.ctx.fx.impact(x, y, 'big', this.saveFx);
       this.ctx.audio.play('bonus');
-      this.ctx.hud.toast(t('saved'), { color: C.success, big: true });
+      this.ctx.hud.toast(t('saved'), TOAST_SAVED);
       this.ctx.hud.setScore(this.score);
-      this.ctx.emit({ kind: 'scored', points: SAVE_POINTS });
+      this.evScored.points = SAVE_POINTS;
+      this.ctx.emit(this.evScored);
       return;
     }
   }
 
   /** Cutting a gold thread is the mistake, so it does snap — but quietly: no
-   *  score change, no shake, no red. The lost combo is the whole feedback. */
+   *  score change, no shake, no red, no toast. The lost combo is the feedback. */
   private hitGold(i: number): void {
     const x = this.webs.x[i]!;
     const y = this.webs.y[i]!;
@@ -406,9 +433,8 @@ class WebCut implements MiniGame {
     this.combo = 0;
     this.ctx.hud.setCombo(0);
     this.ctx.fx.miss(x, y);
-    this.ctx.audio.play('buzz', { gain: 0.34 });
-    this.ctx.hud.toast(t('gold'), { color: C.textDim });
-    this.ctx.emit({ kind: 'miss' });
+    this.ctx.audio.play('thud', SFX_GOLD);
+    this.ctx.emit(EV_MISS);
   }
 
   private bite(side: number, x: number, y: number): void {
@@ -417,19 +443,16 @@ class WebCut implements MiniGame {
     this.combo = 0;
     this.ctx.hud.setCombo(0);
     this.ctx.fx.miss(x, y);
-    this.ctx.audio.play('wobble', { gain: 0.45 });
-    this.ctx.hud.toast(t('spider'), { color: C.textDim });
-    this.ctx.emit({ kind: 'miss' });
+    this.ctx.audio.play('wobble', SFX_BITE);
+    this.ctx.emit(EV_MISS);
   }
 
   render(g: Renderer, _interp: number): void {
     g.clear(manifest.theme?.hue);
 
     // The web frame, so the play area reads as a thing rather than as empty air.
-    g.roundRect(this.fx0, this.fy0, this.fx1 - this.fx0, this.fy1 - this.fy0, 18 * g.s, {
-      stroke: fade(C.white, 0.35),
-      sw: 4 * g.s,
-    });
+    g.roundRect(this.fx0, this.fy0, this.fx1 - this.fx0, this.fy1 - this.fy0, 18 * g.s,
+      this.paint(undefined, FRAME_COL, 4 * g.s));
 
     for (let i = 0; i < this.folks.n; i++) {
       const x = this.folks.x[i]!;
@@ -439,11 +462,11 @@ class WebCut implements MiniGame {
       // Bonds remaining as a ring of dots: a count, not a colour.
       for (let k = 0; k < BONDS; k++) {
         const a = -Math.PI / 2 + (k / BONDS) * TAU;
-        g.circle(x + Math.cos(a) * r * 1.7, y + Math.sin(a) * r * 1.7, 9 * g.s, {
-          fill: k < left ? C.warn : fade(KEYLINE, 0.18),
-        });
+        g.circle(x + Math.cos(a) * r * 1.7, y + Math.sin(a) * r * 1.7, 9 * g.s,
+          this.paint(k < left ? C.warn : BOND_OFF, undefined, 0));
       }
-      g.sprite('bee', x, y, r * 2.6, { rot: Math.sin(g.t * 2 + x) * 0.08 });
+      this.so.rot = Math.sin(g.t * 2 + x) * 0.08;
+      g.sprite('bee', x, y, r * 2.6, this.so);
     }
 
     for (let i = 0; i < this.webs.n; i++) {
@@ -468,12 +491,9 @@ class WebCut implements MiniGame {
         const curl = Math.sin(k * Math.PI) * r * 0.3;
         g.save();
         g.alpha(1 - k * 0.65);
-        g.line(ax, ay, ax + c * r * keep - s * curl, ay + s * r * keep + c * curl, 9 * g.s, {
-          stroke: col,
-        });
-        g.line(bx, by, bx - c * r * keep + s * curl, by - s * r * keep - c * curl, 9 * g.s, {
-          stroke: col,
-        });
+        const pc = this.paint(undefined, col, 0);
+        g.line(ax, ay, ax + c * r * keep - s * curl, ay + s * r * keep + c * curl, 9 * g.s, pc);
+        g.line(bx, by, bx - c * r * keep + s * curl, by - s * r * keep - c * curl, 9 * g.s, pc);
         g.restore();
         continue;
       }
@@ -487,12 +507,15 @@ class WebCut implements MiniGame {
       const sw = (gold ? 10 : 8) * g.s;
       // Dark underlay, then the bright silk: a thin light line vanishes on a
       // bright background, a keyed one does not.
-      g.line(ax, ay, mx, my, sw + 5 * g.s, { stroke: KEYLINE });
-      g.line(mx, my, bx, by, sw + 5 * g.s, { stroke: KEYLINE });
-      g.line(ax, ay, mx, my, sw, { stroke: col });
-      g.line(mx, my, bx, by, sw, { stroke: col });
-      g.circle(ax, ay, 9 * g.s, { fill: KEYLINE });
-      g.circle(bx, by, 9 * g.s, { fill: KEYLINE });
+      const pk = this.paint(undefined, KEYLINE, 0);
+      g.line(ax, ay, mx, my, sw + 5 * g.s, pk);
+      g.line(mx, my, bx, by, sw + 5 * g.s, pk);
+      const ps = this.paint(undefined, col, 0);
+      g.line(ax, ay, mx, my, sw, ps);
+      g.line(mx, my, bx, by, sw, ps);
+      const pd = this.paint(KEYLINE, undefined, 0);
+      g.circle(ax, ay, 9 * g.s, pd);
+      g.circle(bx, by, 9 * g.s, pd);
       if (gold) {
         // Shape as well as colour: ART.md forbids leaning on gold-vs-grey
         // alone, and one child per class cannot tell them apart.
@@ -502,12 +525,9 @@ class WebCut implements MiniGame {
         const perp = this.webs.rot[i]! + Math.PI / 2;
         g.save();
         g.alpha(0.75);
-        g.chevron(cx + Math.cos(perp) * r * 0.26, cy + Math.sin(perp) * r * 0.26, 16 * g.s, -perp, {
-          fill: KEYLINE,
-        });
-        g.chevron(cx - Math.cos(perp) * r * 0.26, cy - Math.sin(perp) * r * 0.26, 16 * g.s, Math.PI - perp, {
-          fill: KEYLINE,
-        });
+        const pf = this.paint(KEYLINE, undefined, 0);
+        g.chevron(cx + Math.cos(perp) * r * 0.26, cy + Math.sin(perp) * r * 0.26, 16 * g.s, -perp, pf);
+        g.chevron(cx - Math.cos(perp) * r * 0.26, cy - Math.sin(perp) * r * 0.26, 16 * g.s, Math.PI - perp, pf);
         g.restore();
       }
     }
@@ -524,35 +544,42 @@ class WebCut implements MiniGame {
         const sgn = k < 4 ? -1 : 1;
         const mx = x + Math.cos(a) * r * 1.2 * sgn;
         const my = y + Math.sin(a) * r * 0.9 - r * 0.2;
-        g.line(x, y, mx, my, 4 * g.s, { stroke: KEYLINE });
-        g.line(mx, my, mx + sgn * r * 0.3, my + r * 0.7, 4 * g.s, { stroke: KEYLINE });
+        const pl = this.paint(undefined, KEYLINE, 0);
+        g.line(x, y, mx, my, 4 * g.s, pl);
+        g.line(mx, my, mx + sgn * r * 0.3, my + r * 0.7, 4 * g.s, pl);
       }
-      g.circle(x, y, r * 0.78, { fill: '#3A3F55', stroke: KEYLINE, sw: 4 * g.s });
-      g.circle(x, y - r * 0.72, r * 0.42, { fill: '#3A3F55', stroke: KEYLINE, sw: 4 * g.s });
+      const pb = this.paint(SPIDER_COL, KEYLINE, 4 * g.s);
+      g.circle(x, y, r * 0.78, pb);
+      g.circle(x, y - r * 0.72, r * 0.42, pb);
     }
 
     // Always draw the body.
     if (this.player) {
       g.ghostBody(this.player, 0.09);
-      g.skeleton(this.player, { alpha: 0.42, emphasize: HANDS });
+      g.skeleton(this.player, SKELETON);
     }
 
     for (let s = 0; s < 2; s++) {
       const h = s === 0 ? this.handL : this.handR;
       const dead = this.stun[s]! > 0;
-      g.circle(h.x, h.y, (dead ? 13 : 20) * g.s, {
-        stroke: dead ? fade(KEYLINE, 0.35) : this.trailCol,
-        sw: (dead ? 3 : 4) * g.s,
-        glow: dead ? 0 : 10,
-      });
+      g.circle(h.x, h.y, (dead ? 13 : 20) * g.s,
+        this.paint(undefined, dead ? DEAD_COL : this.trailCol, (dead ? 3 : 4) * g.s, dead ? 0 : 10));
       if (dead) {
         const k = this.stun[s]! / STUN_SEC;
-        g.arc(h.x, h.y, 22 * g.s, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - k), {
-          stroke: C.textDim,
-          sw: 4 * g.s,
-        });
+        g.arc(h.x, h.y, 22 * g.s, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - k),
+          this.paint(undefined, C.textDim, 4 * g.s));
       }
     }
+  }
+
+  /** The one reusable Paint: render() builds no objects. */
+  private paint(fill: string | undefined, stroke: string | undefined, sw: number, glow = 0): Paint {
+    const pt = this.pt;
+    pt.fill = fill;
+    pt.stroke = stroke;
+    pt.sw = sw;
+    pt.glow = glow;
+    return pt;
   }
 
   end(_reason: EndReason): GameResult {

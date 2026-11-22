@@ -4,7 +4,7 @@ export const manifest: MiniGameManifest = {
   id: 'run-in-place-sprint',
   nameKo: '제자리 달리기',
   taglineKo: '달려서 결승선까지!',
-  howToKo: ['무릎을 번갈아 올리며 달려요', '다리가 안 보이면 팔을 흔들어요', '마지막엔 점수가 두 배예요!'],
+  howToKo: ['팔을 앞뒤로 크게 흔들며 달려요', '무릎도 올리면 더 신나요', '마지막엔 점수가 두 배예요!'],
   icon: 'gi-run-in-place-sprint',
   theme: { hue: 26 },
 
@@ -22,12 +22,15 @@ export const manifest: MiniGameManifest = {
   // Short on purpose: running in place is the most tiring thing in the
   // catalogue, and the round length is the safety device.
   durationMs: 30_000,
-  // One point per alternating stride, two in the last 8 s. A child running at
-  // ~3 strides/s earns ~95; the knee-run metronome (4.4/s) lands ~120.
+  // One point per alternating stride, two in the last 8 s. Arm-swing running
+  // at 1.2 m, 3 strides/s, measures 109 (~1.0); 2 strides/s 73 (two stars);
+  // the knee-run metronome (4.4/s) 158.
   scoring: { kind: 'count', maxScore: 105, starCuts: [0.3, 0.55, 0.8] },
 
   a11y: {
-    keyboardFallback: true,
+    // The keyboard body cannot lift a knee and always shows its knees, so the
+    // arm fallback never engages: no key produces a stride.
+    keyboardFallback: false,
     noFlashing: true,
     colorBlindSafe: true,
     audioOptional: true,

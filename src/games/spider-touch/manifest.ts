@@ -19,9 +19,10 @@ export const manifest: MiniGameManifest = {
   gestures: ['reach'],
 
   durationMs: 50_000,
-  // ~50 spiders appear in a round (near ones 5, far 15, max-reach 25). A
-  // confident 9-year-old taps ~60-80% of them: ~450-600 points. The dev clip
-  // (far-small, a flailing arm at 4 m) scores ~60% of maxScore.
+  // A spider counts after a 200ms press (index.ts CONFIRM). Measured with an
+  // aiming player on the virtual body (reaction 0.3-0.6s): 34-38 spiders for
+  // 560-680. The dev clip (far-small, a slow arm sweep at 4 m that pauses at
+  // each end) scores 260-285 = 1 star; a fast flail (swing-wide) scores 0.
   scoring: { kind: 'count', maxScore: 600, starCuts: [0.25, 0.5, 0.78] },
 
   a11y: {

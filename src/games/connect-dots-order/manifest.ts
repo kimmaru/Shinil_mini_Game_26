@@ -19,13 +19,17 @@ export const manifest: MiniGameManifest = {
   gestures: ['reach'],
 
   durationMs: 50_000,
-  // 5 pictures (two are drawn by both hands at once). A competent 9-year-old
-  // finishes ~4 of them (~190); maxScore is a little above that. The dev clip
-  // is a blind arm-windmill, which brushes ~6 dots by luck: about one star.
+  // 5 pictures (two are drawn by both hands at once), 27 dots at 4 plus 20-30
+  // a picture: 258 if all five are fast. A pointer oracle draws each in ~5.5 s
+  // (all five fit in 50 s); a competent 9-year-old finishes ~4 (~190-220).
   scoring: { kind: 'time', maxScore: 220, starCuts: [0.15, 0.45, 0.72] },
 
   a11y: {
-    keyboardFallback: true,
+    // False: the mouse drives one hand at a time and the body walks under the
+    // pointer, so a left-hand dot that ends up right of the body can only be
+    // reached by the right hand. A pointer run stalls on the first
+    // two-hand picture.
+    keyboardFallback: false,
     noFlashing: true,
     // Dots are told apart by their printed number, never by colour alone.
     colorBlindSafe: true,

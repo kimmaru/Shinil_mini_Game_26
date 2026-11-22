@@ -69,6 +69,8 @@ class BalloonPopParty implements MiniGame {
   private combo = 0;
   private bestCombo = 0;
   private pops = 0;
+  /** Spike balloons touched. Quiet in play, but honest on the results card. */
+  private misses = 0;
   private noteIdx = 0;
   private time = 0;
 
@@ -169,6 +171,7 @@ class BalloonPopParty implements MiniGame {
 
     if (kind === SPIKE) {
       // Quiet: the combo breaks, a soft puff, nothing else.
+      this.misses++;
       if (this.combo > 0) {
         this.combo = 0;
         this.ctx.hud.setCombo(0);
@@ -256,10 +259,15 @@ class BalloonPopParty implements MiniGame {
       durationMs: manifest.durationMs,
       perPlayer: [{
         playerId: 0, slot: 0, score: this.score,
-        hits: this.pops, misses: 0, bestCombo: this.bestCombo,
+        hits: this.pops, misses: this.misses, bestCombo: this.bestCombo,
       }],
       highlightsKo: highlights.length > 0 ? highlights : undefined,
     };
+  }
+
+  onResize(w: number, h: number): void {
+    this.ballR = w * 0.052;
+    this.vScale = h / 720;
   }
 
   dispose(): void {

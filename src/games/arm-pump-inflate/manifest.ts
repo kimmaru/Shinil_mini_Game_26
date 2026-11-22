@@ -4,7 +4,7 @@ export const manifest: MiniGameManifest = {
   id: 'arm-pump-inflate',
   nameKo: '팔 펌프 풍선',
   taglineKo: '펌프질로 풍선을 부풀려요!',
-  howToKo: ['두 팔을 위아래로 힘껏 흔들어요', '빵빵해지면 풍선이 뻥! 터져요', '터지면 새 풍선이 나와요'],
+  howToKo: ['두 팔을 머리까지 쭉 올렸다 배까지 내려요', '빵빵해지면 풍선이 뻥! 터져요', '터지면 새 풍선이 나와요'],
   icon: 'gi-arm-pump-inflate',
   theme: { hue: 212 },
 

@@ -37,6 +37,14 @@ const YELLOW = 2;
 const GREEN = 3;
 
 const COLOR_HUE = [8, 212, 42, 140] as const;
+/** Every colour string, built once: update() and render() build none. */
+const C_AIM = COLOR_HUE.map((h) => hue(h, 80, 48));
+const C_HIT = COLOR_HUE.map((h) => hue(h, 82, 48));
+const C_RING = COLOR_HUE.map((h) => hue(h, 82, 46));
+const C_BADGE = COLOR_HUE.map((h) => hue(h, 82, 40));
+const C_FILL = COLOR_HUE.map((h) => hue(h, 82, 52));
+const C_BRIDGE = hue(COLOR_HUE[3], 82, 44);
+const KEYLINE_30 = fade(KEYLINE, 0.3);
 /** The shape badge for each colour: triangle / diamond / disc / square.
  *  Never colour alone — ART.md §3.6. */
 const COLOR_BADGE = ['triangle', 'square', 'circle', 'square'] as const;
@@ -136,10 +144,7 @@ class ColorShieldBlock implements MiniGame {
       ctx.rng,
       manifest.durationMs / 1000,
     );
-    const g = Math.min(ctx.view.w, ctx.view.h);
-    this.ballR = g * 0.07;
-    this.handR = g * 0.09;
-    this.headR = g * 0.085;
+    this.size();
     for (let i = 0; i < 80; i++) this.labels.push('+' + String(i));
     ctx.hud.setGoal(t('goal'));
   }
@@ -147,6 +152,18 @@ class ColorShieldBlock implements MiniGame {
   start(): void {
     this.ctx.hud.setScore(0);
     this.ctx.audio.music({ bpm: 112 });
+  }
+
+  /** Radii from the live view (the host keeps ctx.view current). */
+  private size(): void {
+    const g = Math.min(this.ctx.view.w, this.ctx.view.h);
+    this.ballR = g * 0.07;
+    this.handR = g * 0.09;
+    this.headR = g * 0.085;
+  }
+
+  onResize(): void {
+    this.size();
   }
 
   update(dt: number, f: PoseFrame): void {
@@ -159,7 +176,9 @@ class ColorShieldBlock implements MiniGame {
     }
     if (d > SWAP_AT && !this.swapShown) {
       this.swapShown = true;
-      this.ctx.hud.announce(t('swap'));
+      // A toast, not an announce: the announce line still carries the
+      // green-square rule, and green keeps coming to the end of the round.
+      this.ctx.hud.toast(t('swap'), { color: C.warn });
     }
     const p = f.p1;
     this.player = p ?? null;
@@ -249,7 +268,7 @@ class ColorShieldBlock implements MiniGame {
     // 420 ms of warning before it is blockable: a telegraph is information,
     // and a whole-body reaction needs a weight shift first.
     this.ctx.fx.telegraph(this.sxOut, this.syOut, this.handR * 1.3, {
-      color: hue(COLOR_HUE[colour]!, 80, 48),
+      color: C_AIM[colour]!,
       secs: 0.42,
     });
     this.ctx.audio.play('whoosh', { gain: 0.3 });
@@ -269,7 +288,7 @@ class ColorShieldBlock implements MiniGame {
         this.balls.vy[i] = 0;
         this.ctx.audio.play('zap', { gain: 0.42 });
         this.slotAt(this.slotOf(colour, this.balls.id[i]!), p);
-        this.ctx.fx.pop(this.sxOut, this.syOut, this.handR, hue(COLOR_HUE[colour]!, 80, 48));
+        this.ctx.fx.pop(this.sxOut, this.syOut, this.handR, C_AIM[colour]!);
       }
       this.balls.data[i] = prog;
       if (this.balls.spin[i]! > 0) this.balls.spin[i] = Math.max(0, this.balls.spin[i]! - dt);
@@ -350,7 +369,7 @@ class ColorShieldBlock implements MiniGame {
     this.score += POINTS;
 
     this.ctx.fx.impact(x, y, this.combo >= 6 ? 'big' : 'hit', {
-      color: hue(COLOR_HUE[colour]!, 82, 48),
+      color: C_HIT[colour]!,
       sprite: 'burst',
       label: this.labels[POINTS] ?? '',
     });
@@ -390,10 +409,10 @@ class ColorShieldBlock implements MiniGame {
         const sr = s >= SLOT_HEAD_R && s <= SLOT_HEAD_L ? this.headR : this.handR;
         g.save();
         g.alpha(0.4);
-        g.circle(this.sxOut, this.syOut, sr, { stroke: hue(COLOR_HUE[SLOT_COLOUR[s]!]!, 82, 46), sw: 5 * g.s });
+        g.circle(this.sxOut, this.syOut, sr, { stroke: C_RING[SLOT_COLOUR[s]!]!, sw: 5 * g.s });
         g.sprite(COLOR_BADGE[SLOT_COLOUR[s]!]!, this.sxOut, this.syOut, sr * 0.6, {
           rot: COLOR_BADGE_ROT[SLOT_COLOUR[s]!]!,
-          flatten: hue(COLOR_HUE[SLOT_COLOUR[s]!]!, 82, 40),
+          flatten: C_BADGE[SLOT_COLOUR[s]!]!,
         });
         g.restore();
       }
@@ -414,12 +433,12 @@ class ColorShieldBlock implements MiniGame {
         this.slotAt(slot, p);
         const rr = slot >= SLOT_HEAD_R && slot <= SLOT_HEAD_L ? this.headR : this.handR;
         g.circle(this.sxOut, this.syOut, rr, {
-          stroke: hue(COLOR_HUE[colour]!, 80, 48),
+          stroke: C_AIM[colour]!,
           sw: 5 * g.s,
         });
         g.sprite(COLOR_BADGE[colour]!, this.sxOut, this.syOut, rr * 0.72, {
           rot: COLOR_BADGE_ROT[colour]!,
-          flatten: fade(KEYLINE, 0.3),
+          flatten: KEYLINE_30,
         });
       }
     }
@@ -430,17 +449,16 @@ class ColorShieldBlock implements MiniGame {
       const y = this.balls.y[i]!;
       const r = this.balls.r[i]!;
       const prog = this.balls.data[i]!;
-      const h = COLOR_HUE[colour]!;
       // Grows as it closes, so "almost here" is readable from across a room.
       const size = r * (0.74 + 0.5 * prog);
-      g.circle(x, y, size, { fill: hue(h, 82, 52), stroke: KEYLINE, sw: 4 * g.s });
+      g.circle(x, y, size, { fill: C_FILL[colour]!, stroke: KEYLINE, sw: 4 * g.s });
       g.sprite(COLOR_BADGE[colour]!, x, y, size * 1.05, {
         rot: COLOR_BADGE_ROT[colour]!,
         flatten: KEYLINE,
       });
       if (prog >= BLOCK_FROM) {
         // Live ring: this one can be blocked NOW.
-        g.circle(x, y, size * 1.5, { stroke: hue(h, 82, 46), sw: 4 * g.s, glow: 10 });
+        g.circle(x, y, size * 1.5, { stroke: C_RING[colour]!, sw: 4 * g.s, glow: 10 });
       }
     }
 
@@ -458,23 +476,22 @@ class ColorShieldBlock implements MiniGame {
         const near = Math.hypot(this.cur[0]! - this.cur[2]!, this.cur[1]! - this.cur[3]!);
         if (near < this.handR * 3.4) {
           g.circle(mx, my, this.handR * 0.8, {
-            stroke: hue(COLOR_HUE[GREEN]!, 82, 44),
+            stroke: C_BRIDGE,
             sw: 5 * g.s,
           });
-          g.sprite('square', mx, my, this.handR * 0.9, { flatten: hue(COLOR_HUE[GREEN]!, 82, 44) });
+          g.sprite('square', mx, my, this.handR * 0.9, { flatten: C_BRIDGE });
         }
       }
     }
   }
 
   private shield(g: Renderer, x: number, y: number, r: number, colour: number): void {
-    const h = COLOR_HUE[colour]!;
-    g.circle(x, y, r, { stroke: hue(h, 82, 46), sw: 5 * g.s, glow: 8 });
+    g.circle(x, y, r, { stroke: C_RING[colour]!, sw: 5 * g.s, glow: 8 });
     g.save();
     g.alpha(0.55);
     g.sprite(COLOR_BADGE[colour]!, x, y, r * 0.85, {
       rot: COLOR_BADGE_ROT[colour]!,
-      flatten: hue(h, 82, 40),
+      flatten: C_BADGE[colour]!,
     });
     g.restore();
   }

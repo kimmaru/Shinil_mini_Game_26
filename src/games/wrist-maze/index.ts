@@ -37,6 +37,8 @@ const MAX_PTS = 5;
 const MAX_SPUR = 3;
 const MAZE_COUNT = 6;
 const CELEBRATE_SEC = 1.0;
+/** Seconds on one maze before it quietly moves on to the next. */
+const MAZE_TIMEOUT = 14;
 const HANDS = [L.LEFT_WRIST, L.RIGHT_WRIST] as const;
 /** Colours built once: render() must not build strings. */
 const WARN80 = fade(C.warn, 0.8);
@@ -190,7 +192,31 @@ class WristMaze implements MiniGame {
       return;
     }
     this.mazeClock += dt;
+    if (this.mazeClock > MAZE_TIMEOUT) {
+      this.skip();
+      return;
+    }
     if (sig.ok) this.stepMaze(dt);
+  }
+
+  /** Out of time on this maze: move on without a sound or a counter. A maze a
+   *  child cannot finish must never eat the rest of the round. */
+  private skip(): void {
+    this.mazeIdx++;
+    this.ready = false;
+    this.armed = false;
+    this.trailCount = 0;
+    this.wait = 0.6;
+    if (this.mazeIdx >= MAZE_COUNT) this.ctx.emit({ kind: 'clearEarly' });
+  }
+
+  onResize(): void {
+    // Re-fit the current maze to the new view; its progress restarts.
+    if (this.ready) {
+      this.ready = false;
+      this.armed = false;
+      this.wait = 0;
+    }
   }
 
   /** Lay maze `mazeIdx` out around the tracing hand's own shoulder. */
@@ -204,22 +230,60 @@ class WristMaze implements MiniGame {
     const S = this.armPx;
     const { w } = this.ctx.view;
 
+    const { h } = this.ctx.view;
     this.n = def.pts.length;
+    this.sn = def.spur ? def.spur.length : 0;
+
+    // Fit the whole corridor on screen and inside the HUD safe area: shrink
+    // the maze if it is simply too big (a child close to the camera), then
+    // slide it toward the middle. Sliding inward only ever brings the track
+    // nearer the body, so it stays in reach. Without this a child standing a
+    // hand's width off centre at 1.2 m gets a finish line off the screen.
+    let scale = 1;
+    let dx = 0;
+    let dy = 0;
+    for (let pass = 0; ; pass++) {
+      const k = S * scale;
+      // Corridor: arm-length based, never under 8.5% of the view width; each
+      // lap trims 10%, but the floor still holds.
+      this.hw = Math.max(w * 0.085, def.width * k * (1 - 0.1 * lap)) / 2;
+      let x0 = Infinity;
+      let x1 = -Infinity;
+      let y0 = Infinity;
+      let y1 = -Infinity;
+      for (let i = 0; i < this.n + this.sn; i++) {
+        const pt = i < this.n ? def.pts[i]! : def.spur![i - this.n]!;
+        const x = sh.x + out * pt[0] * k;
+        const y = sh.y + pt[1] * k;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+      x0 -= this.hw; x1 += this.hw; y0 -= this.hw; y1 += this.hw;
+      const xLo = w * 0.03;
+      const xHi = w * 0.97;
+      const yHi = h * 0.97;
+      dx = x0 < xLo ? xLo - x0 : x1 > xHi ? xHi - x1 : 0;
+      // Under the score column (left quarter) the safe top is deeper.
+      const yLo = h * (x0 + dx < w * 0.25 ? 0.26 : 0.18);
+      dy = y0 < yLo ? yLo - y0 : y1 > yHi ? yHi - y1 : 0;
+      const fit = Math.min((xHi - xLo) / (x1 - x0), (yHi - yLo) / (y1 - y0));
+      // The last pass keeps whatever it measured, so hw/dx/dy always match `scale`.
+      if (fit >= 1 || pass === 2) break;
+      scale *= fit * 0.98;
+    }
+    const k = S * scale;
     for (let i = 0; i < this.n; i++) {
-      this.path[i * 2] = sh.x + out * def.pts[i]![0] * S;
-      this.path[i * 2 + 1] = sh.y + def.pts[i]![1] * S;
+      this.path[i * 2] = sh.x + out * def.pts[i]![0] * k + dx;
+      this.path[i * 2 + 1] = sh.y + def.pts[i]![1] * k + dy;
     }
     this.total = this.accumulate(this.path, this.n, this.cum);
-    this.sn = def.spur ? def.spur.length : 0;
     for (let i = 0; i < this.sn; i++) {
-      this.spur[i * 2] = sh.x + out * def.spur![i]![0] * S;
-      this.spur[i * 2 + 1] = sh.y + def.spur![i]![1] * S;
+      this.spur[i * 2] = sh.x + out * def.spur![i]![0] * k + dx;
+      this.spur[i * 2 + 1] = sh.y + def.spur![i]![1] * k + dy;
     }
     if (this.sn > 0) this.accumulate(this.spur, this.sn, this.spurCum);
-
-    // Corridor: arm-length based, never under 8.5% of the view width; each
-    // lap trims 10%, but the floor still holds.
-    this.hw = Math.max(w * 0.085, def.width * S * (1 - 0.1 * lap)) / 2;
     this.startR = this.hw * 1.5;
     this.par = def.par;
 
@@ -477,7 +541,11 @@ class WristMaze implements MiniGame {
       g.circle(sx, sy, this.startR * 0.8 * pulse, {
         stroke: this.hand === 0 ? C.slot[0] : C.slot[1], sw: 8 * g.s,
       });
-      g.text(this.hand === 0 ? t('startLeft') : t('startRight'), sx, sy - this.startR - 30 * g.s, {
+      // Above the start ring, unless that would put it under the DOM HUD.
+      const above = sy - this.startR - 30 * g.s;
+      const safeTop = g.h * (sx < g.w * 0.25 ? 0.26 : 0.18) + 24 * g.s;
+      const ly = above < safeTop ? sy + this.startR + 30 * g.s : above;
+      g.text(this.hand === 0 ? t('startLeft') : t('startRight'), sx, ly, {
         size: 48 * g.s, weight: 800, align: 'center', baseline: 'middle',
         fill: this.hand === 0 ? C.slot[0] : C.slot[1], stroke: C.white, sw: 8 * g.s,
       });

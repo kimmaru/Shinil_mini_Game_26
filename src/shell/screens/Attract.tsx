@@ -11,7 +11,9 @@
 //     anything, so the jump is a second way in, never the only one.
 //  3. THE SAME JUMP DETECTOR THE GAMES USE, on a stricter preset, armed only
 //     after a person has been present and upright for ~0.45 s (the ring), so
-//     a passing adult or a dragged chair cannot launch a round.
+//     a passing adult or a dragged chair cannot launch a round. The jump needs
+//     the hips in frame; a guest at 1.2 m shows only the waist up, so both
+//     hands held up (만세) for half a second starts too.
 //  4. THE LIVE SKELETON in the "나" mirror — the honest "the camera sees only
 //     this" demonstration that makes the privacy line credible to the
 //     guardian standing behind the child.
@@ -32,6 +34,9 @@ import type { GameInfo } from '../useSession';
 import { DISTANCE_KO, distanceOf, type Distance } from '../distance';
 
 const ATTRACT_JUMPS = new WeakMap<GestureService, Detector<'jump'>>();
+const ATTRACT_RAISES = new WeakMap<GestureService, Detector<'raise'>>();
+/** Both hands up this long starts a round: long enough that waving does not. */
+export const RAISE_START_MS = 500;
 
 /** After this long with no jump, tell them about the spacebar. */
 export const KEYBOARD_HINT_MS = 25_000;
@@ -81,6 +86,8 @@ export function Attract({
   const [armed, setArmed] = useState(false);
   const [hint, setHint] = useState(false);
   const [distance, setDistance] = useState<Distance>(null);
+  /** The jump detector can see the hips: only then is "점프" honest copy. */
+  const [jumpOk, setJumpOk] = useState(false);
   const calRef = useRef(calibration);
   calRef.current = calibration;
   const started = useRef(false);
@@ -99,6 +106,17 @@ export function Attract({
       // The stricter preset: a false start is more annoying than a missed one.
       d = gestures.use('jump', { ...ATTRACT_JUMP_OPTS });
       ATTRACT_JUMPS.set(gestures, d);
+    }
+    d.reset();
+    return d;
+  }, [gestures]);
+
+  const raise: Detector<'raise'> | null = useMemo(() => {
+    if (!gestures) return null;
+    let d = ATTRACT_RAISES.get(gestures);
+    if (!d) {
+      d = gestures.use('raise', { side: 'both', above: 0.4 });
+      ATTRACT_RAISES.set(gestures, d);
     }
     d.reset();
     return d;
@@ -142,6 +160,8 @@ export function Attract({
     let shown = 0;
     let isArmed = false;
     let dist: Distance = null;
+    let raisedMs = 0;
+    let canJump = false;
 
     const loop = () => {
       raf = requestAnimationFrame(loop);
@@ -162,9 +182,18 @@ export function Attract({
         isArmed = nextArmed;
         setArmed(nextArmed);
       }
-      // Only read the detector once the person has been standing there: it
-      // stops a chair being dragged past the camera from starting a round.
-      if (isArmed && jump?.read(frame).fired) fire();
+      // Read every frame (the detectors keep their own baselines), but only
+      // FIRE once the person has been standing there: it stops a chair being
+      // dragged past the camera from starting a round.
+      const js = jump?.read(frame);
+      if (isArmed && js?.fired) fire();
+      raisedMs = raise?.read(frame).both ? raisedMs + dt : 0;
+      if (isArmed && raisedMs >= RAISE_START_MS) fire();
+      const jok = !!js?.ok;
+      if (jok !== canJump) {
+        canJump = jok;
+        setJumpOk(jok);
+      }
 
       const d = distanceOf(calRef.current);
       if (d !== dist) {
@@ -175,7 +204,7 @@ export function Attract({
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pose, jump]);
+  }, [pose, jump, raise]);
 
   const cameraMode = inputMode === 'camera';
   const ready = armed || !cameraMode;
@@ -234,7 +263,7 @@ export function Attract({
               : distance
                 ? DISTANCE_KO[distance]
                 : armed
-                ? '좋아요! 점프하면 시작!'
+                ? jumpOk ? '점프하거나 만세하면 시작!' : '좋아요! 만세하면 시작!'
                 : dwell > 0
                   ? '보여요! 그대로 서 주세요'
                   : '카메라 앞에 서 볼까요?'}
